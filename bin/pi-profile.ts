@@ -1,29 +1,39 @@
 #!/usr/bin/env node
 /**
- * pi-profile launcher.
+ * pi-profile launcher (ADR-0005).
  *
- * Resolves the initial profile before the Pi runtime exists (ADR-0001), then
- * hosts Pi through a controlled resource loader. Everything after the first
- * `--` is passed through to Pi.
+ * Resolves the initial profile, materializes it as a generated runtime
+ * directory (settings + symlinks + env + flags), and spawns the real `pi`
+ * binary with user arguments passed through verbatim.
  *
  * Usage:
- *   pi-profile                    # default profile, interactive
- *   pi-profile review             # named profile (once catalogs land)
- *   pi-profile review -- --model openai/gpt-5.4 --mode rpc
+ *   pi-profile                          # default profile
+ *   pi-profile review                   # named profile (once catalogs land)
+ *   pi-profile review -- --mode rpc --model openai/gpt-5.4
  */
-import { LauncherArgError, parseLauncherArgs } from "../src/launcher/args.ts";
-import { UnknownProfileError } from "../src/launcher/initial-profile.ts";
-import { startProfileHost } from "../src/profile-host.ts";
+import { getAgentDir } from "@earendil-works/pi-coding-agent";
+
+import { parseLauncherArgs } from "../src/launcher/args.ts";
+import { UnknownProfileError, resolveInitialProfile } from "../src/launcher/initial-profile.ts";
+import { spawnPi } from "../src/launcher/spawn.ts";
+import { generateRuntimeDir } from "../src/settings-generator.ts";
 
 try {
 	const args = parseLauncherArgs(process.argv.slice(2));
-	process.exitCode = await startProfileHost(args, { cwd: process.cwd() });
+	// Fails before spawning when the profile is unknown.
+	const plan = resolveInitialProfile(args.profile);
+	const generated = await generateRuntimeDir(plan, { agentDir: getAgentDir() });
+	process.exitCode = await spawnPi({
+		generated,
+		piArgs: args.piArgs,
+		trustOverride: args.trustOverride,
+	});
 } catch (error) {
-	if (error instanceof LauncherArgError || error instanceof UnknownProfileError) {
+	if (error instanceof UnknownProfileError) {
 		console.error(`pi-profile: ${error.message}`);
 		process.exitCode = 2;
 	} else {
-		console.error(error);
+		console.error(error instanceof Error ? error.message : error);
 		process.exitCode = 1;
 	}
 }

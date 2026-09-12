@@ -22,6 +22,7 @@ export async function createPiFixture(): Promise<PiFixture> {
 	const cwd = path.join(root, "project");
 	const agentDir = path.join(root, "agent");
 	await mkdir(path.join(cwd, ".pi"), { recursive: true });
+	await mkdir(agentDir, { recursive: true });
 	return { root, cwd, agentDir };
 }
 
