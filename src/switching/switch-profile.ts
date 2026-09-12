@@ -150,6 +150,17 @@ export async function switchProfile(
 	);
 
 	const isSwitch = !options?.reloadCurrent && target !== current.profile;
+	// Carry the pre-switch resolved sets into the new plan for status deltas.
+	const previousPlan = await readLaunchPlanFile(deps.runtimeDir);
+	const previousResolved =
+		previousPlan?.resolved !== undefined
+			? {
+					skills: previousPlan.resolved.skills.map((skill) => skill.name),
+					extensions: previousPlan.resolved.extensions.map((entry) => entry.id),
+					...(previousPlan.tools !== undefined ? { tools: previousPlan.tools } : {}),
+					...(previousPlan.mcp !== undefined ? { mcp: previousPlan.mcp } : {}),
+				}
+			: undefined;
 	await writeRuntimeFiles(deps.runtimeDir, resolved.plan, {
 		agentDir: deps.realAgentDir,
 		discovery: resolved.discovery,
@@ -163,6 +174,7 @@ export async function switchProfile(
 			// instance drops it from the state file. Customize/reset manage the
 			// overlay directly and never set this.
 			...(options?.clearOverlay === true ? { clearOverlay: true } : {}),
+			...(previousResolved !== undefined ? { previousResolved } : {}),
 		},
 	});
 

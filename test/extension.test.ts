@@ -26,10 +26,13 @@ interface FakePi {
 	commands: Map<string, { description: string; handler: (...args: never[]) => unknown }>;
 	events: FakeEventBus;
 	activeTools: string[];
+	sentMessages: Array<{ customType: string; content: unknown; display?: boolean }>;
 	on(event: string, handler: (...args: never[]) => unknown): void;
 	registerCommand(name: string, def: { description: string; handler: (...args: never[]) => unknown }): void;
 	getAllTools(): Array<{ name: string }>;
 	setActiveTools(names: string[]): void;
+	getCommands(): Array<{ name: string; sourceInfo?: { path: string } }>;
+	sendMessage(message: { customType: string; content: unknown; display?: boolean }): void;
 	modelRegistry: { find(provider: string, id: string): unknown | undefined };
 	setModel(model: unknown): Promise<boolean>;
 	setThinkingLevel(level: string): void;
@@ -43,6 +46,7 @@ function fakePi(): FakePi {
 		commands,
 		events: fakeEventBus(),
 		activeTools: [],
+		sentMessages: [],
 		on(event, handler) {
 			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
 		},
@@ -53,6 +57,10 @@ function fakePi(): FakePi {
 		setActiveTools(names) {
 			pi.activeTools = names;
 		},
+		getCommands: () => [],
+		sendMessage(message) {
+			pi.sentMessages.push(message);
+		},
 		modelRegistry: { find: () => undefined },
 		setModel: async () => true,
 		setThinkingLevel: () => {},
@@ -60,15 +68,24 @@ function fakePi(): FakePi {
 	return pi;
 }
 
-function fakeCtx() {
+function fakeCtx(options?: { hasUI?: boolean; selectAnswer?: string }) {
 	const notifications: Array<{ message: string; level: string }> = [];
+	const selectCalls: Array<{ title: string; options: string[] }> = [];
 	return {
 		notifications,
+		selectCalls,
 		cwd: root,
+		hasUI: options?.hasUI ?? false,
 		isIdle: () => true,
+		waitForIdle: async () => {},
+		reload: async () => {},
 		ui: {
 			notify(message: string, level: string) {
 				notifications.push({ message, level });
+			},
+			select: async (title: string, selectOptions: string[]) => {
+				selectCalls.push({ title, options: selectOptions });
+				return options?.selectAnswer;
 			},
 		},
 	};
@@ -156,5 +173,72 @@ describe("pi-profile extension", () => {
 		expect(ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("usage"))).toBe(
 			true,
 		);
+	});
+
+	describe("observability surface (ticket 07)", () => {
+		it("/profile list sends the trust-gated profile listing as a displayed message", async () => {
+			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+			await writeFile(
+				path.join(root, "profiles.json"),
+				JSON.stringify({ schemaVersion: 1, profiles: { review: { label: "Code review" } } }),
+			);
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+
+			await pi.commands.get("profile")?.handler("list" as never, fakeCtx() as never);
+
+			expect(pi.sentMessages).toHaveLength(1);
+			expect(pi.sentMessages[0]?.customType).toBe("pi-profile");
+			expect(String(pi.sentMessages[0]?.content)).toContain("review [global] — Code review");
+		});
+
+		it("/profile status sends the resolved plan report", async () => {
+			await writeLaunchPlan({
+				profile: "review",
+				source: "global",
+				agentDir: root,
+				resolved: { skills: [{ name: "code-review", filePath: "/x/SKILL.md" }], extensions: [] },
+				mcp: ["github"],
+			});
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+
+			await pi.commands.get("profile")?.handler("status" as never, fakeCtx() as never);
+
+			const content = String(pi.sentMessages[0]?.content);
+			expect(content).toContain("profile: review (global)");
+			expect(content).toContain("code-review → /x/SKILL.md");
+			expect(content).toContain("mcp: enabled=[github]");
+		});
+
+		it("bare /profile falls back to the list without dialog-capable UI", async () => {
+			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+
+			await pi.commands.get("profile")?.handler("" as never, fakeCtx() as never);
+
+			expect(pi.sentMessages).toHaveLength(1);
+			expect(String(pi.sentMessages[0]?.content)).toContain("default [builtin]");
+		});
+
+		it("bare /profile with UI offers every visible profile and cancels cleanly", async () => {
+			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+			await writeFile(
+				path.join(root, "profiles.json"),
+				JSON.stringify({ schemaVersion: 1, profiles: { review: {} } }),
+			);
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx({ hasUI: true, selectAnswer: undefined });
+
+			await pi.commands.get("profile")?.handler("" as never, ctx as never);
+
+			expect(ctx.selectCalls[0]?.options).toContain("default [builtin]");
+			expect(ctx.selectCalls[0]?.options).toContain("review [global]");
+			// Cancelled: no message, no error notification.
+			expect(pi.sentMessages).toHaveLength(0);
+			expect(ctx.notifications).toHaveLength(0);
+		});
 	});
 });

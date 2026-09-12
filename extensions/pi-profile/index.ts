@@ -1,7 +1,14 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
+import path from "node:path";
+
+import { readTrustInputs } from "../../src/launcher/initial-profile.ts";
+import { discoverAdapterServerNames } from "../../src/mcp-config.ts";
+import { RuntimeStateStore } from "../../src/runtime-state-store.ts";
 import { applyLaunchPlan, readLaunchPlanFile } from "../../src/switching/apply-plan.ts";
 import { CUSTOMIZE_USAGE, customizeOverlay, parseCustomizeArgs, resetOverlay } from "../../src/switching/customize.ts";
+import { formatProfileList, listProfiles } from "../../src/switching/list-profiles.ts";
+import { buildStatusReport, formatStatusMarkdown } from "../../src/switching/status.ts";
 import { switchProfile, type SwitchDeps } from "../../src/switching/switch-profile.ts";
 
 /**
@@ -18,6 +25,11 @@ import { switchProfile, type SwitchDeps } from "../../src/switching/switch-profi
  *   change summary injected into the next turn.
  * - `/profile use <name>` / `/profile reload`: in-session switching without
  *   restarting the Pi process (src/switching/switch-profile.ts).
+ * - `/profile customize` / `/profile reset`: runtime overlay (ticket 06).
+ * - `/profile` (selector), `/profile list`, `/profile status`:
+ *   observability surface (ticket 07). Status combines the active launch
+ *   plan, the stored overlay, fresh MCP discovery, and Pi's actual command
+ *   registrations (the winner evidence for same-name conflicts).
  *
  * Pi re-executes this module on reload, so post-reload state is established
  * exclusively through `session_start` — nothing stale survives.
@@ -63,16 +75,17 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("profile", {
-		description: "pi-profile: /profile use <name> | reload | customize ... | reset",
+		description: "pi-profile: /profile [use <name> | reload | customize ... | reset | list | status]",
 		handler: async (args, ctx) => {
-			const [subcommand, ...rest] = args.trim().split(/\s+/);
+			const [subcommandRaw, ...rest] = args.trim().split(/\s+/).filter(Boolean);
+			const subcommand = subcommandRaw ?? ""; // bare /profile → selector
 			const notify = (message: string, level: "info" | "warning" | "error") => ctx.ui?.notify(message, level);
-			const usage = `usage: /profile use <name> | /profile reload | ${CUSTOMIZE_USAGE} | /profile reset`;
+			const usage = `usage: /profile [use <name> | reload | ${CUSTOMIZE_USAGE} | reset | list | status]`;
 			if (subcommand === "use" && rest.length === 0) {
 				notify("usage: /profile use <name>", "error");
 				return;
 			}
-			if (!["use", "reload", "customize", "reset"].includes(subcommand)) {
+			if (subcommand !== "" && !["use", "reload", "customize", "reset", "list", "status"].includes(subcommand)) {
 				notify(usage, "error");
 				return;
 			}
@@ -116,9 +129,66 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					notify(`overlay updated: ${result.profile}`, "info");
 					return;
 				}
-				const result = await resetOverlay(deps);
-				for (const warning of result.warnings) notify(warning, "warning");
-				notify(`overlay cleared: ${result.profile}`, "info");
+				if (subcommand === "reset") {
+					const result = await resetOverlay(deps);
+					for (const warning of result.warnings) notify(warning, "warning");
+					notify(`overlay cleared: ${result.profile}`, "info");
+					return;
+				}
+				// Observability surface (ticket 07): bare /profile opens the
+				// selector; list/status render via a displayed custom message.
+				const entries = await listProfiles({ realAgentDir: plan.agentDir, cwd: ctx.cwd });
+				if (subcommand === "list") {
+					pi.sendMessage({
+						customType: "pi-profile",
+						content: formatProfileList(entries, plan.profile),
+						display: true,
+					});
+					return;
+				}
+				if (subcommand === "status") {
+					const { projectTrusted } = await readTrustInputs({ agentDir: plan.agentDir, cwd: ctx.cwd });
+					const stateDir = plan.source === "project" ? path.join(ctx.cwd, ".pi") : plan.agentDir;
+					const state = await new RuntimeStateStore(stateDir).read();
+					const report = buildStatusReport({
+						plan,
+						overlay: state.overlay,
+						discoveredMcpServers: await discoverAdapterServerNames(
+							plan.agentDir,
+							projectTrusted ? ctx.cwd : undefined,
+						),
+						commands: pi.getCommands(),
+						tools: pi.getAllTools(),
+					});
+					pi.sendMessage({
+						customType: "pi-profile",
+						content: formatStatusMarkdown(report),
+						display: true,
+					});
+					return;
+				}
+				// Bare /profile: the interactive selector. Without dialog-capable
+				// UI (print mode), fall back to the list.
+				if (!ctx.hasUI) {
+					pi.sendMessage({
+						customType: "pi-profile",
+						content: formatProfileList(entries, plan.profile),
+						display: true,
+					});
+					return;
+				}
+				const choice = await ctx.ui.select(
+					"select a profile",
+						entries.map((entry) => {
+						const label = entry.label ?? entry.description;
+						return `${entry.name} [${entry.source}]${label !== undefined ? ` — ${label}` : ""}`;
+					}),
+				);
+				if (choice === undefined) return; // cancelled
+				const chosen = choice.split(" [")[0] ?? choice;
+				if (chosen === plan.profile) return;
+				const switched = await switchProfile(chosen, deps, { clearOverlay: true });
+				for (const warning of switched.warnings) notify(warning, "warning");
 			} catch (error) {
 				notify(error instanceof Error ? error.message : String(error), "error");
 			}

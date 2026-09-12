@@ -52,6 +52,16 @@ export interface LaunchPlanFile {
 	switchedFrom?: string;
 	persistSelection?: boolean;
 	clearOverlay?: boolean;
+	resolved?: {
+		skills: Array<{ name: string; filePath: string }>;
+		extensions: Array<{ id: string; entry: string }>;
+	};
+	previousResolved?: {
+		skills: string[];
+		extensions: string[];
+		tools?: string[];
+		mcp?: string[];
+	};
 }
 
 /** The narrow slice of ExtensionAPI/Context the application needs. */

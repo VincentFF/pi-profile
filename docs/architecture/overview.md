@@ -218,7 +218,13 @@ pi-profile/
 │   ├── settings-generator.ts     # plan → settings.json + symlinks + env + flags
 │   ├── runtime-state-store.ts
 │   ├── mcp-config.ts             # adapter pi-native 配置的 server 名只读发现
-│   └── mcp-coordination.ts       # pi.events 协调契约（allowlist 频道 + 探测）
+│   ├── mcp-coordination.ts       # pi.events 协调契约（allowlist 频道 + 探测）
+│   ├── switching/                # 会话内切换 / overlay / 可观测面
+│   │   ├── switch-profile.ts     # 切换编排（快照→重写→reload→回滚）
+│   │   ├── apply-plan.ts         # session_start 应用（tools/model/mcp/状态/摘要）
+│   │   ├── customize.ts          # runtime overlay customize/reset
+│   │   ├── list-profiles.ts      # /profile list（信任门控的 catalog 列表）
+│   │   └── status.ts             # /profile status 报告（plan + overlay + MCP 三态 + 冲突）
 │   └── tui/
 │       ├── profile-selector.ts
 │       ├── profile-editor.ts

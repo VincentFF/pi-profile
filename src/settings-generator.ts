@@ -244,8 +244,15 @@ export interface RuntimeFileOptions {
 	 *  `switchedFrom` triggers the one-shot change summary; `persistSelection`
 	 *  tells the post-reload extension instance to save the selection and
 	 *  record the rollback anchor; `clearOverlay` drops the stored overlay
-	 *  (a profile switch discards the previous profile's overlay). */
-	planExtras?: { switchedFrom?: string; persistSelection?: boolean; clearOverlay?: boolean };
+	 *  (a profile switch discards the previous profile's overlay).
+	 *  `previousResolved` carries the pre-switch resolved name sets so
+	 *  `/profile status` can report glob deltas (ticket 07). */
+	planExtras?: {
+		switchedFrom?: string;
+		persistSelection?: boolean;
+		clearOverlay?: boolean;
+		previousResolved?: ResolvedNames;
+	};
 }
 
 /** Computes the generated settings for a plan (pure-ish: reads the user's
@@ -294,6 +301,14 @@ async function computeSettings(
 	return buildSelectionSettings(plan, base, agentDir, options.discovery ?? { skills: [], packages: [] });
 }
 
+/** Resolved name sets, carried in the launch plan for glob-delta reporting. */
+export interface ResolvedNames {
+	skills: string[];
+	extensions: string[];
+	tools?: string[];
+	mcp?: string[];
+}
+
 /** Writes settings.json + pi-profile.json into an existing runtime dir and
  *  transitions the trust.json link to the plan's filter mode: linked for
  *  `default` (native trust behavior), absent for named profiles (a stored
@@ -324,6 +339,12 @@ export async function writeRuntimeFiles(
 				...(plan.tools !== undefined ? { tools: plan.tools } : {}),
 				...(plan.toolReferences !== undefined ? { toolReferences: plan.toolReferences } : {}),
 				...(plan.mcp !== undefined ? { mcp: plan.mcp } : {}),
+				// The resolved sets feed /profile status (absolute paths) and the
+				// glob-delta diff against the previous activation.
+				resolved: {
+					skills: plan.skills.map((skill) => ({ name: skill.name, filePath: skill.filePath })),
+					extensions: plan.extensions,
+				},
 				...options.planExtras,
 			},
 			null,

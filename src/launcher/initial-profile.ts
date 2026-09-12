@@ -54,8 +54,10 @@ export interface InitialProfile {
 }
 
 /** Reads the real global `defaultProjectTrust` setting (a trust input) and,
- *  when trusted, the project's `.pi/settings.json`. */
-async function readTrustInputs(context: LauncherContext): Promise<{
+ *  when trusted, the project's `.pi/settings.json`. Exported for the
+ *  session-side surfaces (selector/list/status) that need the same trust
+ *  gate the launcher uses. */
+export async function readTrustInputs(context: LauncherContext): Promise<{
 	projectTrusted: boolean;
 	projectSettings?: Record<string, unknown>;
 }> {

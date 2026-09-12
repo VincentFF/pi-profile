@@ -21,6 +21,9 @@ export class RpcDriver {
 	private pending = new Map<string, (response: RpcResponse) => void>();
 	private seq = 0;
 	readonly stderr: string[] = [];
+	/** All parsed stdout messages (responses and unsolicited events). */
+	readonly messages: unknown[] = [];
+	private waiters: Array<{ predicate: (message: unknown) => boolean; resolve: (message: unknown) => void }> = [];
 
 	constructor(command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) {
 		this.child = spawn(command, args, {
@@ -41,6 +44,30 @@ export class RpcDriver {
 				this.pending.get(message.id)!(message);
 				this.pending.delete(message.id);
 			}
+			this.messages.push(message);
+			for (const waiter of [...this.waiters]) {
+				if (waiter.predicate(message)) {
+					this.waiters.splice(this.waiters.indexOf(waiter), 1);
+					waiter.resolve(message);
+				}
+			}
+		});
+	}
+
+	/** Resolves with the next (or an already-seen) message matching the
+	 *  predicate. For unsolicited events such as displayed custom messages. */
+	waitFor(predicate: (message: unknown) => boolean, timeoutMs = 20_000): Promise<unknown> {
+		const seen = this.messages.find(predicate);
+		if (seen !== undefined) return Promise.resolve(seen);
+		return new Promise((resolve, reject) => {
+			const timer = setTimeout(() => reject(new Error("timeout waiting for event")), timeoutMs);
+			this.waiters.push({
+				predicate,
+				resolve: (message) => {
+					clearTimeout(timer);
+					resolve(message);
+				},
+			});
 		});
 	}
 
