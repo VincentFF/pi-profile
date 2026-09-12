@@ -23,6 +23,9 @@ export class RpcDriver {
 	readonly stderr: string[] = [];
 	/** All parsed stdout messages (responses and unsolicited events). */
 	readonly messages: unknown[] = [];
+	/** Scripted dialog answers: consumed in order for extension_ui_request
+	 *  prompts (select/input → {value}, confirm → {confirmed}). */
+	private dialogAnswers: Array<{ value?: string; confirmed?: boolean }> = [];
 	private waiters: Array<{ predicate: (message: unknown) => boolean; resolve: (message: unknown) => void }> = [];
 
 	constructor(command: string, args: string[], options: { cwd: string; env: NodeJS.ProcessEnv }) {
@@ -45,6 +48,27 @@ export class RpcDriver {
 				this.pending.delete(message.id);
 			}
 			this.messages.push(message);
+			if (
+				typeof message === "object" &&
+				message !== null &&
+				(message as { type?: string }).type === "extension_ui_request" &&
+				(message as { method?: string }).method !== "notify"
+			) {
+				const request = message as unknown as { id: string; method: string };
+				const answer = this.dialogAnswers.shift() ?? { confirmed: true };
+				this.child.stdin!.write(
+					JSON.stringify({
+						type: "extension_ui_response",
+						id: request.id,
+						...(request.method === "confirm" ? { confirmed: answer.confirmed ?? true } : {}),
+						...(request.method !== "confirm" && answer.value !== undefined
+							? { value: answer.value }
+							: request.method !== "confirm"
+								? { cancelled: true }
+								: {}),
+					}) + "\n",
+				);
+			}
 			for (const waiter of [...this.waiters]) {
 				if (waiter.predicate(message)) {
 					this.waiters.splice(this.waiters.indexOf(waiter), 1);
@@ -52,6 +76,11 @@ export class RpcDriver {
 				}
 			}
 		});
+	}
+
+	/** Queue scripted answers for upcoming extension dialogs. */
+	answerDialogs(answers: Array<{ value?: string; confirmed?: boolean }>): void {
+		this.dialogAnswers.push(...answers);
 	}
 
 	/** Resolves with the next (or an already-seen) message matching the

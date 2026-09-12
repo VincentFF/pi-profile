@@ -4,10 +4,20 @@
 
 **Blocked by:** 03 (Project trust mirroring, project catalogs, and scope-aware state), 05 (In-session switching, reload, and rollback)
 
-**Status:** ready-for-agent
+**Status:** done
 
-- [ ] `/profile resource list|create|edit|delete` work in TUI mode for both global and project registries; the create/edit wizard captures logical ID, entry path, `dependsOn`, and `alwaysOn`.
-- [ ] Entries are `extension` kind only; MCP capabilities cannot be declared through the resource registry.
-- [ ] Deleting an entry referenced by any profile or by another resource's `dependsOn` is rejected with a clear message.
-- [ ] Project-registry changes (new IDs, same-ID overrides) take effect on the next activation or reload.
-- [ ] Wizard saves overwrite external concurrent catalog edits instead of blocking on them.
+- [x] `/profile resource list|create|edit|delete` work in TUI mode for both global and project registries; the create/edit wizard captures logical ID, entry path, `dependsOn`, and `alwaysOn`.
+- [x] Entries are `extension` kind only; MCP capabilities cannot be declared through the resource registry.
+- [x] Deleting an entry referenced by any profile or by another resource's `dependsOn` is rejected with a clear message.
+- [x] Project-registry changes (new IDs, same-ID overrides) take effect on the next activation or reload.
+- [x] Wizard saves overwrite external concurrent catalog edits instead of blocking on them.
+
+## Comments
+
+**2026-09-12 — completed** (review fixes: extension header docblock, wizard path hint, overview gloss, import merge)
+
+Write side lives in `src/resource-registry-store.ts` (whole-file overwrite, schemaVersion envelope, entries re-parsed through the registry's own `parseResourceEntry` so anything written is loadable; missing file → empty skeleton; malformed file → RegistryError even on the write path). Orchestration in `src/switching/resource-crud.ts`: trust-gated merged listing (project shadows global), referrer scan across BOTH scopes (shadowed global profiles still activate elsewhere, so their references keep the entry alive) plus cross-scope `dependsOn`, delete refusal naming every referrer, project-scope mutations rejected when untrusted. Wizard in `src/switching/resource-wizard.ts` with an injected `{select, input, confirm}` UI; any cancelled step aborts without writing. Save semantics: re-read at write time — never blocks on concurrent edits (ticket requirement), unrelated external entries survive, same-entry conflicts resolve last-write-wins. All mutations apply through the standard `reloadCurrent` switch path.
+
+Found while integrating: post-reload `ctx.ui.notify` throws on the stale command context (Pi invalidates it on reload), which surfaced as `extension_error` events and swallowed success messages. Fixed systematically — mutation success notifies fire BEFORE the reload; all notifies are now stale-tolerant (post-reload feedback is the new instance's session_start summary). Also confirmed semantics: the built-in default profile resolves zero pi-profile resources (ticket 02 purity), so `alwaysOn` loads in named profiles only — the integration test drives the create→reload→loaded flow on a named profile.
+
+Verification: `tsc --noEmit` clean; `vitest run` 250/250 across 31 files. Integration (real pi, RPC dialogs scripted): wizard create captures id/entry/dependsOn/alwaysOn into the global registry and the auto-reload loads the alwaysOn entry (session_start marker); delete is refused while a profile references the entry (file untouched) and succeeds once unreferenced.

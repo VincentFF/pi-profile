@@ -35,7 +35,9 @@ export class RegistryError extends Error {
 	}
 }
 
-function parseEntry(id: string, raw: unknown): ResourceEntry {
+/** Parses one raw registry entry; exported for the write-side store
+ *  (resource-registry-store.ts) so anything written is loadable. */
+export function parseResourceEntry(id: string, raw: unknown): ResourceEntry {
 	if (!isRecord(raw)) {
 		throw new RegistryError(`resource "${id}" must be an object`);
 	}
@@ -89,7 +91,7 @@ async function loadRegistryFile(registryPath: string): Promise<Map<string, Resou
 		throw new RegistryError(`${registryPath}: "resources" must be an object mapping IDs to entries`);
 	}
 	for (const [id, entry] of Object.entries(parsed.resources)) {
-		entries.set(id, parseEntry(id, entry));
+		entries.set(id, parseResourceEntry(id, entry));
 	}
 	return entries;
 }

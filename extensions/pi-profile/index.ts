@@ -8,6 +8,8 @@ import { RuntimeStateStore } from "../../src/runtime-state-store.ts";
 import { applyLaunchPlan, readLaunchPlanFile } from "../../src/switching/apply-plan.ts";
 import { CUSTOMIZE_USAGE, customizeOverlay, parseCustomizeArgs, resetOverlay } from "../../src/switching/customize.ts";
 import { formatProfileList, listProfiles } from "../../src/switching/list-profiles.ts";
+import { deleteRegistryEntry, listRegistryEntries, upsertRegistryEntry } from "../../src/switching/resource-crud.ts";
+import { runResourceWizard } from "../../src/switching/resource-wizard.ts";
 import { buildStatusReport, formatStatusMarkdown } from "../../src/switching/status.ts";
 import { switchProfile, type SwitchDeps } from "../../src/switching/switch-profile.ts";
 
@@ -30,6 +32,10 @@ import { switchProfile, type SwitchDeps } from "../../src/switching/switch-profi
  *   observability surface (ticket 07). Status combines the active launch
  *   plan, the stored overlay, fresh MCP discovery, and Pi's actual command
  *   registrations (the winner evidence for same-name conflicts).
+ * - `/profile resource list|create|edit|delete`: registry CRUD with the
+ *   referrer-guarded delete and wizard (ticket 08); mutations apply via
+ *   the standard reload path. Mutation success is notified BEFORE the
+ *   reload — the command context is stale afterwards.
  *
  * Pi re-executes this module on reload, so post-reload state is established
  * exclusively through `session_start` — nothing stale survives.
@@ -79,14 +85,32 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 		handler: async (args, ctx) => {
 			const [subcommandRaw, ...rest] = args.trim().split(/\s+/).filter(Boolean);
 			const subcommand = subcommandRaw ?? ""; // bare /profile → selector
-			const notify = (message: string, level: "info" | "warning" | "error") => ctx.ui?.notify(message, level);
-			const usage = `usage: /profile [use <name> | reload | ${CUSTOMIZE_USAGE} | reset | list | status]`;
+			// Stale-tolerant: after a successful reload this command context is
+			// invalidated and property access throws. Post-reload feedback is
+			// the new instance's job (session_start summary), so swallowed
+			// stale-ctx failures lose nothing the user would otherwise see.
+			const notify = (message: string, level: "info" | "warning" | "error") => {
+				try {
+					ctx.ui?.notify(message, level);
+				} catch {
+					// stale context after reload — see above
+				}
+			};
+			const usage = `usage: /profile [use <name> | reload | ${CUSTOMIZE_USAGE} | reset | list | status | resource list|create|edit <id>|delete <id>]`;
 			if (subcommand === "use" && rest.length === 0) {
 				notify("usage: /profile use <name>", "error");
 				return;
 			}
-			if (subcommand !== "" && !["use", "reload", "customize", "reset", "list", "status"].includes(subcommand)) {
+			if (subcommand !== "" && !["use", "reload", "customize", "reset", "list", "status", "resource"].includes(subcommand)) {
 				notify(usage, "error");
+				return;
+			}
+			if (subcommand === "resource" && !["list", "create", "edit", "delete"].includes(rest[0] ?? "")) {
+				notify("usage: /profile resource list|create|edit <id>|delete <id>", "error");
+				return;
+			}
+			if (subcommand === "resource" && ["edit", "delete"].includes(rest[0] ?? "") && rest[1] === undefined) {
+				notify(`usage: /profile resource ${rest[0]} <id>`, "error");
 				return;
 			}
 			try {
@@ -133,6 +157,76 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					const result = await resetOverlay(deps);
 					for (const warning of result.warnings) notify(warning, "warning");
 					notify(`overlay cleared: ${result.profile}`, "info");
+					return;
+				}
+				// Resource-registry CRUD (ticket 08): mutations land in the
+				// chosen scope file, then apply through the standard
+				// rewrite-settings-and-reload path.
+				if (subcommand === "resource") {
+					const [action, targetId] = rest as [string, string?];
+					const listing = await listRegistryEntries({ realAgentDir: plan.agentDir, cwd: ctx.cwd });
+					if (action === "list") {
+						const lines = listing.map(
+							(entry) =>
+								`${entry.id} [${entry.source}]${entry.shadowsGlobal ? " (shadows global)" : ""} → ${entry.entry}` +
+								`${entry.alwaysOn ? " alwaysOn" : ""}${entry.dependsOn.length > 0 ? ` dependsOn=[${entry.dependsOn.join(", ")}]` : ""}`,
+						);
+						pi.sendMessage({
+							customType: "pi-profile",
+							content: lines.length > 0 ? lines.join("\n") : "no resources registered",
+							display: true,
+						});
+						return;
+					}
+					if (!ctx.hasUI) {
+						notify(`/profile resource ${action} requires interactive UI`, "error");
+						return;
+					}
+					if (action === "delete") {
+						const id = targetId as string;
+						const matches = listing.filter((entry) => entry.id === id);
+						if (matches.length === 0) {
+							notify(`resource "${id}" not found`, "error");
+							return;
+						}
+						// An entry present in both scopes needs an explicit scope
+						// choice — the project override and the global base are
+						// independent records.
+						const scope =
+							matches.length === 1
+								? matches[0]?.source
+								: ((await ctx.ui.select(`delete "${id}" from which registry?`, ["global", "project"])) as
+										| "global"
+										| "project"
+										| undefined);
+						if (scope === undefined) return;
+						const confirmed = await ctx.ui.confirm("delete resource?", `delete "${id}" from the ${scope} registry`);
+						if (!confirmed) return;
+						await deleteRegistryEntry({ realAgentDir: plan.agentDir, cwd: ctx.cwd }, scope, id);
+						// Notify BEFORE the reload: this context is stale
+						// afterwards, so post-reload messages never arrive.
+						notify(`deleted resource "${id}" (${scope}); reloading`, "info");
+						const result = await switchProfile(plan.profile, deps, { reloadCurrent: true });
+						for (const warning of result.warnings) notify(warning, "warning");
+						return;
+					}
+					// create | edit → wizard
+					const existing =
+						action === "edit" ? listing.find((entry) => entry.id === targetId) : undefined;
+					if (action === "edit" && existing === undefined) {
+						notify(`resource "${targetId ?? ""}" not found`, "error");
+						return;
+					}
+					const { projectTrusted: trustedForWizard } = await readTrustInputs({ agentDir: plan.agentDir, cwd: ctx.cwd });
+					const wizard = await runResourceWizard(ctx.ui, { projectTrusted: trustedForWizard, existing });
+					if (wizard === undefined) return; // cancelled
+					await upsertRegistryEntry({ realAgentDir: plan.agentDir, cwd: ctx.cwd }, wizard.scope, wizard.entry);
+					notify(
+						`${action === "create" ? "created" : "updated"} resource "${wizard.entry.id}" (${wizard.scope}); reloading`,
+						"info",
+					);
+					const result = await switchProfile(plan.profile, deps, { reloadCurrent: true });
+					for (const warning of result.warnings) notify(warning, "warning");
 					return;
 				}
 				// Observability surface (ticket 07): bare /profile opens the

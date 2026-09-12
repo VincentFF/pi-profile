@@ -217,6 +217,7 @@ pi-profile/
 │   ├── profile-resolver.ts
 │   ├── settings-generator.ts     # plan → settings.json + symlinks + env + flags
 │   ├── runtime-state-store.ts
+│   ├── resource-registry-store.ts # resources.json 写入侧（last-write-wins）
 │   ├── mcp-config.ts             # adapter pi-native 配置的 server 名只读发现
 │   ├── mcp-coordination.ts       # pi.events 协调契约（allowlist 频道 + 探测）
 │   ├── switching/                # 会话内切换 / overlay / 可观测面
@@ -224,7 +225,9 @@ pi-profile/
 │   │   ├── apply-plan.ts         # session_start 应用（tools/model/mcp/状态/摘要）
 │   │   ├── customize.ts          # runtime overlay customize/reset
 │   │   ├── list-profiles.ts      # /profile list（信任门控的 catalog 列表）
-│   │   └── status.ts             # /profile status 报告（plan + overlay + MCP 三态 + 冲突）
+│   │   ├── status.ts             # /profile status 报告（plan + overlay + MCP 三态 + 冲突）
+│   │   ├── resource-crud.ts      # /profile resource list/create/edit/delete（引用防护）
+│   │   └── resource-wizard.ts    # create/edit 向导（UI 注入，可测）
 │   └── tui/
 │       ├── profile-selector.ts
 │       ├── profile-editor.ts

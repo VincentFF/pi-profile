@@ -5,6 +5,8 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import piProfileExtension from "../extensions/pi-profile/index.ts";
 import { MCP_ALLOWLIST_EVENT } from "../src/mcp-coordination.ts";
+import { ResourceRegistry } from "../src/resource-registry.ts";
+import { runResourceWizard } from "../src/switching/resource-wizard.ts";
 import { fakeEventBus, installFakeAdapter, type FakeEventBus } from "./helpers/fake-event-bus.ts";
 
 let root: string;
@@ -68,25 +70,45 @@ function fakePi(): FakePi {
 	return pi;
 }
 
-function fakeCtx(options?: { hasUI?: boolean; selectAnswer?: string }) {
+function fakeCtx(options?: {
+	hasUI?: boolean;
+	selectAnswer?: string;
+	selectAnswers?: string[];
+	inputAnswers?: Array<string | undefined>;
+	confirmAnswers?: boolean[];
+}) {
 	const notifications: Array<{ message: string; level: string }> = [];
 	const selectCalls: Array<{ title: string; options: string[] }> = [];
+	const inputAnswers = [...(options?.inputAnswers ?? [])];
+	const confirmAnswers = [...(options?.confirmAnswers ?? [])];
+	const selectAnswers = [...(options?.selectAnswers ?? [])];
+	// Mirror real Pi: reload re-executes extensions, invalidating this
+	// context — property access afterwards throws (the switch's staleness
+	// probe reads ctx.cwd).
+	let stale = false;
 	return {
 		notifications,
 		selectCalls,
-		cwd: root,
+		get cwd() {
+			if (stale) throw new Error("context invalidated by reload");
+			return root;
+		},
 		hasUI: options?.hasUI ?? false,
 		isIdle: () => true,
 		waitForIdle: async () => {},
-		reload: async () => {},
+		reload: async () => {
+			stale = true;
+		},
 		ui: {
 			notify(message: string, level: string) {
 				notifications.push({ message, level });
 			},
 			select: async (title: string, selectOptions: string[]) => {
 				selectCalls.push({ title, options: selectOptions });
-				return options?.selectAnswer;
+				return selectAnswers.length > 0 ? selectAnswers.shift() : options?.selectAnswer;
 			},
+			input: async () => inputAnswers.shift(),
+			confirm: async () => confirmAnswers.shift() ?? true,
 		},
 	};
 }
@@ -240,5 +262,115 @@ describe("pi-profile extension", () => {
 			expect(pi.sentMessages).toHaveLength(0);
 			expect(ctx.notifications).toHaveLength(0);
 		});
+	});
+
+	describe("resource CRUD (ticket 08)", () => {
+		it("/profile resource create runs the wizard, writes the global registry, and reloads", async () => {
+			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx({
+				hasUI: true,
+				selectAnswers: ["global"],
+				inputAnswers: ["linter", "/x/linter.ts", "base, tools"],
+				confirmAnswers: [true],
+			});
+
+			await pi.commands.get("profile")?.handler("resource create" as never, ctx as never);
+
+			const registry = await ResourceRegistry.load(root);
+			expect(registry.get("linter")).toEqual({
+				id: "linter",
+				kind: "extension",
+				entry: "/x/linter.ts",
+				dependsOn: ["base", "tools"],
+				alwaysOn: true,
+			});
+			expect(ctx.notifications.some((entry) => entry.message.includes('created resource "linter"'))).toBe(true);
+		});
+
+		it("/profile resource delete surfaces the referrer guard as an error", async () => {
+			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+			await writeFile(
+				path.join(root, "resources.json"),
+				JSON.stringify({ schemaVersion: 1, resources: { linter: { kind: "extension", entry: "/x.ts" } } }),
+			);
+			await writeFile(
+				path.join(root, "profiles.json"),
+				JSON.stringify({ schemaVersion: 1, profiles: { review: { extensions: ["linter"] } } }),
+			);
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx({ hasUI: true, confirmAnswers: [true] });
+
+			await pi.commands.get("profile")?.handler("resource delete linter" as never, ctx as never);
+
+			expect(ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("referenced by"))).toBe(
+				true,
+			);
+			// Not deleted.
+			expect((await ResourceRegistry.load(root)).get("linter")).toBeDefined();
+		});
+
+		it("/profile resource create refuses non-interactive mode", async () => {
+			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx({ hasUI: false });
+
+			await pi.commands.get("profile")?.handler("resource create" as never, ctx as never);
+
+			expect(ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("interactive"))).toBe(
+				true,
+			);
+		});
+	});
+});
+
+describe("runResourceWizard", () => {
+	it("captures id, entry, dependsOn, alwaysOn; cancel at any step aborts", async () => {
+		const ui = {
+			select: async () => "project",
+			input: async (title: string) => (title.includes("dependsOn") ? "a, b" : title.includes("id") ? "res" : "/e.ts"),
+			confirm: async () => false,
+		};
+		const result = await runResourceWizard(ui, { projectTrusted: true });
+		expect(result).toEqual({ scope: "project", entry: { id: "res", entry: "/e.ts", dependsOn: ["a", "b"], alwaysOn: false } });
+
+		const cancelling = { select: async () => undefined, input: async () => "x", confirm: async () => true };
+		expect(await runResourceWizard(cancelling, { projectTrusted: true })).toBeUndefined();
+	});
+
+	it("hides the project scope when untrusted and prefills on edit", async () => {
+		const offered: string[][] = [];
+		const placeholders: Array<string | undefined> = [];
+		const ui = {
+			select: async (_t: string, options: string[]) => {
+				offered.push(options);
+				return options[0];
+			},
+			input: async (_t: string, placeholder?: string) => {
+				placeholders.push(placeholder);
+				return placeholder ?? "/new.ts";
+			},
+			confirm: async () => true,
+		};
+		expect(await runResourceWizard(ui, { projectTrusted: false })).toMatchObject({ scope: "global" });
+		expect(offered[0]).toEqual(["global"]);
+
+		const edit = await runResourceWizard(ui, {
+			projectTrusted: true,
+			existing: {
+				id: "linter",
+				kind: "extension",
+				entry: "/old.ts",
+				dependsOn: ["base"],
+				alwaysOn: false,
+				source: "global",
+				shadowsGlobal: false,
+			},
+		});
+		expect(edit?.entry.id).toBe("linter"); // id fixed on edit
+		expect(edit?.entry.entry).toBe("/old.ts");
 	});
 });
