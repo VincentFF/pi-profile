@@ -36,6 +36,18 @@ export async function addGlobalSkill(fixture: PiFixture, name: string): Promise<
 	);
 }
 
+/** Registers an extension in the fixture agent dir's global extensions
+ *  directory. The extension registers one command named `<name>` so tests can
+ *  observe its loaded-ness through RPC get_commands. */
+export async function addGlobalExtension(fixture: PiFixture, name: string): Promise<void> {
+	const dir = path.join(fixture.agentDir, "extensions");
+	await mkdir(dir, { recursive: true });
+	await writeFile(
+		path.join(dir, `${name}.ts`),
+		`import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";\n\nexport default function (pi: ExtensionAPI) {\n\tpi.registerCommand("${name}", {\n\t\tdescription: "Fixture extension command ${name}",\n\t\thandler: async () => {},\n\t});\n}\n`,
+	);
+}
+
 /** Recursively lists all files under dir (used to prove a run writes nothing). */
 export async function listFiles(dir: string): Promise<string[]> {
 	const entries = await readdir(dir, { withFileTypes: true });

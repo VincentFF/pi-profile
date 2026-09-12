@@ -3,14 +3,16 @@
  *
  * Grammar: `pi-profile [profile] [--] <pi args>...`
  * - The launcher consumes exactly two things: an optional leading positional
- *   profile name, and at most one `--` separator.
+ *   profile name, and at most one `--` separator. Positional arguments after
+ *   the profile name belong to pi (they are pi's message arguments).
  * - Everything else is passed through to Pi verbatim (ADR-0005): any pi flag,
  *   known or unknown, reaches the real pi binary unchanged.
  * - `--approve` / `-a` / `--no-approve` / `-na` are recognized and recorded as
  *   a trust override input; the caller decides whether to re-apply them
  *   (default profile: native passthrough) or feed them to the resolver
  *   (non-default profiles: one-run trust input, never forwarded, so Pi never
- *   auto-discovers unfiltered project resources).
+ *   auto-discovers unfiltered project resources). Contradictory repeats are
+ *   last-wins, matching CLI convention.
  */
 
 export interface LauncherArgs {
@@ -41,11 +43,11 @@ export function parseLauncherArgs(argv: string[]): LauncherArgs {
 	const piArgs: string[] = [];
 	for (const arg of rest) {
 		if (APPROVE_FLAGS.has(arg)) {
-			trustOverride = trustOverride ?? true;
+			trustOverride = true; // last-wins, like pi's own flag handling
 			continue;
 		}
 		if (NO_APPROVE_FLAGS.has(arg)) {
-			trustOverride = trustOverride ?? false;
+			trustOverride = false;
 			continue;
 		}
 		piArgs.push(arg);

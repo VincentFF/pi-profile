@@ -2,10 +2,10 @@
  * SettingsGenerator: materializes an ActivationPlan as a pi-profile-owned
  * runtime directory (ADR-0005).
  *
- * For the built-in `default` profile the generated settings are a verbatim
- * copy of the user's global settings — no filtering, native trust behavior —
- * plus symlinks back to the user's real trust/auth/models/npm state, so the
- * spawned pi behaves exactly like native `pi` while the runtime directory
+ * For the built-in `default` profile the generated settings preserve the
+ * user's global settings untouched and re-include the real agent dir's
+ * resource dirs (their discovery root moves with `PI_CODING_AGENT_DIR`), so
+ * the spawned pi behaves exactly like native `pi` while the runtime directory
  * stays pi-profile-owned (which is what later in-session switching rewrites).
  *
  * User configuration files are never modified.
@@ -93,6 +93,7 @@ export async function generateRuntimeDir(
 			PI_CODING_AGENT_DIR: runtimeDir,
 			PI_CODING_AGENT_SESSION_DIR: path.join(agentDir, "sessions"),
 		},
-		flags: plan.filter === "none" ? [] : [],
+		// Seam for resolver tickets: --tools / --model derived from the plan.
+		flags: [],
 	};
 }

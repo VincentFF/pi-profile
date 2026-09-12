@@ -47,15 +47,25 @@ export class RpcDriver {
 	send(command: Record<string, unknown>, timeoutMs = 20_000): Promise<RpcResponse> {
 		const id = `req-${++this.seq}`;
 		return new Promise((resolve, reject) => {
-			this.pending.set(id, resolve);
-			setTimeout(() => reject(new Error(`timeout waiting for ${String(command.type)}`)), timeoutMs);
+			const timer = setTimeout(() => {
+				this.pending.delete(id);
+				reject(new Error(`timeout waiting for ${String(command.type)}`));
+			}, timeoutMs);
+			this.pending.set(id, (response) => {
+				clearTimeout(timer);
+				resolve(response);
+			});
 			this.child.stdin!.write(JSON.stringify({ id, ...command }) + "\n");
 		});
 	}
 
-	async skillCommandNames(): Promise<string[]> {
+	async commandNames(): Promise<Array<{ name: string; source: string }>> {
 		const response = await this.send({ type: "get_commands" });
-		return (response.data?.commands ?? [])
+		return (response.data?.commands ?? []).map((command) => ({ name: command.name, source: command.source }));
+	}
+
+	async skillCommandNames(): Promise<string[]> {
+		return (await this.commandNames())
 			.filter((command) => command.source === "skill")
 			.map((command) => command.name)
 			.sort();

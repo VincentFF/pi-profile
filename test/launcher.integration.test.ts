@@ -3,7 +3,7 @@ import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { addGlobalSkill, createPiFixture, listFiles, type PiFixture } from "./helpers/pi-fixture.ts";
+import { addGlobalExtension, addGlobalSkill, createPiFixture, listFiles, type PiFixture } from "./helpers/pi-fixture.ts";
 import { RpcDriver } from "./helpers/rpc-driver.ts";
 
 const BIN = path.resolve("bin/pi-profile.ts");
@@ -14,6 +14,7 @@ beforeEach(async () => {
 	fixture = await createPiFixture();
 	await addGlobalSkill(fixture, "alpha-skill");
 	await addGlobalSkill(fixture, "beta-skill");
+	await addGlobalExtension(fixture, "fixture-ext-cmd");
 });
 
 afterEach(async () => {
@@ -33,27 +34,40 @@ function launcherEnv(): NodeJS.ProcessEnv {
 
 describe("launcher integration: real pi subprocess, default profile", () => {
 	it(
-		"starts the default profile exposing all fixture skills, and leaves user settings untouched",
+		"starts the default profile exposing all fixture resources, and leaves the real agent dir untouched",
 		{ timeout: 45_000 },
 		async () => {
 			const userSettings = { customKey: "keep-me" };
 			await writeFile(path.join(fixture.agentDir, "settings.json"), JSON.stringify(userSettings));
+			const agentDirBefore = await listFiles(fixture.agentDir);
 
 			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
 				env: launcherEnv(),
 			});
 			try {
-				// Startup settle: the first command round-trip implies the session is up.
-				const skills = await rpc.skillCommandNames();
-				expect(skills).toContain("skill:alpha-skill");
-				expect(skills).toContain("skill:beta-skill");
+				const commands = await rpc.commandNames();
+				const names = commands.map((command) => command.name);
+				expect(names).toContain("skill:alpha-skill");
+				expect(names).toContain("skill:beta-skill");
+				// The fixture extension's command proves its code loaded.
+				expect(commands.some((command) => command.name === "fixture-ext-cmd" && command.source === "extension")).toBe(
+					true,
+				);
 			} finally {
 				await rpc.close();
 			}
 
 			// User's real settings are never rewritten.
 			expect(JSON.parse(await readFile(path.join(fixture.agentDir, "settings.json"), "utf8"))).toEqual(userSettings);
+			// New files in the real agent dir stay inside pi-profile-owned runtime
+			// dirs and pi's own session storage — nothing else appears.
+			const agentDirAfter = await listFiles(fixture.agentDir);
+			const created = agentDirAfter.filter((file) => !agentDirBefore.includes(file));
+			for (const file of created) {
+				const relative = path.relative(fixture.agentDir, file);
+				expect(relative.startsWith(path.join("pi-profile", "runtime")) || relative.startsWith("sessions")).toBe(true);
+			}
 			// Launcher selection is transient: no runtime state file anywhere.
 			const files = await listFiles(fixture.root);
 			expect(files.filter((file) => file.endsWith("pi-profile-state.json"))).toEqual([]);

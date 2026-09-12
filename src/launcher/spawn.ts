@@ -19,26 +19,25 @@ export interface SpawnPiOptions {
 	piArgs: string[];
 	/** Trust override recorded by the launcher; re-applied natively for the default profile. */
 	trustOverride: boolean | undefined;
-	/** pi binary to run (default: "pi" from PATH). */
-	piCommand?: string;
-	/** Extra environment overrides (tests). */
-	env?: Record<string, string | undefined>;
 }
 
 const EXTENSION_ENTRY = fileURLToPath(new URL("../../extensions/pi-profile/index.ts", import.meta.url));
 
-export async function spawnPi(options: SpawnPiOptions): Promise<number> {
-	const piCommand = options.piCommand ?? "pi";
-
+/** Pure argv construction for the spawned pi: extension entry, generated
+ *  flags, trust re-application, then user args verbatim. */
+export function buildPiArgs(options: SpawnPiOptions): string[] {
 	const args = ["-e", EXTENSION_ENTRY, ...options.generated.flags];
 	// default profile keeps trust behavior native: re-apply the recorded flag.
 	if (options.trustOverride === true) args.push("--approve");
 	if (options.trustOverride === false) args.push("--no-approve");
 	args.push(...options.piArgs);
+	return args;
+}
 
-	const child = spawn(piCommand, args, {
+export async function spawnPi(options: SpawnPiOptions): Promise<number> {
+	const child = spawn("pi", buildPiArgs(options), {
 		stdio: "inherit",
-		env: { ...process.env, ...options.generated.env, ...options.env },
+		env: { ...process.env, ...options.generated.env },
 	});
 
 	const onSigint = () => child.kill("SIGINT");
@@ -50,7 +49,7 @@ export async function spawnPi(options: SpawnPiOptions): Promise<number> {
 		return await new Promise<number>((resolve, reject) => {
 			child.on("error", (error: NodeJS.ErrnoException) => {
 				if (error.code === "ENOENT") {
-					reject(new Error(`pi binary not found on PATH (looked for "${piCommand}")`));
+					reject(new Error(`pi binary not found on PATH`));
 				} else {
 					reject(error);
 				}
