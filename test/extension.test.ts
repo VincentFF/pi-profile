@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -261,6 +261,105 @@ describe("pi-profile extension", () => {
 			// Cancelled: no message, no error notification.
 			expect(pi.sentMessages).toHaveLength(0);
 			expect(ctx.notifications).toHaveLength(0);
+		});
+	});
+
+	describe("profile CRUD (ticket 09)", () => {
+		it("/profile create runs the wizard and writes the chosen scope", async () => {
+			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx({
+				hasUI: true,
+				selectAnswers: ["global"],
+				inputAnswers: ["review", "Code review", "", "review, debug-*", "", "", "", "Be terse.", ""],
+			});
+
+			await pi.commands.get("profile")?.handler("create" as never, ctx as never);
+
+			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
+			expect(catalog.profiles.review).toEqual({
+				label: "Code review",
+				skills: ["review", "debug-*"],
+				instructions: "Be terse.",
+			});
+			expect(ctx.notifications.some((entry) => entry.message.includes("created profile"))).toBe(true);
+		});
+
+		it("editing the ACTIVE profile saves and reloads; editing an inactive one does not", async () => {
+			await writeLaunchPlan({ profile: "review", source: "global", agentDir: root });
+			await writeFile(
+				path.join(root, "profiles.json"),
+				JSON.stringify({ schemaVersion: 1, profiles: { review: { label: "old" }, other: {} } }),
+			);
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+
+			// Active: answers keep everything except a new label.
+			const ctxActive = fakeCtx({ hasUI: true, inputAnswers: ["new label", "", "", "", "", "", "", ""] });
+			await pi.commands.get("profile")?.handler("edit review" as never, ctxActive as never);
+			expect(ctxActive.notifications.some((entry) => entry.message.includes("reloading"))).toBe(true);
+			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
+			expect(catalog.profiles.review).toEqual({ label: "new label" });
+
+			// Inactive: saved, runtime untouched (no reload notification).
+			const ctxInactive = fakeCtx({ hasUI: true, inputAnswers: ["", "desc", "", "", "", "", "", ""] });
+			await pi.commands.get("profile")?.handler("edit other" as never, ctxInactive as never);
+			expect(ctxInactive.notifications.some((entry) => entry.message.includes("inactive"))).toBe(true);
+			expect(catalog && JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8")).profiles.other).toEqual({
+				description: "desc",
+			});
+		});
+
+		it("deleting the active profile requires a replacement, then switches", async () => {
+			await writeLaunchPlan({ profile: "review", source: "global", agentDir: root });
+			await writeFile(
+				path.join(root, "profiles.json"),
+				JSON.stringify({ schemaVersion: 1, profiles: { review: {}, impl: {} } }),
+			);
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx({ hasUI: true, selectAnswers: ["impl [global]"] });
+
+			await pi.commands.get("profile")?.handler("delete review" as never, ctx as never);
+
+			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
+			expect(catalog.profiles.review).toBeUndefined();
+			// Switched: the rewritten plan file names the replacement.
+			const planFile = JSON.parse(await readFile(path.join(root, "pi-profile.json"), "utf8"));
+			expect(planFile.profile).toBe("impl");
+		});
+
+		it("/profile duplicate copies the full definition under a new name", async () => {
+			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+			await writeFile(
+				path.join(root, "profiles.json"),
+				JSON.stringify({
+					schemaVersion: 1,
+					profiles: { review: { label: "Code review", skills: ["r*"], instructions: "Be terse." } },
+				}),
+			);
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx({ hasUI: true, selectAnswers: ["review [global] — Code review"], inputAnswers: ["review-strict"] });
+
+			await pi.commands.get("profile")?.handler("duplicate" as never, ctx as never);
+
+			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
+			expect(catalog.profiles["review-strict"]).toEqual(catalog.profiles.review);
+		});
+
+		it("create/edit/delete refuse non-interactive mode", async () => {
+			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+			const pi = fakePi();
+			piProfileExtension(pi as never);
+			for (const args of ["create", "edit x", "delete x", "duplicate"]) {
+				const ctx = fakeCtx({ hasUI: false });
+				await pi.commands.get("profile")?.handler(args as never, ctx as never);
+				expect(ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("interactive"))).toBe(
+					true,
+				);
+			}
 		});
 	});
 

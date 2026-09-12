@@ -78,7 +78,9 @@ function readOptionalString(value: unknown, field: string, profileName: string):
 	return value;
 }
 
-function parseDefinition(name: string, raw: unknown): ProfileDefinition {
+/** Parses one raw profile definition; exported for the write-side store
+ *  (profile-catalog-store.ts) so anything written is loadable. */
+export function parseProfileDefinition(name: string, raw: unknown): ProfileDefinition {
 	if (!isRecord(raw)) {
 		throw new CatalogError(`profile "${name}" must be an object`);
 	}
@@ -129,7 +131,7 @@ async function loadCatalogFile(catalogPath: string): Promise<Map<string, Profile
 				`${catalogPath}: "${DEFAULT_PROFILE_NAME}" is built in and must not be defined in the catalog`,
 			);
 		}
-		profiles.set(name, parseDefinition(name, definition));
+		profiles.set(name, parseProfileDefinition(name, definition));
 	}
 	return profiles;
 }

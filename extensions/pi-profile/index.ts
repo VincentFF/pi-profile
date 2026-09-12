@@ -8,6 +8,19 @@ import { RuntimeStateStore } from "../../src/runtime-state-store.ts";
 import { applyLaunchPlan, readLaunchPlanFile } from "../../src/switching/apply-plan.ts";
 import { CUSTOMIZE_USAGE, customizeOverlay, parseCustomizeArgs, resetOverlay } from "../../src/switching/customize.ts";
 import { formatProfileList, listProfiles } from "../../src/switching/list-profiles.ts";
+import {
+	createProfile,
+	deleteProfile,
+	duplicateProfile,
+	editProfile,
+	readCatalogScope,
+} from "../../src/switching/profile-crud.ts";
+import type { ProfileDefinition } from "../../src/profile-catalog.ts";
+import {
+	runProfileCreateWizard,
+	runProfileDuplicateWizard,
+	runProfileEditWizard,
+} from "../../src/switching/profile-wizard.ts";
 import { deleteRegistryEntry, listRegistryEntries, upsertRegistryEntry } from "../../src/switching/resource-crud.ts";
 import { runResourceWizard } from "../../src/switching/resource-wizard.ts";
 import { buildStatusReport, formatStatusMarkdown } from "../../src/switching/status.ts";
@@ -96,13 +109,34 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					// stale context after reload — see above
 				}
 			};
-			const usage = `usage: /profile [use <name> | reload | ${CUSTOMIZE_USAGE} | reset | list | status | resource list|create|edit <id>|delete <id>]`;
+			const usage = `usage: /profile [use <name> | reload | ${CUSTOMIZE_USAGE} | reset | list | status | resource ... | create | edit <name> | delete <name> | duplicate]`;
 			if (subcommand === "use" && rest.length === 0) {
 				notify("usage: /profile use <name>", "error");
 				return;
 			}
-			if (subcommand !== "" && !["use", "reload", "customize", "reset", "list", "status", "resource"].includes(subcommand)) {
+			if (
+				subcommand !== "" &&
+				![
+					"use",
+					"reload",
+					"customize",
+					"reset",
+					"list",
+					"status",
+					"resource",
+					"create",
+					"edit",
+					"delete",
+					"duplicate",
+				].includes(
+					subcommand,
+				)
+			) {
 				notify(usage, "error");
+				return;
+			}
+			if (["edit", "delete"].includes(subcommand) && rest[0] === undefined) {
+				notify(`usage: /profile ${subcommand} <name>`, "error");
 				return;
 			}
 			if (subcommand === "resource" && !["list", "create", "edit", "delete"].includes(rest[0] ?? "")) {
@@ -227,6 +261,124 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					);
 					const result = await switchProfile(plan.profile, deps, { reloadCurrent: true });
 					for (const warning of result.warnings) notify(warning, "warning");
+					return;
+				}
+				// Profile catalog CRUD (ticket 09): TUI-only wizards; mutations
+				// land in the chosen scope file. Editing the active profile
+				// reloads immediately; deleting the active profile requires a
+				// replacement chosen up front, then switches to it.
+				if (["create", "edit", "delete", "duplicate"].includes(subcommand)) {
+					if (!ctx.hasUI) {
+						notify(`/profile ${subcommand} requires interactive UI`, "error");
+						return;
+					}
+					const scopeInput = { realAgentDir: plan.agentDir, cwd: ctx.cwd };
+					if (subcommand === "create") {
+						const { projectTrusted: canWriteProject } = await readTrustInputs({
+							agentDir: plan.agentDir,
+							cwd: ctx.cwd,
+						});
+						const wizard = await runProfileCreateWizard(ctx.ui, { projectTrusted: canWriteProject });
+						if (wizard === undefined) return;
+						await createProfile(scopeInput, wizard.scope, wizard.name, wizard.definition);
+						notify(`created profile "${wizard.name}" (${wizard.scope}) — activate with /profile use ${wizard.name}`, "info");
+						return;
+					}
+					if (subcommand === "duplicate") {
+						const entries = await listProfiles(scopeInput);
+						// Read each scope once (trust-gated — never reads an
+						// untrusted project's catalog).
+						const byScope = {
+							global: await readCatalogScope(scopeInput, "global"),
+							project: await readCatalogScope(scopeInput, "project"),
+						};
+						const candidates: Array<{ name: string; source: "global" | "project"; definition: ProfileDefinition }> = [];
+						for (const entry of entries) {
+							if (entry.source === "builtin") continue;
+							const definition = byScope[entry.source].get(entry.name);
+							if (definition !== undefined) {
+								candidates.push({ name: entry.name, source: entry.source, definition });
+							}
+						}
+						const wizard = await runProfileDuplicateWizard(ctx.ui, { candidates });
+						if (wizard === undefined) return;
+						await duplicateProfile(scopeInput, wizard.scope, wizard.sourceName, wizard.newName);
+						notify(
+							`duplicated "${wizard.sourceName}" → "${wizard.newName}" (${wizard.scope}) — the full definition was copied`,
+							"info",
+						);
+						return;
+					}
+					const name = rest[0] as string;
+					if (subcommand === "edit") {
+						// Edit the WINNING definition in its source scope.
+						const entries = await listProfiles(scopeInput);
+						const existing = entries.find((entry) => entry.name === name);
+						if (existing === undefined || existing.source === "builtin") {
+							notify(`profile "${name}" not found in a writable catalog`, "error");
+							return;
+						}
+						const definition = (await readCatalogScope(scopeInput, existing.source)).get(name);
+						if (definition === undefined) {
+							notify(`profile "${name}" not found in the ${existing.source} catalog`, "error");
+							return;
+						}
+						const wizard = await runProfileEditWizard(ctx.ui, {
+							existing: { name, source: existing.source, definition },
+						});
+						if (wizard === undefined) return;
+						await editProfile(scopeInput, wizard.scope, wizard.name, wizard.definition);
+						if (name === plan.profile) {
+							notify(`saved profile "${name}"; reloading`, "info");
+							await switchProfile(plan.profile, deps, { reloadCurrent: true });
+						} else {
+							notify(`saved profile "${name}" (inactive — runtime untouched)`, "info");
+						}
+						return;
+					}
+					// delete
+					const entries = await listProfiles(scopeInput);
+					const existing = entries.find((entry) => entry.name === name);
+					if (existing === undefined || existing.source === "builtin") {
+						notify(`profile "${name}" not found in a writable catalog`, "error");
+						return;
+					}
+					// Both scopes hold the name: choose which record to delete.
+					let scope = existing.source as "global" | "project";
+					const projectCatalog = await readCatalogScope(scopeInput, "project");
+					const globalCatalog = await readCatalogScope(scopeInput, "global");
+					if (projectCatalog.has(name) && globalCatalog.has(name)) {
+						const chosen = await ctx.ui.select(`delete "${name}" from which catalog?`, ["global", "project"]);
+						if (chosen === undefined) return;
+						scope = chosen as "global" | "project";
+					}
+					// If the OTHER scope keeps the name alive, deletion reveals
+					// it and the session can stay on the revealed same-name
+					// definition (symmetric: project→global and global→project).
+					const survivesElsewhere =
+						(scope === "project" && globalCatalog.has(name)) || (scope === "global" && projectCatalog.has(name));
+					let replacement: string | undefined;
+					if (name === plan.profile && !survivesElsewhere) {
+						const survivors = entries.filter((entry) => entry.name !== name);
+						const chosen = await ctx.ui.select(
+							`"${name}" is active — switch to which profile?`,
+							survivors.map((entry) => `${entry.name} [${entry.source}]`),
+						);
+						if (chosen === undefined) return;
+						replacement = chosen.split(" [")[0];
+					}
+					await deleteProfile(scopeInput, scope, name, { activeProfile: plan.profile, replacement });
+					if (name === plan.profile) {
+						if (replacement !== undefined) {
+							notify(`deleted "${name}" (${scope}); switching to ${replacement}`, "info");
+							await switchProfile(replacement, deps, { clearOverlay: true });
+						} else {
+							notify(`deleted the ${scope} record of "${name}"; reloading the revealed definition`, "info");
+							await switchProfile(plan.profile, deps, { reloadCurrent: true });
+						}
+					} else {
+						notify(`deleted profile "${name}" (${scope})`, "info");
+					}
 					return;
 				}
 				// Observability surface (ticket 07): bare /profile opens the

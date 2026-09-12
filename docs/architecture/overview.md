@@ -66,9 +66,9 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 - 位置参数只作用于本次启动（不写 runtime state）；无位置参数时读取保存的活动 profile，不存在则用 `default`。
 - 未知 profile 在 spawn 前失败退出。
 
-### `ProfileCatalog`
+### `ProfileCatalog` / `ProfileCatalogStore`
 
-**Interface**：读取、列出、创建、编辑、删除 global 与 project `Profile`。
+**Interface**：ProfileCatalog 只读（列出、解析 winning 定义）；写入经 ProfileCatalogStore + `switching/profile-crud.ts`（创建、编辑、删除、复制 global 与 project `Profile`）。
 
 **Rules**（不变）：
 
@@ -217,7 +217,8 @@ pi-profile/
 │   ├── profile-resolver.ts
 │   ├── settings-generator.ts     # plan → settings.json + symlinks + env + flags
 │   ├── runtime-state-store.ts
-│   ├── resource-registry-store.ts # resources.json 写入侧（last-write-wins）
+│   ├── resource-registry-store.ts  # resources.json 写入侧（last-write-wins）
+│   ├── profile-catalog-store.ts  # profiles.json 写入侧（自包含定义，无继承）
 │   ├── mcp-config.ts             # adapter pi-native 配置的 server 名只读发现
 │   ├── mcp-coordination.ts       # pi.events 协调契约（allowlist 频道 + 探测）
 │   ├── switching/                # 会话内切换 / overlay / 可观测面
@@ -227,7 +228,9 @@ pi-profile/
 │   │   ├── list-profiles.ts      # /profile list（信任门控的 catalog 列表）
 │   │   ├── status.ts             # /profile status 报告（plan + overlay + MCP 三态 + 冲突）
 │   │   ├── resource-crud.ts      # /profile resource list/create/edit/delete（引用防护）
-│   │   └── resource-wizard.ts    # create/edit 向导（UI 注入，可测）
+│   │   ├── resource-wizard.ts    # resource create/edit 向导（UI 注入，可测）
+│   │   ├── profile-crud.ts       # /profile create|edit|delete|duplicate（active 删除需替换）
+│   │   └── profile-wizard.ts     # profile create/edit/duplicate 向导
 │   └── tui/
 │       ├── profile-selector.ts
 │       ├── profile-editor.ts
