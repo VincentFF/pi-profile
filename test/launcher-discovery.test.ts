@@ -26,7 +26,7 @@ describe("discoverLauncherResources", () => {
 		await mkdir(packageRoot, { recursive: true });
 		await writeFile(path.join(fixture.agentDir, "settings.json"), JSON.stringify({ packages: [packageRoot] }));
 
-		const discovery = await discoverLauncherResources({ cwd: fixture.cwd, agentDir: fixture.agentDir });
+		const discovery = await discoverLauncherResources({ cwd: fixture.cwd, agentDir: fixture.agentDir, projectTrusted: false });
 
 		expect(discovery.skills.map((skill) => skill.name)).toContain("alpha-skill");
 		expect(discovery.packages).toEqual([{ source: packageRoot, root: packageRoot }]);
@@ -37,7 +37,7 @@ describe("discoverLauncherResources", () => {
 		await mkdir(installed, { recursive: true });
 		await writeFile(path.join(fixture.agentDir, "settings.json"), JSON.stringify({ packages: ["npm:pi-tools"] }));
 
-		const discovery = await discoverLauncherResources({ cwd: fixture.cwd, agentDir: fixture.agentDir });
+		const discovery = await discoverLauncherResources({ cwd: fixture.cwd, agentDir: fixture.agentDir, projectTrusted: false });
 
 		expect(discovery.packages).toEqual([{ source: "npm:pi-tools", root: installed }]);
 	});
@@ -45,7 +45,7 @@ describe("discoverLauncherResources", () => {
 	it("leaves uninstalled npm package roots undefined rather than hitting the network", async () => {
 		await writeFile(path.join(fixture.agentDir, "settings.json"), JSON.stringify({ packages: ["npm:not-installed"] }));
 
-		const discovery = await discoverLauncherResources({ cwd: fixture.cwd, agentDir: fixture.agentDir });
+		const discovery = await discoverLauncherResources({ cwd: fixture.cwd, agentDir: fixture.agentDir, projectTrusted: false });
 
 		expect(discovery.packages).toEqual([{ source: "npm:not-installed", root: undefined }]);
 	});

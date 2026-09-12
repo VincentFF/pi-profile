@@ -22,12 +22,19 @@ try {
 	const args = parseLauncherArgs(process.argv.slice(2));
 	const agentDir = getAgentDir();
 	// Fails before spawning when the profile is unknown or cannot activate.
-	const { plan, discovery } = await resolveInitialProfile(args.profile, { agentDir, cwd: process.cwd() });
-	const generated = await generateRuntimeDir(plan, { agentDir, discovery });
+	// --approve/--no-approve are consumed here as a one-run trust input.
+	const { plan, discovery, projectSettings } = await resolveInitialProfile(args.profile, {
+		agentDir,
+		cwd: process.cwd(),
+		trustOverride: args.trustOverride,
+	});
+	const generated = await generateRuntimeDir(plan, { agentDir, discovery, projectSettings });
 	process.exitCode = await spawnPi({
 		generated,
 		piArgs: args.piArgs,
-		trustOverride: args.trustOverride,
+		// Only the default profile keeps trust behavior native (flag re-applied);
+		// named profiles never forward it — the resolver is the trust gatekeeper.
+		trustOverride: plan.filter === "none" ? args.trustOverride : undefined,
 	});
 } catch (error) {
 	if (error instanceof UnknownProfileError) {

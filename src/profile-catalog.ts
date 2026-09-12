@@ -1,13 +1,16 @@
 /**
  * ProfileCatalog: reads profile definitions from the global catalog
- * (`<agentDir>/profiles.json`).
- *
- * Ticket 02 covers the global catalog only; the project catalog, same-name
- * replacement, and global fallback arrive with ticket 03.
+ * (`<agentDir>/profiles.json`) and, for trusted projects, the project
+ * catalog (`<projectDir>/.pi/profiles.json`).
  *
  * Invariants:
- * - The built-in `default` profile never exists in the file and cannot be
+ * - The built-in `default` profile never exists in either file and cannot be
  *   redefined there.
+ * - A project profile with the same name fully replaces the global
+ *   definition (no merge, no inheritance); removing the project entry
+ *   immediately reveals the global one.
+ * - The caller passes `projectDir` only when the resolver's trust check
+ *   passed — an untrusted project's catalog is never read.
  * - A malformed catalog fails loudly (CatalogError) rather than silently
  *   starting unfiltered.
  */
@@ -38,8 +41,8 @@ export interface ProfileDefinition {
 	instructions?: string;
 }
 
-/** Where a profile's definition came from. `project` arrives with ticket 03. */
-export type ProfileSource = "builtin" | "global";
+/** Where a profile's definition came from. */
+export type ProfileSource = "builtin" | "global" | "project";
 
 export interface ResolvedProfile {
 	name: string;
@@ -95,42 +98,61 @@ function parseDefinition(name: string, raw: unknown): ProfileDefinition {
 	return definition;
 }
 
-export class ProfileCatalog {
-	readonly #profiles: ReadonlyMap<string, ProfileDefinition>;
+/** Reads one catalog file; missing → empty map, malformed → CatalogError. */
+async function loadCatalogFile(catalogPath: string): Promise<Map<string, ProfileDefinition>> {
+	const result = await readJsonFile(catalogPath);
+	const profiles = new Map<string, ProfileDefinition>();
+	if (!result.ok) {
+		if (result.reason === "missing") return profiles;
+		throw new CatalogError(`invalid JSON in ${catalogPath}`);
+	}
+	const parsed = result.value;
+	if (!isRecord(parsed)) {
+		throw new CatalogError(`${catalogPath}: catalog must be an object`);
+	}
+	if (parsed.schemaVersion !== PROFILE_SCHEMA_VERSION) {
+		throw new CatalogError(
+			`${catalogPath}: unsupported schemaVersion ${JSON.stringify(parsed.schemaVersion)} (expected ${PROFILE_SCHEMA_VERSION})`,
+		);
+	}
+	if (!isRecord(parsed.profiles)) {
+		throw new CatalogError(`${catalogPath}: "profiles" must be an object mapping names to definitions`);
+	}
+	for (const [name, definition] of Object.entries(parsed.profiles)) {
+		if (name === DEFAULT_PROFILE_NAME) {
+			throw new CatalogError(
+				`${catalogPath}: "${DEFAULT_PROFILE_NAME}" is built in and must not be defined in the catalog`,
+			);
+		}
+		profiles.set(name, parseDefinition(name, definition));
+	}
+	return profiles;
+}
 
-	private constructor(profiles: ReadonlyMap<string, ProfileDefinition>) {
+export class ProfileCatalog {
+	readonly #profiles: ReadonlyMap<string, { source: "global" | "project"; definition: ProfileDefinition }>;
+
+	private constructor(profiles: ReadonlyMap<string, { source: "global" | "project"; definition: ProfileDefinition }>) {
 		this.#profiles = profiles;
 	}
 
-	/** Reads `<agentDir>/profiles.json`. A missing file means an empty catalog;
-	 *  malformed content throws CatalogError. */
-	static async load(agentDir: string): Promise<ProfileCatalog> {
-		const catalogPath = path.join(agentDir, "profiles.json");
-		const result = await readJsonFile(catalogPath);
-		if (!result.ok) {
-			if (result.reason === "missing") return new ProfileCatalog(new Map());
-			throw new CatalogError(`invalid JSON in ${catalogPath}`);
+	/**
+	 * Reads the global catalog, plus the project catalog when `projectDir` is
+	 * given (trusted projects only — the caller gates on the trust check).
+	 * Missing files mean an empty catalog; malformed content throws
+	 * CatalogError. Project entries replace same-name global entries.
+	 */
+	static async load(agentDir: string, options?: { projectDir?: string }): Promise<ProfileCatalog> {
+		const globalProfiles = await loadCatalogFile(path.join(agentDir, "profiles.json"));
+		const profiles = new Map<string, { source: "global" | "project"; definition: ProfileDefinition }>();
+		for (const [name, definition] of globalProfiles) {
+			profiles.set(name, { source: "global", definition });
 		}
-		const parsed = result.value;
-		if (!isRecord(parsed)) {
-			throw new CatalogError(`${catalogPath}: catalog must be an object`);
-		}
-		if (parsed.schemaVersion !== PROFILE_SCHEMA_VERSION) {
-			throw new CatalogError(
-				`${catalogPath}: unsupported schemaVersion ${JSON.stringify(parsed.schemaVersion)} (expected ${PROFILE_SCHEMA_VERSION})`,
-			);
-		}
-		if (!isRecord(parsed.profiles)) {
-			throw new CatalogError(`${catalogPath}: "profiles" must be an object mapping names to definitions`);
-		}
-		const profiles = new Map<string, ProfileDefinition>();
-		for (const [name, definition] of Object.entries(parsed.profiles)) {
-			if (name === DEFAULT_PROFILE_NAME) {
-				throw new CatalogError(
-					`${catalogPath}: "${DEFAULT_PROFILE_NAME}" is built in and must not be defined in the catalog`,
-				);
+		if (options?.projectDir !== undefined) {
+			const projectProfiles = await loadCatalogFile(path.join(options.projectDir, ".pi", "profiles.json"));
+			for (const [name, definition] of projectProfiles) {
+				profiles.set(name, { source: "project", definition });
 			}
-			profiles.set(name, parseDefinition(name, definition));
 		}
 		return new ProfileCatalog(profiles);
 	}
@@ -141,11 +163,12 @@ export class ProfileCatalog {
 		if (name === DEFAULT_PROFILE_NAME) {
 			return { name: DEFAULT_PROFILE_NAME, source: "builtin", definition: {} };
 		}
-		const definition = this.#profiles.get(name);
-		return definition === undefined ? undefined : { name, source: "global", definition };
+		const entry = this.#profiles.get(name);
+		return entry === undefined ? undefined : { name, source: entry.source, definition: entry.definition };
 	}
 
-	/** Lists the built-in default first, then catalog profiles in file order. */
+	/** Lists the built-in default first, then profiles in file order (global
+	 *  entries in global order, project-only names appended after). */
 	list(): ResolvedProfile[] {
 		return [
 			this.resolve(DEFAULT_PROFILE_NAME)!,

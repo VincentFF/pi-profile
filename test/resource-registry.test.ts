@@ -164,4 +164,64 @@ describe("ResourceRegistry (global registry)", () => {
 
 		expect(registry.alwaysOn().map((entry) => entry.id)).toEqual(["security-gate"]);
 	});
+
+	describe("project registry (trusted projects only)", () => {
+		async function writeProjectRegistry(resources: Record<string, unknown>): Promise<void> {
+			await writeFile(
+				path.join(fixture.cwd, ".pi", "resources.json"),
+				JSON.stringify({ schemaVersion: 1, resources }),
+			);
+		}
+
+		async function projectEntryFile(name: string): Promise<string> {
+			const dir = path.join(fixture.cwd, ".pi", "extensions");
+			await mkdir(dir, { recursive: true });
+			const file = path.join(dir, `${name}.ts`);
+			await writeFile(file, "export default function () {}\n");
+			return file;
+		}
+
+		it("a same-ID project entry overrides the global entry", async () => {
+			await writeRegistry({
+				schemaVersion: 1,
+				resources: { tool: { kind: "extension", entry: await entryFile("global-tool") } },
+			});
+			const projectEntry = await projectEntryFile("project-tool");
+			await writeProjectRegistry({ tool: { kind: "extension", entry: projectEntry } });
+
+			const registry = await ResourceRegistry.load(fixture.agentDir, { projectDir: fixture.cwd });
+
+			expect(registry.get("tool")?.entry).toBe(projectEntry);
+		});
+
+		it("project entries add new IDs alongside global ones", async () => {
+			await writeRegistry({
+				schemaVersion: 1,
+				resources: { global: { kind: "extension", entry: await entryFile("global-ext") } },
+			});
+			await writeProjectRegistry({ local: { kind: "extension", entry: await projectEntryFile("local-ext") } });
+
+			const registry = await ResourceRegistry.load(fixture.agentDir, { projectDir: fixture.cwd });
+
+			expect(registry.list().map((entry) => entry.id).sort()).toEqual(["global", "local"]);
+		});
+
+		it("without a project dir, project registries are not read at all", async () => {
+			await writeProjectRegistry({ local: { kind: "extension", entry: await projectEntryFile("local-ext") } });
+
+			const registry = await ResourceRegistry.load(fixture.agentDir);
+
+			expect(registry.get("local")).toBeUndefined();
+		});
+
+		it("alwaysOn from a project entry loads in every profile too", async () => {
+			await writeProjectRegistry({
+				gate: { kind: "extension", entry: await projectEntryFile("gate"), alwaysOn: true },
+			});
+
+			const registry = await ResourceRegistry.load(fixture.agentDir, { projectDir: fixture.cwd });
+
+			expect(registry.alwaysOn().map((entry) => entry.id)).toEqual(["gate"]);
+		});
+	});
 });

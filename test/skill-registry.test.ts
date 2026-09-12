@@ -118,4 +118,50 @@ describe("discoverSkills (SkillRegistry)", () => {
 		const { existsSync } = await import("node:fs");
 		expect(existsSync(path.join(fixture.root, "EXECUTED"))).toBe(false);
 	});
+
+	describe("project-trusted discovery", () => {
+		async function addProjectSkill(name: string): Promise<void> {
+			const dir = path.join(fixture.cwd, ".pi", "skills", name);
+			await mkdir(dir, { recursive: true });
+			await writeFile(path.join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: project skill ${name}\n---\n`);
+		}
+
+		it("discovers .pi/skills and ancestor .agents/skills when the project is trusted", async () => {
+			await addProjectSkill("proj-skill");
+			const ancestorAgents = path.join(fixture.cwd, ".agents", "skills", "proj-agents-skill");
+			await mkdir(ancestorAgents, { recursive: true });
+			await writeFile(
+				path.join(ancestorAgents, "SKILL.md"),
+				"---\nname: proj-agents-skill\ndescription: ancestor agents skill\n---\n",
+			);
+
+			const skills = await discoverSkills({ cwd: fixture.cwd, agentDir: fixture.agentDir, projectTrusted: true });
+			const byName = new Map(skills.map((skill) => [skill.name, skill]));
+
+			expect(byName.get("proj-skill")?.filePath).toBe(
+				path.join(fixture.cwd, ".pi", "skills", "proj-skill", "SKILL.md"),
+			);
+			expect(byName.get("proj-skill")?.scope).toBe("project");
+			expect(byName.has("proj-agents-skill")).toBe(true);
+		});
+
+		it("project skills win same-name collisions over user skills", async () => {
+			await addProjectSkill("dup-skill");
+			await addGlobalSkill(fixture, "dup-skill");
+
+			const skills = await discoverSkills({ cwd: fixture.cwd, agentDir: fixture.agentDir, projectTrusted: true });
+			const dups = skills.filter((skill) => skill.name === "dup-skill");
+
+			expect(dups).toHaveLength(1);
+			expect(dups[0]!.filePath).toBe(path.join(fixture.cwd, ".pi", "skills", "dup-skill", "SKILL.md"));
+		});
+
+		it("does not discover project resources when untrusted", async () => {
+			await addProjectSkill("proj-skill");
+
+			const skills = await discoverSkills({ cwd: fixture.cwd, agentDir: fixture.agentDir, projectTrusted: false });
+
+			expect(skills.map((skill) => skill.name)).not.toContain("proj-skill");
+		});
+	});
 });

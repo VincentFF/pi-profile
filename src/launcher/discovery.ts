@@ -29,13 +29,19 @@ function resolvePackageRoot(source: string, installedPath: string | undefined, a
 	return path.resolve(agentDir, expanded);
 }
 
-export async function discoverLauncherResources(context: LauncherContext): Promise<LauncherDiscovery> {
-	const settingsManager = SettingsManager.create(context.cwd, context.agentDir, { projectTrusted: false });
+export async function discoverLauncherResources(
+	context: LauncherContext & { projectTrusted: boolean },
+): Promise<LauncherDiscovery> {
+	const settingsManager = SettingsManager.create(context.cwd, context.agentDir, {
+		projectTrusted: context.projectTrusted,
+	});
 	const packageManager = new DefaultPackageManager({
 		cwd: context.cwd,
 		agentDir: context.agentDir,
 		settingsManager,
 	});
+	// User-scope packages only: project-scope packages install under the
+	// project's .pi/npm, which generated global-scope settings cannot reference.
 	const configured = packageManager
 		.listConfiguredPackages()
 		.filter((pkg) => pkg.scope === "user")

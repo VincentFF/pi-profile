@@ -35,13 +35,21 @@ export interface SkillEntry {
 export interface DiscoverSkillsOptions {
 	cwd: string;
 	agentDir: string;
+	/**
+	 * Whether the project at `cwd` is trusted (the launcher's trust check).
+	 * Untrusted projects are never scanned: no project skills, no project
+	 * settings packages. Defaults to false.
+	 */
+	projectTrusted?: boolean;
 }
 
 export async function discoverSkills(options: DiscoverSkillsOptions): Promise<SkillEntry[]> {
-	// Project trust is forced off: ticket 02 exposes global resources only;
-	// project resources are gated by the resolver's trust check (ticket 03),
-	// and generated settings carry defaultProjectTrust: "never" regardless.
-	const settingsManager = SettingsManager.create(options.cwd, options.agentDir, { projectTrusted: false });
+	// Project trust comes from the caller's trust check; generated settings
+	// carry defaultProjectTrust: "never", so discovery is the only place
+	// project resources can enter a plan.
+	const settingsManager = SettingsManager.create(options.cwd, options.agentDir, {
+		projectTrusted: options.projectTrusted ?? false,
+	});
 	const loader = new DefaultResourceLoader({
 		cwd: options.cwd,
 		agentDir: options.agentDir,
@@ -64,12 +72,23 @@ export async function discoverSkills(options: DiscoverSkillsOptions): Promise<Sk
 		if (savedOffline === undefined) delete process.env.PI_OFFLINE;
 		else process.env.PI_OFFLINE = savedOffline;
 	}
-	return loader.getSkills().skills.map((skill) => ({
-		name: skill.name,
-		filePath: skill.filePath,
-		source: skill.sourceInfo.source,
-		scope: skill.sourceInfo.scope,
-		origin: skill.sourceInfo.origin,
-		baseDir: skill.sourceInfo.baseDir,
-	}));
+	return loader.getSkills().skills.flatMap((skill) => {
+		// Project-scoped package skills are excluded: their packages install
+		// under the project's .pi/npm, which generated global-scope settings
+		// cannot reference. Project .pi/skills and ancestor .agents/skills are
+		// unaffected. (Limitation documented in ticket 03's comments.)
+		if (skill.sourceInfo.origin === "package" && skill.sourceInfo.scope === "project") {
+			return [];
+		}
+		return [
+			{
+				name: skill.name,
+				filePath: skill.filePath,
+				source: skill.sourceInfo.source,
+				scope: skill.sourceInfo.scope,
+				origin: skill.sourceInfo.origin,
+				baseDir: skill.sourceInfo.baseDir,
+			},
+		];
+	});
 }

@@ -54,6 +54,11 @@ export interface GenerateOptions {
 	agentDir: string;
 	/** Required for selection plans; unused for the default profile. */
 	discovery?: DiscoveryContext;
+	/** The trusted project's `.pi/settings.json` content (already parsed).
+	 *  Only pass when the resolver's trust check passed; merged into the
+	 *  generated base per Pi's merge rules for selection plans. Ignored for
+	 *  the default profile (Pi reads project settings natively there). */
+	projectSettings?: Record<string, unknown>;
 }
 
 export interface GeneratedRuntime {
@@ -93,6 +98,25 @@ function toPosix(filePath: string): string {
 	return filePath.split(path.sep).join("/");
 }
 
+/** Mirrors Pi's own deepMergeSettings: plain objects merge recursively,
+ *  everything else (arrays, primitives) is replaced by the override. */
+function deepMergeSettings(base: Record<string, unknown>, overrides: Record<string, unknown>): Record<string, unknown> {
+	const result: Record<string, unknown> = { ...base };
+	for (const [key, overrideValue] of Object.entries(overrides)) {
+		if (overrideValue === undefined) continue;
+		const baseValue = result[key];
+		result[key] =
+			isPlainObject(baseValue) && isPlainObject(overrideValue)
+				? deepMergeSettings(baseValue, overrideValue)
+				: overrideValue;
+	}
+	return result;
+}
+
+function isPlainObject(value: unknown): value is Record<string, unknown> {
+	return typeof value === "object" && value !== null && !Array.isArray(value);
+}
+
 function isUnderPath(target: string, root: string): boolean {
 	const relative = path.relative(root, target);
 	return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
@@ -113,9 +137,17 @@ function buildSelectionSettings(
 	const settings = { ...userSettings };
 
 	// --- skills ---
+	// Project-scope selections are emitted before user-scope ones: Pi's
+	// same-name collision rule is first-wins, and project resources must keep
+	// their native priority (ticket 03).
+	const orderedSelectedSkills = [...plan.skills].sort((a, b) => {
+		const aProject = a.scope === "project" ? 0 : 1;
+		const bProject = b.scope === "project" ? 0 : 1;
+		return aProject - bProject;
+	});
 	const selectedPaths = new Set(plan.skills.map((skill) => skill.filePath));
 	const skillEntries: string[] = [];
-	for (const skill of plan.skills) {
+	for (const skill of orderedSelectedSkills) {
 		if (skill.origin === "package") continue; // encoded in the packages allowlist
 		if (isUnderPath(skill.filePath, homeAgentsSkillsDir())) continue; // auto-discovered anyway
 		skillEntries.push(skill.filePath);
@@ -208,6 +240,8 @@ export async function generateRuntimeDir(
 		// default profile: the user's global settings plus re-inclusion of the
 		// real agent dir's resource dirs. User-defined keys, including their own
 		// resource patterns and enable/disable state, are preserved untouched.
+		// Project settings are NOT merged here: with native trust behavior, Pi
+		// reads the project's settings itself.
 		settings = { ...userSettings };
 		for (const kind of RESOURCE_DIR_KINDS) {
 			const resourceDir = path.join(agentDir, kind);
@@ -217,7 +251,15 @@ export async function generateRuntimeDir(
 			}
 		}
 	} else {
-		settings = buildSelectionSettings(plan, userSettings, agentDir, options.discovery ?? { skills: [], packages: [] });
+		// Selection plans: the trusted project's settings merge into the base
+		// per Pi's merge rules (project wins, nested objects merge), then the
+		// filtering encoding replaces the managed keys on top. With
+		// defaultProjectTrust: "never", Pi itself never reads project settings.
+		const base =
+			options.projectSettings !== undefined
+				? deepMergeSettings(userSettings, options.projectSettings)
+				: { ...userSettings };
+		settings = buildSelectionSettings(plan, base, agentDir, options.discovery ?? { skills: [], packages: [] });
 	}
 	await writeFile(path.join(runtimeDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);
 
@@ -238,9 +280,14 @@ export async function generateRuntimeDir(
 		)}\n`,
 	);
 
-	// Keep trust/auth/model state in the real agent dir, so the spawned pi
-	// shares credentials, trust decisions, and model catalogs with native pi.
+	// Keep auth/model state in the real agent dir, so the spawned pi shares
+	// credentials and model catalogs with native pi. trust.json is only
+	// linked for the default profile: a stored trust decision beats the
+	// generated defaultProjectTrust: "never" inside Pi, so named profiles must
+	// not expose it — the launcher reads the real trust.json itself and is the
+	// sole trust gatekeeper (ADR-0005).
 	for (const name of STATE_FILE_LINKS) {
+		if (name === "trust.json" && plan.filter !== "none") continue;
 		const target = path.join(agentDir, name);
 		if (await exists(target)) {
 			await symlink(target, path.join(runtimeDir, name));

@@ -101,4 +101,82 @@ describe("resolveInitialProfile", () => {
 
 		await expect(resolveInitialProfile("review", context())).rejects.toThrow(/ghost-skill/);
 	});
+
+	describe("project trust gating", () => {
+		async function writeProjectCatalog(profiles: Record<string, unknown>): Promise<void> {
+			await writeFile(
+				path.join(fixture.cwd, ".pi", "profiles.json"),
+				JSON.stringify({ schemaVersion: 1, profiles }),
+			);
+		}
+
+		async function addProjectSkill(name: string): Promise<void> {
+			const dir = path.join(fixture.cwd, ".pi", "skills", name);
+			await mkdir(dir, { recursive: true });
+			await writeFile(path.join(dir, "SKILL.md"), `---\nname: ${name}\ndescription: p\n---\n`);
+		}
+
+		async function trustProject(): Promise<void> {
+			await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ [fixture.cwd]: true }));
+		}
+
+		it("an untrusted project's catalog is never read", async () => {
+			await writeProjectCatalog({ impl: { skills: [] } });
+
+			await expect(resolveInitialProfile("impl", context())).rejects.toThrow(/unknown profile/);
+		});
+
+		it("a trusted project's profiles resolve and select project skills", async () => {
+			await addProjectSkill("proj-skill");
+			await writeProjectCatalog({ impl: { skills: ["proj-skill"] } });
+			await trustProject();
+
+			const { plan } = await resolveInitialProfile("impl", context());
+
+			expect(plan.source).toBe("project");
+			expect(plan.skills.map((skill) => skill.name)).toEqual(["proj-skill"]);
+		});
+
+		it("--approve grants one-run trust so project profiles resolve", async () => {
+			await writeProjectCatalog({ impl: { skills: [] } });
+
+			const { plan } = await resolveInitialProfile("impl", { ...context(), trustOverride: true });
+
+			expect(plan.profile).toBe("impl");
+		});
+
+		it("--no-approve distrusts even a stored trust entry", async () => {
+			await writeProjectCatalog({ impl: { skills: [] } });
+			await trustProject();
+
+			await expect(resolveInitialProfile("impl", { ...context(), trustOverride: false })).rejects.toThrow(
+				/unknown profile/,
+			);
+		});
+
+		it("restores the project state file's active profile when trusted", async () => {
+			await writeProjectCatalog({ impl: { skills: [] } });
+			await trustProject();
+			await writeFile(
+				path.join(fixture.cwd, ".pi", "pi-profile-state.json"),
+				JSON.stringify({ activeProfile: "impl" }),
+			);
+
+			const { plan } = await resolveInitialProfile(undefined, context());
+
+			expect(plan.profile).toBe("impl");
+		});
+
+		it("ignores the project state file when untrusted", async () => {
+			await writeProjectCatalog({ impl: { skills: [] } });
+			await writeFile(
+				path.join(fixture.cwd, ".pi", "pi-profile-state.json"),
+				JSON.stringify({ activeProfile: "impl" }),
+			);
+
+			const { plan } = await resolveInitialProfile(undefined, context());
+
+			expect(plan.profile).toBe("default");
+		});
+	});
 });

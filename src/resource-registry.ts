@@ -1,16 +1,16 @@
 /**
  * ResourceRegistry: reads the global extension resource registry
- * (`<agentDir>/resources.json`) and resolves logical IDs to entry paths,
- * including the recursive `dependsOn` closure.
- *
- * Ticket 02 covers the global registry only; project registry merge and ID
- * override arrive with ticket 03.
+ * (`<agentDir>/resources.json`) and, for trusted projects, the project
+ * registry (`<projectDir>/.pi/resources.json`), whose same-ID entries
+ * override global ones.
  *
  * Invariants:
- * - IDs are stable and unique within the file.
+ * - IDs are stable and unique within the merged registry.
  * - Cycles, missing dependencies, and missing entry files fail activation
  *   loudly (RegistryError) — registry errors must never pass silently.
  * - The registry never orders entries; load order stays Pi's.
+ * - The caller passes `projectDir` only when the resolver's trust check
+ *   passed — an untrusted project's registry is never read.
  */
 
 import { stat } from "node:fs/promises";
@@ -68,6 +68,32 @@ async function fileExists(filePath: string): Promise<boolean> {
 	}
 }
 
+/** Reads one registry file; missing → empty map, malformed → RegistryError. */
+async function loadRegistryFile(registryPath: string): Promise<Map<string, ResourceEntry>> {
+	const result = await readJsonFile(registryPath);
+	const entries = new Map<string, ResourceEntry>();
+	if (!result.ok) {
+		if (result.reason === "missing") return entries;
+		throw new RegistryError(`invalid JSON in ${registryPath}`);
+	}
+	const parsed = result.value;
+	if (!isRecord(parsed)) {
+		throw new RegistryError(`${registryPath}: registry must be an object`);
+	}
+	if (parsed.schemaVersion !== PROFILE_SCHEMA_VERSION) {
+		throw new RegistryError(
+			`${registryPath}: unsupported schemaVersion ${JSON.stringify(parsed.schemaVersion)} (expected ${PROFILE_SCHEMA_VERSION})`,
+		);
+	}
+	if (!isRecord(parsed.resources)) {
+		throw new RegistryError(`${registryPath}: "resources" must be an object mapping IDs to entries`);
+	}
+	for (const [id, entry] of Object.entries(parsed.resources)) {
+		entries.set(id, parseEntry(id, entry));
+	}
+	return entries;
+}
+
 export class ResourceRegistry {
 	readonly #entries: ReadonlyMap<string, ResourceEntry>;
 
@@ -75,30 +101,19 @@ export class ResourceRegistry {
 		this.#entries = entries;
 	}
 
-	/** Reads `<agentDir>/resources.json`. A missing file means an empty
-	 *  registry; malformed content throws RegistryError. */
-	static async load(agentDir: string): Promise<ResourceRegistry> {
-		const registryPath = path.join(agentDir, "resources.json");
-		const result = await readJsonFile(registryPath);
-		if (!result.ok) {
-			if (result.reason === "missing") return new ResourceRegistry(new Map());
-			throw new RegistryError(`invalid JSON in ${registryPath}`);
-		}
-		const parsed = result.value;
-		if (!isRecord(parsed)) {
-			throw new RegistryError(`${registryPath}: registry must be an object`);
-		}
-		if (parsed.schemaVersion !== PROFILE_SCHEMA_VERSION) {
-			throw new RegistryError(
-				`${registryPath}: unsupported schemaVersion ${JSON.stringify(parsed.schemaVersion)} (expected ${PROFILE_SCHEMA_VERSION})`,
-			);
-		}
-		if (!isRecord(parsed.resources)) {
-			throw new RegistryError(`${registryPath}: "resources" must be an object mapping IDs to entries`);
-		}
-		const entries = new Map<string, ResourceEntry>();
-		for (const [id, entry] of Object.entries(parsed.resources)) {
-			entries.set(id, parseEntry(id, entry));
+	/**
+	 * Reads the global registry, plus the project registry when `projectDir`
+	 * is given (trusted projects only — the caller gates on the trust check).
+	 * Missing files mean an empty registry; malformed content throws
+	 * RegistryError. Project entries override same-ID global entries.
+	 */
+	static async load(agentDir: string, options?: { projectDir?: string }): Promise<ResourceRegistry> {
+		const entries = await loadRegistryFile(path.join(agentDir, "resources.json"));
+		if (options?.projectDir !== undefined) {
+			const projectEntries = await loadRegistryFile(path.join(options.projectDir, ".pi", "resources.json"));
+			for (const [id, entry] of projectEntries) {
+				entries.set(id, entry);
+			}
 		}
 		return new ResourceRegistry(entries);
 	}

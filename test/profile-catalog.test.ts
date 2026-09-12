@@ -22,6 +22,13 @@ async function writeCatalog(content: unknown): Promise<void> {
 	);
 }
 
+async function writeProjectCatalog(profiles: Record<string, unknown>): Promise<void> {
+	await writeFile(
+		path.join(fixture.cwd, ".pi", "profiles.json"),
+		JSON.stringify({ schemaVersion: 1, profiles }),
+	);
+}
+
 const reviewProfile = {
 	label: "Review",
 	description: "Code review workflow",
@@ -100,5 +107,73 @@ describe("ProfileCatalog (global catalog)", () => {
 		expect(resolved?.definition.skills).toBeUndefined();
 		expect(resolved?.definition.model).toBeUndefined();
 		expect(resolved?.definition.instructions).toBeUndefined();
+	});
+
+	describe("project catalog (trusted projects only)", () => {
+		it("resolves project-only profiles with project source", async () => {
+			await writeCatalog({ schemaVersion: 1, profiles: { review: reviewProfile } });
+			await writeProjectCatalog({ implement: { skills: ["project-skill"] } });
+
+			const catalog = await ProfileCatalog.load(fixture.agentDir, { projectDir: fixture.cwd });
+
+			expect(catalog.resolve("implement")).toEqual({
+				name: "implement",
+				source: "project",
+				definition: { skills: ["project-skill"] },
+			});
+		});
+
+		it("a same-name project profile fully replaces the global definition", async () => {
+			await writeCatalog({ schemaVersion: 1, profiles: { review: reviewProfile } });
+			await writeProjectCatalog({ review: { description: "Project override" } });
+
+			const catalog = await ProfileCatalog.load(fixture.agentDir, { projectDir: fixture.cwd });
+			const resolved = catalog.resolve("review");
+
+			// Full replacement: no global fields survive, no merge.
+			expect(resolved).toEqual({
+				name: "review",
+				source: "project",
+				definition: { description: "Project override" },
+			});
+		});
+
+		it("removing the project override immediately reveals the global definition", async () => {
+			await writeCatalog({ schemaVersion: 1, profiles: { review: reviewProfile } });
+			await writeProjectCatalog({ review: { description: "Project override" } });
+			const withOverride = await ProfileCatalog.load(fixture.agentDir, { projectDir: fixture.cwd });
+			expect(withOverride.resolve("review")?.source).toBe("project");
+
+			await writeProjectCatalog({});
+			const afterRemoval = await ProfileCatalog.load(fixture.agentDir, { projectDir: fixture.cwd });
+
+			expect(afterRemoval.resolve("review")).toEqual({
+				name: "review",
+				source: "global",
+				definition: reviewProfile,
+			});
+		});
+
+		it("without a project dir, project catalogs are not read at all", async () => {
+			await writeProjectCatalog({ implement: { skills: [] } });
+
+			const catalog = await ProfileCatalog.load(fixture.agentDir);
+
+			expect(catalog.resolve("implement")).toBeUndefined();
+		});
+
+		it("lists each profile once with its effective source", async () => {
+			await writeCatalog({ schemaVersion: 1, profiles: { review: reviewProfile, shared: { skills: [] } } });
+			await writeProjectCatalog({ shared: { tools: ["read"] }, implement: {} });
+
+			const catalog = await ProfileCatalog.load(fixture.agentDir, { projectDir: fixture.cwd });
+
+			expect(catalog.list().map((profile) => `${profile.name}:${profile.source}`)).toEqual([
+				"default:builtin",
+				"review:global",
+				"shared:project",
+				"implement:project",
+			]);
+		});
 	});
 });

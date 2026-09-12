@@ -218,14 +218,100 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		expect(plan.instructions).toBe("Be picky.");
 	});
 
-	it("still symlinks trust/auth/models state into the runtime dir", async () => {
+	it("symlinks auth state but never trust.json for named profiles", async () => {
 		await writeFile(path.join(fixture.agentDir, "auth.json"), "{}");
 		await writeFile(path.join(fixture.agentDir, "trust.json"), "{}");
 
 		const result = await generateRuntimeDir(selectionPlan({}), { agentDir: fixture.agentDir, discovery: { skills: [], packages: [] } });
 
 		expect(await realpath(path.join(result.runtimeDir, "auth.json"))).toBe(await realpath(path.join(fixture.agentDir, "auth.json")));
-		expect(await realpath(path.join(result.runtimeDir, "trust.json"))).toBe(await realpath(path.join(fixture.agentDir, "trust.json")));
+		// A stored trust decision would beat defaultProjectTrust: "never" inside
+		// Pi and re-enable project auto-discovery — so it must not be linked.
+		const { existsSync } = await import("node:fs");
+		expect(existsSync(path.join(result.runtimeDir, "trust.json"))).toBe(false);
+	});
+});
+
+describe("generateRuntimeDir (trusted project merge)", () => {
+	const projectSettingsPath = () => path.join(fixture.cwd, ".pi", "settings.json");
+
+	function projectSkill(name: string): SkillEntry {
+		return {
+			name,
+			filePath: path.join(fixture.cwd, ".pi", "skills", name, "SKILL.md"),
+			source: "auto",
+			scope: "project",
+			origin: "top-level",
+		};
+	}
+
+	it("merges trusted project settings into the base, project wins, nested objects merge", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "settings.json"),
+			JSON.stringify({ theme: "dark", retry: { enabled: true, maxRetries: 3 }, globalOnly: 1 }),
+		);
+		await writeFile(
+			projectSettingsPath(),
+			JSON.stringify({ theme: "light", retry: { maxRetries: 1 }, projectOnly: true }),
+		);
+
+		const projectSettings = JSON.parse(await readFile(projectSettingsPath(), "utf8"));
+		const result = await generateRuntimeDir(selectionPlan({}), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+			projectSettings,
+		});
+		const settings = await generatedSettings(result.runtimeDir);
+
+		expect(settings.theme).toBe("light");
+		expect(settings.retry).toEqual({ enabled: true, maxRetries: 1 });
+		expect(settings.globalOnly).toBe(1);
+		expect(settings.projectOnly).toBe(true);
+	});
+
+	it("project resource arrays in project settings never leak into generated settings", async () => {
+		await writeFile(projectSettingsPath(), JSON.stringify({ skills: ["/evil/skills"], extensions: ["/evil/ext.ts"] }));
+		const projectSettings = JSON.parse(await readFile(projectSettingsPath(), "utf8"));
+
+		const result = await generateRuntimeDir(selectionPlan({}), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+			projectSettings,
+		});
+		const settings = await generatedSettings(result.runtimeDir);
+
+		expect(settings.skills).toEqual([]);
+		expect(settings.extensions).toEqual([]);
+		expect(settings.defaultProjectTrust).toBe("never");
+	});
+
+	it("additively includes selected project-scope skills, ordered before user-scope ones", async () => {
+		// Reference order is user-first on purpose: the generator must still
+		// emit project paths first so Pi's first-wins collision rule keeps
+		// project priority.
+		const plan = selectionPlan({ skills: [agentDirSkill("alpha-skill"), projectSkill("proj-skill")] });
+		const discovery: DiscoveryContext = {
+			skills: [agentDirSkill("alpha-skill"), projectSkill("proj-skill")],
+			packages: [],
+		};
+
+		const result = await generateRuntimeDir(plan, { agentDir: fixture.agentDir, discovery });
+		const settings = await generatedSettings(result.runtimeDir);
+
+		expect(settings.skills).toEqual([
+			path.join(fixture.cwd, ".pi", "skills", "proj-skill", "SKILL.md"),
+			path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"),
+		]);
+	});
+
+	it("ignores project settings for the default profile (Pi reads them natively)", async () => {
+		const result = await generateRuntimeDir(defaultPlan(), {
+			agentDir: fixture.agentDir,
+			projectSettings: { theme: "light" },
+		});
+		const settings = await generatedSettings(result.runtimeDir);
+
+		expect(settings.theme).toBeUndefined();
 	});
 });
 
