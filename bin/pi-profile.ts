@@ -16,6 +16,11 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 import { parseLauncherArgs } from "../src/launcher/args.ts";
 import { UnknownProfileError, resolveInitialProfile } from "../src/launcher/initial-profile.ts";
 import { spawnPi } from "../src/launcher/spawn.ts";
+import { McpConfigError } from "../src/mcp-config.ts";
+import { MissingMcpAdapterError } from "../src/mcp-coordination.ts";
+import { CatalogError } from "../src/profile-catalog.ts";
+import { ActivationError } from "../src/profile-resolver.ts";
+import { RegistryError } from "../src/resource-registry.ts";
 import { generateRuntimeDir } from "../src/settings-generator.ts";
 
 try {
@@ -40,11 +45,16 @@ try {
 		trustOverride: plan.filter === "none" ? args.trustOverride : undefined,
 	});
 } catch (error) {
-	if (error instanceof UnknownProfileError) {
-		console.error(`pi-profile: ${error.message}`);
-		process.exitCode = 2;
-	} else {
-		console.error(error instanceof Error ? error.message : error);
-		process.exitCode = 1;
-	}
+	// Launcher input/selection failures (unknown profile, unresolvable
+	// references, missing adapter, malformed catalogs) are usage errors:
+	// exit 2. Unexpected failures: exit 1.
+	const isUsageError =
+		error instanceof UnknownProfileError ||
+		error instanceof ActivationError ||
+		error instanceof MissingMcpAdapterError ||
+		error instanceof McpConfigError ||
+		error instanceof CatalogError ||
+		error instanceof RegistryError;
+	console.error(error instanceof Error ? `pi-profile: ${error.message}` : error);
+	process.exitCode = isUsageError ? 2 : 1;
 }

@@ -218,6 +218,23 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		expect(plan.instructions).toBe("Be picky.");
 	});
 
+	it("carries the mcp allowlist into the launch plan and links the adapter's global config", async () => {
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { github: {} } }));
+
+		const result = await generateRuntimeDir(selectionPlan({ mcp: ["github"] }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(plan.mcp).toEqual(["github"]);
+		// The adapter resolves its global config from PI_CODING_AGENT_DIR; the
+		// link keeps it pointing at the real file (pi-profile never writes it).
+		expect(await realpath(path.join(result.runtimeDir, "mcp.json"))).toBe(
+			await realpath(path.join(fixture.agentDir, "mcp.json")),
+		);
+	});
+
 	it("symlinks auth state but never trust.json for named profiles", async () => {
 		await writeFile(path.join(fixture.agentDir, "auth.json"), "{}");
 		await writeFile(path.join(fixture.agentDir, "trust.json"), "{}");

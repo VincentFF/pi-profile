@@ -14,6 +14,8 @@
 import path from "node:path";
 
 import { isRecord, readJsonFile } from "../json-file.ts";
+import { discoverAdapterServerNames } from "../mcp-config.ts";
+import { isAdapterExtension, MissingMcpAdapterError } from "../mcp-coordination.ts";
 import { ProfileCatalog } from "../profile-catalog.ts";
 import { defaultPlan, resolveProfile, type ActivationPlan } from "../profile-resolver.ts";
 import { resolveProjectTrust } from "../project-trust.ts";
@@ -121,6 +123,15 @@ export async function resolveInitialProfile(
 		skills: discovery.skills,
 		resources,
 		validateModel: (model) => checkDeclaredModel(context.agentDir, model),
+		discoveredMcpServers: profile.definition.mcp?.length
+			? await discoverAdapterServerNames(context.agentDir, projectDir)
+			: undefined,
 	});
+	if (plan.mcp !== undefined && !plan.extensions.some(isAdapterExtension)) {
+		// Fail before spawn: without the adapter in the active extension set
+		// nobody applies the allowlist, and the declared servers would either
+		// silently do nothing or leak through unfiltered.
+		throw new MissingMcpAdapterError(plan.profile);
+	}
 	return { plan, discovery, projectSettings, warnings };
 }

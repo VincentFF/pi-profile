@@ -74,8 +74,11 @@ export interface GeneratedRuntime {
 	flags: string[];
 }
 
-/** State files that must keep pointing at the user's real agent dir. */
-const STATE_FILE_LINKS = ["trust.json", "auth.json", "models.json", "models-store.json"] as const;
+/** State files that must keep pointing at the user's real agent dir.
+ *  mcp.json is pi-mcp-adapter's global config: adapter-managed state that
+ *  pi-profile never writes, but the adapter must still find it (its global
+ *  config path derives from PI_CODING_AGENT_DIR). */
+const STATE_FILE_LINKS = ["trust.json", "auth.json", "models.json", "models-store.json", "mcp.json"] as const;
 
 /** State directories that must keep pointing at the real agent dir: package
  *  install roots (npm/git) and Pi's managed binaries (bin). */
@@ -280,6 +283,7 @@ export async function generateRuntimeDir(
 				...(plan.instructions !== undefined ? { instructions: plan.instructions } : {}),
 				...(plan.model !== undefined ? { model: plan.model } : {}),
 				...(plan.tools !== undefined ? { tools: plan.tools } : {}),
+				...(plan.mcp !== undefined ? { mcp: plan.mcp } : {}),
 			},
 			null,
 			2,

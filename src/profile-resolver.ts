@@ -10,8 +10,11 @@
  *   plan; cycles and missing entries fail loudly (via ResourceRegistry).
  * - Undeclared model/thinking/instructions never enter the plan, so Pi's
  *   current state stays untouched.
- * - MCP references require pi-mcp-adapter support (ticket 04); declaring
- *   `mcp` before then fails activation loudly.
+ * - MCP references (`mcp`) expand against the server names the launcher
+ *   discovered from pi-mcp-adapter's pi-native config files: literal misses
+ *   fail loudly; globs expand to zero or more matches (consistent with
+ *   skills/extensions). Adapter presence is checked separately by the
+ *   launcher/extension (ADR-0002).
  * - Tool globs expand against Pi's built-in tool names only: extension- and
  *   MCP-provided tool names are unknowable before spawn (extension code must
  *   not execute here), so literal tool names pass through unvalidated and
@@ -55,6 +58,9 @@ export interface ActivationPlan {
 	model?: ProfileModel;
 	/** Declared instructions; appended to Pi's system prompt by the extension. */
 	instructions?: string;
+	/** Expanded MCP server allowlist for pi-mcp-adapter coordination;
+	 *  undefined when the profile declares no `mcp` (no coordination). */
+	mcp?: string[];
 }
 
 export interface ResolveInput {
@@ -69,6 +75,13 @@ export interface ResolveInput {
 	 * fails activation rather than silently skipping the check.
 	 */
 	validateModel?: (model: ProfileModel) => Promise<string | undefined>;
+	/**
+	 * Server names discovered from pi-mcp-adapter's pi-native config files
+	 * (see mcp-config.ts). Required when the profile declares `mcp`: without
+	 * the discovered names a reference cannot be validated, so activation
+	 * fails rather than passing references through unchecked.
+	 */
+	discoveredMcpServers?: string[];
 }
 
 function isGlob(reference: string): boolean {
@@ -117,10 +130,14 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 	const { profile, skills, resources } = input;
 	const definition: ProfileDefinition = profile.definition;
 
+	let mcp: string[] | undefined;
 	if (definition.mcp !== undefined && definition.mcp.length > 0) {
-		throw new ActivationError(
-			`profile "${profile.name}" declares MCP servers ${JSON.stringify(definition.mcp)}, which requires pi-mcp-adapter. MCP support is not available yet (ticket 04).`,
-		);
+		if (input.discoveredMcpServers === undefined) {
+			throw new ActivationError(
+				`profile "${profile.name}" declares MCP servers but no adapter server discovery is available`,
+			);
+		}
+		mcp = expandReferences(definition.mcp, input.discoveredMcpServers, (name) => name, "MCP server");
 	}
 
 	const selectedSkills = expandReferences(definition.skills ?? [], skills, (skill) => skill.name, "skill");
@@ -165,5 +182,6 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		...(tools !== undefined ? { tools } : {}),
 		...(model !== undefined ? { model } : {}),
 		...(definition.instructions !== undefined ? { instructions: definition.instructions } : {}),
+		...(mcp !== undefined ? { mcp } : {}),
 	};
 }

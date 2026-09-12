@@ -188,14 +188,36 @@ describe("resolveProfile", () => {
 		).rejects.toThrow(/thinkingLevel/);
 	});
 
-	it("fails activation when mcp servers are declared before adapter support exists", async () => {
+	it("expands mcp references against the discovered adapter server names", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { mcp: ["github", "internal-*"] }),
+			skills: [],
+			resources: await registryWith({}),
+			discoveredMcpServers: ["github", "internal-docs", "internal-ci", "other"],
+		});
+
+		expect(plan.mcp).toEqual(["github", "internal-docs", "internal-ci"]);
+	});
+
+	it("fails activation on a literal mcp reference the adapter never discovered", async () => {
 		await expect(
 			resolveProfile({
 				profile: profile("review", { mcp: ["github-ro"] }),
 				skills: [],
 				resources: await registryWith({}),
+				discoveredMcpServers: ["github"],
 			}),
-		).rejects.toThrow(/pi-mcp-adapter/);
+		).rejects.toThrow(/unknown MCP server: "github-ro"/);
+	});
+
+	it("fails activation when mcp is declared without adapter server discovery", async () => {
+		await expect(
+			resolveProfile({
+				profile: profile("review", { mcp: ["github"] }),
+				skills: [],
+				resources: await registryWith({}),
+			}),
+		).rejects.toThrow(/no adapter server discovery/);
 	});
 
 	it("carries declared instructions into the plan", async () => {

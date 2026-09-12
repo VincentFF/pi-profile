@@ -28,6 +28,16 @@ async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
 	);
 }
 
+async function writeAdapterResources(): Promise<void> {
+	const entry = path.join(fixture.agentDir, "extensions", "pi-mcp-adapter", "index.ts");
+	await mkdir(path.dirname(entry), { recursive: true });
+	await writeFile(entry, "export default function () {}\n");
+	await writeFile(
+		path.join(fixture.agentDir, "resources.json"),
+		JSON.stringify({ schemaVersion: 1, resources: { "mcp-adapter": { kind: "extension", entry } } }),
+	);
+}
+
 describe("resolveInitialProfile", () => {
 	it("returns the unfiltered default plan when no name and no saved state exist", async () => {
 		const { plan } = await resolveInitialProfile(undefined, context());
@@ -180,6 +190,42 @@ describe("resolveInitialProfile", () => {
 			const { plan } = await resolveInitialProfile(undefined, context());
 
 			expect(plan.profile).toBe("default");
+		});
+	});
+
+	describe("mcp declarations", () => {
+		it("expands the profile's mcp references against adapter-discovered server names", async () => {
+			await writeAdapterResources();
+			await writeFile(
+				path.join(fixture.agentDir, "mcp.json"),
+				JSON.stringify({ mcpServers: { github: {}, linear: {} } }),
+			);
+			await writeCatalog({ review: { extensions: ["mcp-adapter"], mcp: ["github"] } });
+
+			const { plan } = await resolveInitialProfile("review", context());
+
+			expect(plan.mcp).toEqual(["github"]);
+		});
+
+		it("fails before spawn when the adapter is absent from the active extension set", async () => {
+			await writeFile(
+				path.join(fixture.agentDir, "mcp.json"),
+				JSON.stringify({ mcpServers: { github: {} } }),
+			);
+			await writeCatalog({ review: { mcp: ["github"] } });
+
+			await expect(resolveInitialProfile("review", context())).rejects.toThrow(/pi-mcp-adapter is not active/);
+		});
+
+		it("fails before spawn on an mcp reference the adapter never discovered", async () => {
+			await writeAdapterResources();
+			await writeFile(
+				path.join(fixture.agentDir, "mcp.json"),
+				JSON.stringify({ mcpServers: { github: {} } }),
+			);
+			await writeCatalog({ review: { extensions: ["mcp-adapter"], mcp: ["typo-server"] } });
+
+			await expect(resolveInitialProfile("review", context())).rejects.toThrow(/unknown MCP server: "typo-server"/);
 		});
 	});
 });

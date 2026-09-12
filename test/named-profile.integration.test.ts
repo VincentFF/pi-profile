@@ -271,7 +271,7 @@ describe("launcher integration: named global profiles", () => {
 				});
 			});
 
-			expect(failure.code).toBe(1);
+			expect(failure.code).toBe(2);
 			expect(failure.stderr).toContain("anthropic");
 			// No runtime dir was generated: resolution failed before spawn.
 			const files = await listFiles(fixture.agentDir);
@@ -298,7 +298,7 @@ describe("launcher integration: named global profiles", () => {
 				});
 			});
 
-			expect(failure.code).toBe(1);
+			expect(failure.code).toBe(2);
 			expect(failure.stderr).toMatch(/cycle/i);
 		},
 	);
