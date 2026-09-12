@@ -1,5 +1,7 @@
 # pi-profile 初始实现 spec
 
+Status: ready-for-agent
+
 ## Problem Statement
 
 Pi 是极简 agent：它发现全部可用的 skills、extensions、MCP servers 和 tools，并全部暴露给模型。对于固定工作流（code review、实现、调研、受限环境），用户无法按场景裁剪资源集合——全量资源稀释 context、扩大权限面，且改变工作方式必须重启或手工调整配置。用户需要一种命名机制：引用已有资源（不复制），按场景选择子集，并在不重启 Pi 的情况下切换。
