@@ -31,4 +31,4 @@ pi-profile review -- --model openai/gpt-5.4
 
 ## 状态
 
-设计已完成，产品代码尚未实现。
+宿主架构已经 spike 验证并定为子进程 + 生成式 settings（`docs/adr/0005-subprocess-host-with-generated-settings.md`）；实现进行中（ticket 01，见 `docs/specs/initial-implementation/issues/`）。

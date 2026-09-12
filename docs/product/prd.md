@@ -55,7 +55,7 @@ pi-profile research -- --mode rpc
 
 `pi-profile review` 的位置参数只选择本次启动的 profile，不把 `review` 保存为活动 profile。之后在对话中执行 `/profile use implement` 是显式运行时操作，按 profile 来源保存选择。
 
-初始 profile 选择由 `pi-profile` 启动器在 Pi runtime 创建前完成，不向模型暴露全量资源（决策动机见 `docs/adr/0001-launcher-based-initial-profile-selection.md`）。
+初始 profile 选择由 `pi-profile` 启动器在 spawn Pi 前完成：启动器把 profile 的资源选择编码为生成的 settings，Pi 的原生 settings 机制在第一个 agent turn 前完成过滤，不向模型暴露全量资源（决策动机与验证见 `docs/adr/0005-subprocess-host-with-generated-settings.md`）。
 
 ## 运行语义
 
@@ -159,7 +159,7 @@ profile 使用 Pi 的全局 tool name：
 }
 ```
 
-选择 custom tool 时，profile 同时引用提供该 tool 的 extension resource。reload 后，`RuntimeApplier` 依据 Pi 实际注册的 tools 设置活动集合。
+选择 custom tool 时，profile 同时引用提供该 tool 的 extension resource。初始启动由生成的 `--tools` flag 生效；切换或 reload 后，pi-profile extension 依据 Pi 实际注册的 tools 重新设置活动集合。
 
 ## 常驻与选择
 

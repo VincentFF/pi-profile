@@ -25,7 +25,13 @@ _Avoid_: session profile, temporary profile
 The persisted active profile selection and overlay, written to the state file of the profile's source scope.
 
 **ActivationPlan**:
-The immutable, fully resolved set of skills, extensions, MCP servers, tools, and instructions produced from one profile plus one overlay.
+The immutable, fully resolved set of skills, extensions, MCP servers, tools, and instructions produced from one profile plus one overlay. It is materialized as generated settings plus spawn flags (launch) or a settings rewrite plus native reload (in-session switch).
+
+**Generated settings**:
+The pi-profile-owned runtime directory holding a generated `settings.json` (the profile's resource selection encoded for Pi's native settings mechanism), symlinks to the user's real `trust.json`/`auth.json`/`models.json`/`models-store.json`/`npm/`, pointed at via `PI_CODING_AGENT_DIR`. Never a user configuration file; regenerated on every launch, switch, or reload.
+
+**Runtime reload**:
+Pi's native `ctx.reload()`: re-reads the settings file from disk, rebuilds resources, re-executes extensions, and preserves the session. The mechanism behind `/profile use`, `/profile reload`, overlay application, and rollback.
 
 **Resource**:
 Any capability a profile references: skill, extension, MCP server, or tool. Inside `resources.json` and `ResourceRegistry` specifically, an extension entry identified by a stable logical ID.
@@ -46,4 +52,4 @@ A resource flag marking an extension that loads in every profile (e.g. a securit
 The optional external Pi package that owns MCP server configuration, connections, and credentials. pi-profile integrates with it but never stores MCP connection details in profiles.
 
 **Project trust**:
-Pi's trust decision for a project directory. pi-profile never reads or writes untrusted project directories.
+Pi's trust decision for a project directory. pi-profile never reads or writes untrusted project directories. Because generated settings set `defaultProjectTrust: "never"`, the resolver is the sole gatekeeper: it reads the real `trust.json` and admits project resources only when trusted.
