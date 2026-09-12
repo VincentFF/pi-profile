@@ -363,6 +363,76 @@ describe("pi-profile extension", () => {
 		});
 	});
 
+	describe("/mcp enable|disable (ticket 10)", () => {
+		const seedMcp = async () => {
+			await writeLaunchPlan({ profile: "review", source: "global", agentDir: root });
+			await writeFile(
+				path.join(root, "profiles.json"),
+				JSON.stringify({ schemaVersion: 1, profiles: { review: { mcp: ["github"] } } }),
+			);
+			await writeFile(path.join(root, "mcp.json"), JSON.stringify({ mcpServers: { github: {}, linear: {} } }));
+		};
+
+		it("enable edits the owning catalog and reloads", async () => {
+			await seedMcp();
+			const pi = fakePi();
+			installFakeAdapter(pi.events as FakeEventBus);
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx();
+
+			await pi.commands.get("mcp")?.handler("enable linear" as never, ctx as never);
+
+			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
+			expect(catalog.profiles.review.mcp).toEqual(["github", "linear"]);
+			expect(ctx.notifications.some((entry) => entry.message.includes("enabled MCP server"))).toBe(true);
+			// Adapter config untouched.
+			expect(JSON.parse(await readFile(path.join(root, "mcp.json"), "utf8"))).toEqual({
+				mcpServers: { github: {}, linear: {} },
+			});
+		});
+
+		it("enable fails fast on undiscovered names; disable cleans stale ones", async () => {
+			await seedMcp();
+			const pi = fakePi();
+			installFakeAdapter(pi.events as FakeEventBus);
+			piProfileExtension(pi as never);
+
+			const ctx = fakeCtx();
+			await pi.commands.get("mcp")?.handler("enable ghost" as never, ctx as never);
+			expect(ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("unknown MCP server"))).toBe(
+				true,
+			);
+
+			// Stale: in the profile but not in mcp.json.
+			await writeFile(
+				path.join(root, "profiles.json"),
+				JSON.stringify({ schemaVersion: 1, profiles: { review: { mcp: ["github", "stale"] } } }),
+			);
+			await pi.commands.get("mcp")?.handler("disable stale" as never, fakeCtx() as never);
+			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
+			expect(catalog.profiles.review.mcp).toEqual(["github"]);
+		});
+
+		it("fails clearly when the adapter is absent or the profile is default", async () => {
+			await seedMcp();
+			const pi = fakePi(); // no adapter installed
+			piProfileExtension(pi as never);
+			const ctx = fakeCtx();
+			await pi.commands.get("mcp")?.handler("disable github" as never, ctx as never);
+			expect(
+				ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("pi-mcp-adapter is not active")),
+			).toBe(true);
+
+			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+			const pi2 = fakePi();
+			installFakeAdapter(pi2.events as FakeEventBus);
+			piProfileExtension(pi2 as never);
+			const ctx2 = fakeCtx();
+			await pi2.commands.get("mcp")?.handler("disable github" as never, ctx2 as never);
+			expect(ctx2.notifications.some((entry) => entry.message.includes("no catalog entry"))).toBe(true);
+		});
+	});
+
 	describe("resource CRUD (ticket 08)", () => {
 		it("/profile resource create runs the wizard, writes the global registry, and reloads", async () => {
 			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });

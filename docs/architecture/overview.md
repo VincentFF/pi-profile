@@ -128,7 +128,7 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 - **失败回滚**：reload 前保留上一份已验证 settings 快照；reload 失败时写回快照并再次 reload。
 - **instructions**：在 `before_agent_start` 中把 profile instructions 追加到 Pi 已构建的 system prompt 末尾（初始与切换路径统一走 extension，不用 flag）。
 - **tools/model/thinking**：初始由生成 flags 生效；session_start（含 reload）后由 extension 把原始 tool 引用对 Pi 实际注册表（含扩展工具）重新展开并 `pi.setActiveTools`、可选 `pi.setModel` 与 thinking。
-- **MCP 协调**：经 `pi.events` 与 `pi-mcp-adapter` 通信：激活时发布当前 profile 的运行时 server allowlist（仅内存，不触碰 adapter 的 `.pi/mcp.json`）；`/mcp enable|disable` 经 adapter 的 profile-scoped state store 写当前 profile 的 `mcp` 数组并触发 MCP 级 reload。adapter 未安装且 profile 声明 `mcp` 时激活失败；未声明 `mcp` 时不注册协调。
+- **MCP 协调**：经 `pi.events` 与 `pi-mcp-adapter` 通信：激活时发布当前 profile 的运行时 server allowlist（仅内存，不触碰 adapter 的 `.pi/mcp.json`）；`/mcp enable|disable` 直接写当前 profile 所属 catalog 的 `mcp` 数组（profile-scoped 持久存储——adapter 无此 API），随后走标准 rewrite+reload 使变更即时生效。adapter 未安装且 profile 声明 `mcp` 时激活失败；未声明 `mcp` 时不注册协调。
 - CRUD 只在 TUI mode 提供；extension 可获知当前运行 mode，非交互模式下命令族退化为只读状态输出。
 
 ### `McpServerRegistry`
@@ -230,7 +230,8 @@ pi-profile/
 │   │   ├── resource-crud.ts      # /profile resource list/create/edit/delete（引用防护）
 │   │   ├── resource-wizard.ts    # resource create/edit 向导（UI 注入，可测）
 │   │   ├── profile-crud.ts       # /profile create|edit|delete|duplicate（active 删除需替换）
-│   │   └── profile-wizard.ts     # profile create/edit/duplicate 向导
+│   │   ├── profile-wizard.ts     # profile create/edit/duplicate 向导
+│   │   └── mcp-toggle.ts         # /mcp enable|disable（编辑 owning catalog 的 mcp 数组 + reload）
 │   └── tui/
 │       ├── profile-selector.ts
 │       ├── profile-editor.ts
