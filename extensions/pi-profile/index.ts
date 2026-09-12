@@ -1,7 +1,8 @@
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
 import { applyLaunchPlan, readLaunchPlanFile } from "../../src/switching/apply-plan.ts";
-import { switchProfile } from "../../src/switching/switch-profile.ts";
+import { CUSTOMIZE_USAGE, customizeOverlay, parseCustomizeArgs, resetOverlay } from "../../src/switching/customize.ts";
+import { switchProfile, type SwitchDeps } from "../../src/switching/switch-profile.ts";
 
 /**
  * pi-profile extension entry.
@@ -62,17 +63,17 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("profile", {
-		description: "pi-profile: /profile use <name> | /profile reload",
+		description: "pi-profile: /profile use <name> | reload | customize ... | reset",
 		handler: async (args, ctx) => {
 			const [subcommand, ...rest] = args.trim().split(/\s+/);
 			const notify = (message: string, level: "info" | "warning" | "error") => ctx.ui?.notify(message, level);
-			if (subcommand !== "use" && subcommand !== "reload") {
-				notify("usage: /profile use <name> | /profile reload (list/status/selector land in ticket 07)", "error");
+			const usage = `usage: /profile use <name> | /profile reload | ${CUSTOMIZE_USAGE} | /profile reset`;
+			if (subcommand === "use" && rest.length === 0) {
+				notify("usage: /profile use <name>", "error");
 				return;
 			}
-			const name = subcommand === "use" ? rest[0] : undefined;
-			if (subcommand === "use" && name === undefined) {
-				notify("usage: /profile use <name>", "error");
+			if (!["use", "reload", "customize", "reset"].includes(subcommand)) {
+				notify(usage, "error");
 				return;
 			}
 			try {
@@ -83,29 +84,41 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					notify("cannot switch: the launch plan carries no real agent dir", "error");
 					return;
 				}
-				const result = await switchProfile(
-					name,
-					{
-						runtimeDir,
-						realAgentDir: plan.agentDir,
-						cwd: ctx.cwd,
-						waitForIdle: () => ctx.waitForIdle(),
-						reload: () => ctx.reload(),
-						// A real reload invalidates this context (Pi re-executes
-						// extensions); property access then throws. Interactive Pi
-						// swallows reload refusals, so this probe is the switch's
-						// proof that the reload actually ran.
-						assertStale: () => {
-							void ctx.cwd;
-						},
+				const deps: SwitchDeps = {
+					runtimeDir,
+					realAgentDir: plan.agentDir,
+					cwd: ctx.cwd,
+					waitForIdle: () => ctx.waitForIdle(),
+					reload: () => ctx.reload(),
+					// A real reload invalidates this context (Pi re-executes
+					// extensions); property access then throws. Interactive Pi
+					// swallows reload refusals, so this probe is the switch's
+					// proof that the reload actually ran.
+					assertStale: () => {
+						void ctx.cwd;
 					},
-					{ reloadCurrent: subcommand === "reload" },
-				);
+				};
+				if (subcommand === "use") {
+					const result = await switchProfile(rest[0], deps, { clearOverlay: true });
+					for (const warning of result.warnings) notify(warning, "warning");
+					notify(`profile active: ${result.profile}`, "info");
+					return;
+				}
+				if (subcommand === "reload") {
+					const result = await switchProfile(undefined, deps, { reloadCurrent: true });
+					for (const warning of result.warnings) notify(warning, "warning");
+					notify(`profile reloaded: ${result.profile}`, "info");
+					return;
+				}
+				if (subcommand === "customize") {
+					const result = await customizeOverlay(deps, parseCustomizeArgs(rest.join(" ")));
+					for (const warning of result.warnings) notify(warning, "warning");
+					notify(`overlay updated: ${result.profile}`, "info");
+					return;
+				}
+				const result = await resetOverlay(deps);
 				for (const warning of result.warnings) notify(warning, "warning");
-				notify(
-					subcommand === "reload" ? `profile reloaded: ${result.profile}` : `profile active: ${result.profile}`,
-					"info",
-				);
+				notify(`overlay cleared: ${result.profile}`, "info");
 			} catch (error) {
 				notify(error instanceof Error ? error.message : String(error), "error");
 			}

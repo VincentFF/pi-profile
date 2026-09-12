@@ -33,6 +33,7 @@ import { readFile, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { resolveInitialProfile } from "../launcher/initial-profile.ts";
+import { RuntimeStateStore, type RuntimeOverlay } from "../runtime-state-store.ts";
 import { writeRuntimeFiles } from "../settings-generator.ts";
 import { readLaunchPlanFile } from "./apply-plan.ts";
 
@@ -114,12 +115,24 @@ async function readCurrentPlan(runtimeDir: string): Promise<{ profile?: string; 
 export async function switchProfile(
 	name: string | undefined,
 	deps: SwitchDeps,
-	options?: { reloadCurrent?: boolean },
+	options?: { reloadCurrent?: boolean; overlay?: RuntimeOverlay | null; clearOverlay?: boolean },
 ): Promise<SwitchResult> {
 	const current = await readCurrentPlan(deps.runtimeDir);
 	const target = options?.reloadCurrent === true ? (current.profile ?? name) : name;
 	if (target === undefined) {
 		throw new SwitchError("no active profile to reload");
+	}
+
+	// Overlay resolution: explicit `overlay` wins (customize), explicit
+	// `null` suppresses (reset/switch), and a plain `/profile reload`
+	// re-applies the stored overlay so runtime and state never diverge.
+	let overlay = options?.overlay;
+	if (overlay === undefined && options?.reloadCurrent === true && current.profile !== undefined) {
+		const currentPlan = await readLaunchPlanFile(deps.runtimeDir);
+		if (currentPlan?.agentDir !== undefined) {
+			const stateDir = currentPlan.source === "project" ? path.join(deps.cwd, ".pi") : currentPlan.agentDir;
+			overlay = (await new RuntimeStateStore(stateDir).read()).overlay ?? null;
+		}
 	}
 
 	await deps.waitForIdle();
@@ -130,10 +143,11 @@ export async function switchProfile(
 	// Full launcher resolution: trust gate, catalogs, discovery, dependency
 	// closure, model + MCP validation. Failures here leave the runtime
 	// untouched — nothing was written yet.
-	const resolved = await resolveInitialProfile(target, {
-		agentDir: deps.realAgentDir,
-		cwd: deps.cwd,
-	});
+	const resolved = await resolveInitialProfile(
+		target,
+		{ agentDir: deps.realAgentDir, cwd: deps.cwd },
+		{ overlay: overlay ?? undefined },
+	);
 
 	const isSwitch = !options?.reloadCurrent && target !== current.profile;
 	await writeRuntimeFiles(deps.runtimeDir, resolved.plan, {
@@ -145,6 +159,10 @@ export async function switchProfile(
 			// `/profile use` persists; `/profile reload` keeps the current
 			// profile's existing persistence (launch selections stay transient).
 			persistSelection: options?.reloadCurrent === true ? current.persistSelection : true,
+			// A switch discards the previous profile's overlay; the post-reload
+			// instance drops it from the state file. Customize/reset manage the
+			// overlay directly and never set this.
+			...(options?.clearOverlay === true ? { clearOverlay: true } : {}),
 		},
 	});
 

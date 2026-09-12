@@ -27,6 +27,30 @@ import { isRecord, readJsonFile } from "./json-file.ts";
 export interface RuntimeState {
 	activeProfile?: string;
 	lastVerifiedProfile?: string;
+	/** The runtime overlay: temporary narrowing of the active profile
+	 *  (ticket 06). Never written to catalogs, never applied at launch —
+	 *  only in-session switches/reloads read it. */
+	overlay?: RuntimeOverlay;
+}
+
+export interface RuntimeOverlay {
+	disabledSkills?: string[];
+	disabledExtensions?: string[];
+	disabledMcp?: string[];
+	/** Replaces the profile's tool references when set. */
+	tools?: string[];
+}
+
+function parseOverlay(value: unknown): RuntimeOverlay | undefined {
+	if (!isRecord(value)) return undefined;
+	const overlay: RuntimeOverlay = {};
+	for (const key of ["disabledSkills", "disabledExtensions", "disabledMcp", "tools"] as const) {
+		const list = value[key];
+		if (Array.isArray(list) && list.every((entry) => typeof entry === "string")) {
+			overlay[key] = list;
+		}
+	}
+	return Object.keys(overlay).length > 0 ? overlay : undefined;
 }
 
 export class RuntimeStateStore {
@@ -48,11 +72,37 @@ export class RuntimeStateStore {
 		if (typeof result.value.lastVerifiedProfile === "string") {
 			state.lastVerifiedProfile = result.value.lastVerifiedProfile;
 		}
+		const overlay = parseOverlay(result.value.overlay);
+		if (overlay !== undefined) {
+			state.overlay = overlay;
+		}
 		return state;
 	}
 
 	async write(state: RuntimeState): Promise<void> {
 		await mkdir(path.dirname(this.#statePath), { recursive: true });
 		await writeFile(this.#statePath, `${JSON.stringify(state, null, 2)}\n`);
+	}
+
+	/** Read-modify-write merge. A field set to `undefined` is deleted; absent
+	 *  fields keep their stored value. Used by the switch/customize paths so
+	 *  one concern (selection, anchor, overlay) never clobbers another. */
+	async update(patch: Partial<RuntimeState>): Promise<RuntimeState> {
+		const current = await this.read();
+		const next: RuntimeState = { ...current };
+		if ("activeProfile" in patch) {
+			if (patch.activeProfile === undefined) delete next.activeProfile;
+			else next.activeProfile = patch.activeProfile;
+		}
+		if ("lastVerifiedProfile" in patch) {
+			if (patch.lastVerifiedProfile === undefined) delete next.lastVerifiedProfile;
+			else next.lastVerifiedProfile = patch.lastVerifiedProfile;
+		}
+		if ("overlay" in patch) {
+			if (patch.overlay === undefined) delete next.overlay;
+			else next.overlay = patch.overlay;
+		}
+		await this.write(next);
+		return next;
 	}
 }

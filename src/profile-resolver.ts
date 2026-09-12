@@ -26,6 +26,7 @@ import { minimatch } from "minimatch";
 
 import type { ProfileDefinition, ProfileModel, ProfileSource, ResolvedProfile } from "./profile-catalog.ts";
 import { ResourceRegistry } from "./resource-registry.ts";
+import type { RuntimeOverlay } from "./runtime-state-store.ts";
 import type { SkillEntry } from "./skill-registry.ts";
 
 export class ActivationError extends Error {
@@ -86,6 +87,13 @@ export interface ResolveInput {
 	 * fails rather than passing references through unchecked.
 	 */
 	discoveredMcpServers?: string[];
+	/**
+	 * The runtime overlay (ticket 06): temporary narrowing applied on top of
+	 * the profile definition at every resolution. Overlay references must
+	 * name resources the profile actually resolves (typos fail loudly), and
+	 * `alwaysOn` extensions and their dependency chains cannot be disabled.
+	 */
+	overlay?: RuntimeOverlay;
 }
 
 function isGlob(reference: string): boolean {
@@ -131,7 +139,7 @@ export function defaultPlan(): ActivationPlan {
 }
 
 export async function resolveProfile(input: ResolveInput): Promise<ActivationPlan> {
-	const { profile, skills, resources } = input;
+	const { profile, skills, resources, overlay } = input;
 	const definition: ProfileDefinition = profile.definition;
 
 	let mcp: string[] | undefined;
@@ -144,19 +152,68 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		mcp = expandReferences(definition.mcp, input.discoveredMcpServers, (name) => name, "MCP server");
 	}
 
-	const selectedSkills = expandReferences(definition.skills ?? [], skills, (skill) => skill.name, "skill");
+	let selectedSkills = expandReferences(definition.skills ?? [], skills, (skill) => skill.name, "skill");
 
 	const resourceIds = resources.list().map((entry) => entry.id);
 	const selectedIds = expandReferences(definition.extensions ?? [], resourceIds, (id) => id, "extension").concat(
 		resources.alwaysOn().map((entry) => entry.id),
 	);
-	const closure = await resources.closure([...new Set(selectedIds)]);
+	let closure = await resources.closure([...new Set(selectedIds)]);
+
+	// --- overlay narrowing (ticket 06) ---
+	// Overlay references must name resources the profile actually resolves
+	// (typos fail loudly), and alwaysOn extensions plus their dependency
+	// chains can never be disabled — safety gates survive experimentation.
+	let toolReferences = definition.tools;
+	if (overlay !== undefined) {
+		if (overlay.disabledSkills !== undefined && overlay.disabledSkills.length > 0) {
+			const active = new Set(selectedSkills.map((skill) => skill.name));
+			for (const name of overlay.disabledSkills) {
+				if (!active.has(name)) {
+					throw new ActivationError(`profile "${profile.name}": overlay disables unknown skill "${name}"`);
+				}
+			}
+			const disabled = new Set(overlay.disabledSkills);
+			selectedSkills = selectedSkills.filter((skill) => !disabled.has(skill.name));
+		}
+		if (overlay.disabledExtensions !== undefined && overlay.disabledExtensions.length > 0) {
+			const protectedIds = new Set(
+				(await resources.closure(resources.alwaysOn().map((entry) => entry.id))).map((entry) => entry.id),
+			);
+			const closureIds = new Set(closure.map((entry) => entry.id));
+			for (const id of overlay.disabledExtensions) {
+				if (protectedIds.has(id)) {
+					throw new ActivationError(
+						`profile "${profile.name}": overlay cannot disable "${id}" — it is alwaysOn or in an alwaysOn dependency chain`,
+					);
+				}
+				if (!closureIds.has(id)) {
+					throw new ActivationError(`profile "${profile.name}": overlay disables unknown extension "${id}"`);
+				}
+			}
+			const disabled = new Set(overlay.disabledExtensions);
+			closure = closure.filter((entry) => !disabled.has(entry.id));
+		}
+		if (overlay.disabledMcp !== undefined && overlay.disabledMcp.length > 0) {
+			const active = new Set(mcp ?? []);
+			for (const name of overlay.disabledMcp) {
+				if (!active.has(name)) {
+					throw new ActivationError(`profile "${profile.name}": overlay disables unknown MCP server "${name}"`);
+				}
+			}
+			const disabled = new Set(overlay.disabledMcp);
+			mcp = (mcp ?? []).filter((name) => !disabled.has(name));
+		}
+		if (overlay.tools !== undefined) {
+			toolReferences = overlay.tools;
+		}
+	}
 
 	let tools: string[] | undefined;
-	if (definition.tools !== undefined) {
-		tools = expandReferences(definition.tools, BUILTIN_TOOL_NAMES, (name) => name, "tool", {
+	if (toolReferences !== undefined) {
+		tools = expandReferences(toolReferences, BUILTIN_TOOL_NAMES, (name) => name, "tool", {
 			literalMustExist: false,
-		}) as string[];
+		});
 	}
 
 	let model: ProfileModel | undefined;
@@ -183,7 +240,7 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		filter: "selection",
 		skills: selectedSkills,
 		extensions: closure.map((entry) => ({ id: entry.id, entry: entry.entry })),
-		...(tools !== undefined ? { tools, toolReferences: [...(definition.tools ?? [])] } : {}),
+		...(tools !== undefined && toolReferences !== undefined ? { tools, toolReferences: [...toolReferences] } : {}),
 		...(model !== undefined ? { model } : {}),
 		...(definition.instructions !== undefined ? { instructions: definition.instructions } : {}),
 		...(mcp !== undefined ? { mcp } : {}),

@@ -240,3 +240,103 @@ describe("resolveProfile", () => {
 		expect(plan.instructions).toBe("Be picky.");
 	});
 });
+
+describe("overlay application (ticket 06)", () => {
+	it("narrows resolved skills by disabledSkills", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["code-review", "debug"] }),
+			skills: [skill("code-review"), skill("debug")],
+			resources: await registryWith({}),
+			overlay: { disabledSkills: ["debug"] },
+		});
+
+		expect(plan.skills.map((entry) => entry.name)).toEqual(["code-review"]);
+	});
+
+	it("rejects disabling a skill the profile does not resolve", async () => {
+		await expect(
+			resolveProfile({
+				profile: profile("review", { skills: ["code-review"] }),
+				skills: [skill("code-review")],
+				resources: await registryWith({}),
+				overlay: { disabledSkills: ["ghost-skill"] },
+			}),
+		).rejects.toThrow(/overlay disables unknown skill "ghost-skill"/);
+	});
+
+	it("narrows extensions post-closure while the alwaysOn gate and its chain survive", async () => {
+		// helper is linter's dependency; the overlay removes it anyway
+		// (experimentation), while the alwaysOn gate and its own dependency
+		// stay protected.
+		const resources = await registryWith({
+			helper: {},
+			linter: { dependsOn: ["helper"] },
+			"security-gate": { alwaysOn: true, dependsOn: ["gate-support"] },
+			"gate-support": {},
+		});
+
+		const plan = await resolveProfile({
+			profile: profile("review", { extensions: ["linter"] }),
+			skills: [],
+			resources,
+			overlay: { disabledExtensions: ["helper"] },
+		});
+
+		expect(plan.extensions.map((entry) => entry.id).sort()).toEqual(["gate-support", "linter", "security-gate"]);
+	});
+
+	it("rejects disabling an alwaysOn extension", async () => {
+		const resources = await registryWith({ "security-gate": { alwaysOn: true } });
+
+		await expect(
+			resolveProfile({
+				profile: profile("review", { extensions: [] }),
+				skills: [],
+				resources,
+				overlay: { disabledExtensions: ["security-gate"] },
+			}),
+		).rejects.toThrow(/cannot disable "security-gate"/);
+	});
+
+	it("rejects disabling a resource in an alwaysOn dependency chain", async () => {
+		const resources = await registryWith({
+			"security-gate": { alwaysOn: true, dependsOn: ["gate-support"] },
+			"gate-support": {},
+		});
+
+		await expect(
+			resolveProfile({
+				profile: profile("review", { extensions: [] }),
+				skills: [],
+				resources,
+				overlay: { disabledExtensions: ["gate-support"] },
+			}),
+		).rejects.toThrow(/cannot disable "gate-support"/);
+	});
+
+	it("narrows mcp servers and replaces tool references", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { mcp: ["github", "linear"], tools: ["read", "bash"] }),
+			skills: [],
+			resources: await registryWith({}),
+			discoveredMcpServers: ["github", "linear"],
+			overlay: { disabledMcp: ["linear"], tools: ["read"] },
+		});
+
+		expect(plan.mcp).toEqual(["github"]);
+		expect(plan.tools).toEqual(["read"]);
+		expect(plan.toolReferences).toEqual(["read"]);
+	});
+
+	it("rejects disabling an MCP server the profile does not resolve", async () => {
+		await expect(
+			resolveProfile({
+				profile: profile("review", { mcp: ["github"] }),
+				skills: [],
+				resources: await registryWith({}),
+				discoveredMcpServers: ["github"],
+				overlay: { disabledMcp: ["ghost-server"] },
+			}),
+		).rejects.toThrow(/overlay disables unknown MCP server "ghost-server"/);
+	});
+});

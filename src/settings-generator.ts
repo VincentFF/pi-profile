@@ -243,8 +243,9 @@ export interface RuntimeFileOptions {
 	/** Extra launch-plan fields written by the in-session switch path:
 	 *  `switchedFrom` triggers the one-shot change summary; `persistSelection`
 	 *  tells the post-reload extension instance to save the selection and
-	 *  record the rollback anchor. */
-	planExtras?: { switchedFrom?: string; persistSelection?: boolean };
+	 *  record the rollback anchor; `clearOverlay` drops the stored overlay
+	 *  (a profile switch discards the previous profile's overlay). */
+	planExtras?: { switchedFrom?: string; persistSelection?: boolean; clearOverlay?: boolean };
 }
 
 /** Computes the generated settings for a plan (pure-ish: reads the user's

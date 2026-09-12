@@ -16,11 +16,11 @@ import path from "node:path";
 import { isRecord, readJsonFile } from "../json-file.ts";
 import { discoverAdapterServerNames } from "../mcp-config.ts";
 import { isAdapterExtension, MissingMcpAdapterError } from "../mcp-coordination.ts";
-import { ProfileCatalog } from "../profile-catalog.ts";
-import { defaultPlan, resolveProfile, type ActivationPlan } from "../profile-resolver.ts";
+import { ProfileCatalog, type ResolvedProfile } from "../profile-catalog.ts";
+import { ActivationError, defaultPlan, resolveProfile, type ActivationPlan } from "../profile-resolver.ts";
 import { resolveProjectTrust } from "../project-trust.ts";
 import { ResourceRegistry } from "../resource-registry.ts";
-import { RuntimeStateStore } from "../runtime-state-store.ts";
+import { RuntimeStateStore, type RuntimeOverlay } from "../runtime-state-store.ts";
 import { discoverLauncherResources, type LauncherDiscovery } from "./discovery.ts";
 import { checkDeclaredModel } from "./model-check.ts";
 
@@ -83,6 +83,7 @@ async function readTrustInputs(context: LauncherContext): Promise<{
 export async function resolveInitialProfile(
 	name: string | undefined,
 	context: LauncherContext,
+	options?: { overlay?: RuntimeOverlay },
 ): Promise<InitialProfile> {
 	const { projectTrusted, projectSettings } = await readTrustInputs(context);
 	const projectDir = projectTrusted ? context.cwd : undefined;
@@ -111,7 +112,41 @@ export async function resolveInitialProfile(
 		return { plan: defaultPlan(), warnings };
 	}
 	if (profile.source === "builtin") {
-		return { plan: defaultPlan(), warnings };
+		// The default profile is normally unfiltered. With an overlay it becomes
+		// a synthetic "everything minus disabled" selection (PRD: overlays may
+		// temporarily narrow default's scope). MCP narrowing on default is
+		// rejected — the adapter's own /mcp commands own that surface natively.
+		const overlay = options?.overlay;
+		const narrowed =
+			overlay !== undefined &&
+			((overlay.disabledSkills?.length ?? 0) > 0 ||
+				(overlay.disabledExtensions?.length ?? 0) > 0 ||
+				(overlay.disabledMcp?.length ?? 0) > 0 ||
+				overlay.tools !== undefined);
+		if (!narrowed) {
+			return { plan: defaultPlan(), warnings };
+		}
+		if ((overlay.disabledMcp?.length ?? 0) > 0) {
+			throw new ActivationError(
+				"the default profile has no MCP allowlist to narrow — use the adapter's own /mcp commands instead",
+			);
+		}
+		const synthetic: ResolvedProfile = {
+			name: "default",
+			source: "builtin",
+			definition: { skills: ["*"], extensions: ["*"] },
+		};
+		const [discovery, resources] = await Promise.all([
+			discoverLauncherResources({ ...context, projectTrusted }),
+			ResourceRegistry.load(context.agentDir, { projectDir }),
+		]);
+		const plan = await resolveProfile({
+			profile: synthetic,
+			skills: discovery.skills,
+			resources,
+			overlay,
+		});
+		return { plan, discovery, projectSettings, warnings };
 	}
 
 	const [discovery, resources] = await Promise.all([
@@ -126,6 +161,7 @@ export async function resolveInitialProfile(
 		discoveredMcpServers: profile.definition.mcp?.length
 			? await discoverAdapterServerNames(context.agentDir, projectDir)
 			: undefined,
+		overlay: options?.overlay,
 	});
 	if (plan.mcp !== undefined && !plan.extensions.some(isAdapterExtension)) {
 		// Fail before spawn: without the adapter in the active extension set

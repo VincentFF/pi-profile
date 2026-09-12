@@ -51,6 +51,7 @@ export interface LaunchPlanFile {
 	mcp?: string[];
 	switchedFrom?: string;
 	persistSelection?: boolean;
+	clearOverlay?: boolean;
 }
 
 /** The narrow slice of ExtensionAPI/Context the application needs. */
@@ -140,9 +141,12 @@ export async function applyLaunchPlan(input: {
 	// --- persistence + rollback anchor (post-reload only) ---
 	if (plan.persistSelection === true && input.reason === "reload" && plan.agentDir !== undefined) {
 		const stateDir = plan.source === "project" ? path.join(input.cwd, ".pi") : plan.agentDir;
-		await new RuntimeStateStore(stateDir).write({
+		// Merge: the overlay belongs to customize/reset, not to this write.
+		// A switch (clearOverlay) explicitly drops it.
+		await new RuntimeStateStore(stateDir).update({
 			activeProfile: plan.profile,
 			lastVerifiedProfile: plan.profile,
+			...(plan.clearOverlay === true ? { overlay: undefined } : {}),
 		});
 	}
 

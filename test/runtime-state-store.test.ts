@@ -77,4 +77,28 @@ describe("RuntimeStateStore (global scope)", () => {
 
 		expect(await store.read()).toEqual({ activeProfile: "impl" });
 	});
+
+	it("round-trips the runtime overlay", async () => {
+		const store = new RuntimeStateStore(fixture.agentDir);
+		await store.write({
+			activeProfile: "review",
+			overlay: { disabledSkills: ["noisy-skill"], tools: ["read"] },
+		});
+
+		expect((await store.read()).overlay).toEqual({ disabledSkills: ["noisy-skill"], tools: ["read"] });
+	});
+
+	it("update merges patches and deletes undefined fields without clobbering others", async () => {
+		const store = new RuntimeStateStore(fixture.agentDir);
+		await store.write({
+			activeProfile: "review",
+			lastVerifiedProfile: "review",
+			overlay: { disabledSkills: ["noisy-skill"] },
+		});
+
+		const next = await store.update({ lastVerifiedProfile: "impl", overlay: undefined });
+
+		expect(next).toEqual({ activeProfile: "review", lastVerifiedProfile: "impl" });
+		expect(await store.read()).toEqual({ activeProfile: "review", lastVerifiedProfile: "impl" });
+	});
 });
