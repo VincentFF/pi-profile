@@ -72,6 +72,7 @@ function fakePi(): FakePi {
 
 function fakeCtx(options?: {
 	hasUI?: boolean;
+	mode?: "tui" | "rpc" | "json" | "print";
 	selectAnswer?: string;
 	selectAnswers?: string[];
 	inputAnswers?: Array<string | undefined>;
@@ -94,6 +95,7 @@ function fakeCtx(options?: {
 			return root;
 		},
 		hasUI: options?.hasUI ?? false,
+		mode: options?.mode ?? "tui",
 		isIdle: () => true,
 		waitForIdle: async () => {},
 		reload: async () => {
@@ -349,16 +351,18 @@ describe("pi-profile extension", () => {
 			expect(catalog.profiles["review-strict"]).toEqual(catalog.profiles.review);
 		});
 
-		it("create/edit/delete refuse non-interactive mode", async () => {
+		it("create/edit/delete/duplicate are TUI-only, with a mode-aware message", async () => {
 			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
 			const pi = fakePi();
 			piProfileExtension(pi as never);
 			for (const args of ["create", "edit x", "delete x", "duplicate"]) {
-				const ctx = fakeCtx({ hasUI: false });
+				const ctx = fakeCtx({ mode: "rpc" });
 				await pi.commands.get("profile")?.handler(args as never, ctx as never);
-				expect(ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("interactive"))).toBe(
-					true,
-				);
+				expect(
+					ctx.notifications.some(
+						(entry) => entry.level === "error" && entry.message.includes("TUI mode") && entry.message.includes("rpc"),
+					),
+				).toBe(true);
 			}
 		});
 	});
@@ -481,17 +485,19 @@ describe("pi-profile extension", () => {
 			expect((await ResourceRegistry.load(root)).get("linter")).toBeDefined();
 		});
 
-		it("/profile resource create refuses non-interactive mode", async () => {
+		it("/profile resource mutations are TUI-only, with a mode-aware message", async () => {
 			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
 			const pi = fakePi();
 			piProfileExtension(pi as never);
-			const ctx = fakeCtx({ hasUI: false });
-
-			await pi.commands.get("profile")?.handler("resource create" as never, ctx as never);
-
-			expect(ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("interactive"))).toBe(
-				true,
-			);
+			for (const args of ["resource create", "resource edit x", "resource delete x"]) {
+				const ctx = fakeCtx({ mode: "print" });
+				await pi.commands.get("profile")?.handler(args as never, ctx as never);
+				expect(
+					ctx.notifications.some(
+						(entry) => entry.level === "error" && entry.message.includes("TUI mode") && entry.message.includes("print"),
+					),
+				).toBe(true);
+			}
 		});
 	});
 });

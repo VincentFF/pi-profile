@@ -14,7 +14,9 @@
 
 ## Comments
 
-**2026-09-12 — completed** (review fixes: extension header docblock, wizard path hint, overview gloss, import merge)
+**2026-09-12 — completed**
+
+**Addendum (ticket 11)**: the CRUD availability gate moved from `hasUI` to `ctx.mode === "tui"` (RPC has dialog-capable UI, so hasUI was the wrong predicate for TUI-only CRUD). The RPC-driven wizard integration tests became mode-refusal assertions; wizard flows remain unit-tested with a TUI-mode fake context. (review fixes: extension header docblock, wizard path hint, overview gloss, import merge)
 
 Write side lives in `src/resource-registry-store.ts` (whole-file overwrite, schemaVersion envelope, entries re-parsed through the registry's own `parseResourceEntry` so anything written is loadable; missing file → empty skeleton; malformed file → RegistryError even on the write path). Orchestration in `src/switching/resource-crud.ts`: trust-gated merged listing (project shadows global), referrer scan across BOTH scopes (shadowed global profiles still activate elsewhere, so their references keep the entry alive) plus cross-scope `dependsOn`, delete refusal naming every referrer, project-scope mutations rejected when untrusted. Wizard in `src/switching/resource-wizard.ts` with an injected `{select, input, confirm}` UI; any cancelled step aborts without writing. Save semantics: re-read at write time — never blocks on concurrent edits (ticket requirement), unrelated external entries survive, same-entry conflicts resolve last-write-wins. All mutations apply through the standard `reloadCurrent` switch path.
 

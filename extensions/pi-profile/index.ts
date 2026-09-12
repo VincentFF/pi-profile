@@ -47,10 +47,14 @@ import { switchProfile, type SwitchDeps } from "../../src/switching/switch-profi
  *   observability surface (ticket 07). Status combines the active launch
  *   plan, the stored overlay, fresh MCP discovery, and Pi's actual command
  *   registrations (the winner evidence for same-name conflicts).
- * - `/profile resource list|create|edit|delete`: registry CRUD with the
- *   referrer-guarded delete and wizard (ticket 08); mutations apply via
- *   the standard reload path. Mutation success is notified BEFORE the
- *   reload — the command context is stale afterwards.
+ * - `/profile create|edit|delete|duplicate` and `/profile resource
+ *   create|edit|delete`: catalog/registry CRUD wizards (tickets 08/09).
+ *   CRUD is TUI-only (ticket 11): gated on `ctx.mode === "tui"` with a
+ *   mode-aware refusal. Mutations apply via the standard reload path;
+ *   mutation success is notified BEFORE the reload — the command context
+ *   is stale afterwards.
+ * - list/status ship structured `details` payloads (`{kind, profiles}` /
+ *   `{kind, report}`) for RPC consumers (ticket 11).
  * - `/mcp enable|disable <server>`: edit the active profile's mcp array in
  *   its owning catalog, then reload (ticket 10). Fails clearly with the
  *   adapter absent; notifies before the reload (stale context after).
@@ -217,8 +221,8 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 						});
 						return;
 					}
-					if (!ctx.hasUI) {
-						notify(`/profile resource ${action} requires interactive UI`, "error");
+					if (ctx.mode !== "tui") {
+						notify(`/profile resource ${action} requires TUI mode (current mode: ${ctx.mode})`, "error");
 						return;
 					}
 					if (action === "delete") {
@@ -273,8 +277,8 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				// reloads immediately; deleting the active profile requires a
 				// replacement chosen up front, then switches to it.
 				if (["create", "edit", "delete", "duplicate"].includes(subcommand)) {
-					if (!ctx.hasUI) {
-						notify(`/profile ${subcommand} requires interactive UI`, "error");
+					if (ctx.mode !== "tui") {
+						notify(`/profile ${subcommand} requires TUI mode (current mode: ${ctx.mode})`, "error");
 						return;
 					}
 					const scopeInput = { realAgentDir: plan.agentDir, cwd: ctx.cwd };
@@ -394,6 +398,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 						customType: "pi-profile",
 						content: formatProfileList(entries, plan.profile),
 						display: true,
+						details: { kind: "list", profiles: entries },
 					});
 					return;
 				}
@@ -415,6 +420,9 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 						customType: "pi-profile",
 						content: formatStatusMarkdown(report),
 						display: true,
+						// Structured form for RPC consumers (ticket 11): the message
+						// event carries the full report object in `details`.
+						details: { kind: "status", report },
 					});
 					return;
 				}

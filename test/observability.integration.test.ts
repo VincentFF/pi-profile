@@ -91,6 +91,17 @@ describe("observability surface against a real spawned pi", () => {
 		expect(seen).toContain(`review → ${path.join(fixture.agentDir, "skills", "review", "SKILL.md")}`);
 		expect(seen).toContain("disabled=[github]");
 
+		// RPC-consumable structured form (ticket 11): the custom message
+		// carries the report object in details.
+		const structured = driver.messages.find(
+			(message) =>
+				typeof message === "object" &&
+				message !== null &&
+				JSON.stringify(message).includes('"kind":"status"') &&
+				JSON.stringify(message).includes('"profile":"review"'),
+		);
+		expect(structured).toBeDefined();
+
 		// Switch (the prompt response returns after the handler's reload
 		// settles), then status reflects the delta against the previous plan.
 		await command("profile use impl");

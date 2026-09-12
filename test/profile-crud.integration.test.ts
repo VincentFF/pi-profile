@@ -1,12 +1,12 @@
 /**
- * Integration: /profile create|edit|delete against a real spawned pi
- * (ticket 09), driving the wizards through the RPC dialog protocol.
+ * Integration: profile catalog CRUD mode gating against a real spawned pi
+ * (tickets 09 + 11).
  *
- * - create writes the chosen scope catalog and the profile is immediately
- *   usable (visible in /profile list, activatable via /profile use);
- * - editing the ACTIVE profile reloads in place — resolved skills swap;
- * - deleting the active profile requires a replacement selection, then the
- *   session switches to it.
+ * In RPC mode `/profile create|edit|delete|duplicate` are refused with a
+ * mode-aware message and the catalogs stay untouched; switching
+ * (`/profile use`) is NOT CRUD and keeps working. The wizard flows are
+ * unit-tested at the command handler with a TUI-mode fake context
+ * (test/extension.test.ts); interactive TUI acceptance is manual.
  */
 
 import { readFile, rm, writeFile } from "node:fs/promises";
@@ -25,6 +25,13 @@ beforeEach(async () => {
 	fixture = await createPiFixture();
 	await addGlobalSkill(fixture, "review");
 	await addGlobalSkill(fixture, "impl");
+	await writeFile(
+		path.join(fixture.agentDir, "profiles.json"),
+		JSON.stringify({
+			schemaVersion: 1,
+			profiles: { review: { skills: ["review"] }, impl: { skills: ["impl"] } },
+		}),
+	);
 });
 
 afterEach(async () => {
@@ -40,87 +47,29 @@ async function start(profile: string): Promise<void> {
 	await driver.send({ type: "get_state" });
 }
 
-async function command(text: string, timeoutMs = 60_000): Promise<void> {
-	await driver.send({ type: "prompt", message: `/${text}` }, timeoutMs);
-}
+const profilesFile = async () =>
+	JSON.parse(await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8")).profiles;
 
-async function messageContaining(fragment: string): Promise<unknown> {
-	return driver.waitFor((message) => JSON.stringify(message).includes(fragment));
-}
+describe("profile catalog CRUD mode gating in RPC mode", () => {
+	it("create/edit/delete/duplicate are refused with a mode-aware message; catalogs untouched", async () => {
+		await start("review");
 
-async function profilesFile(): Promise<Record<string, unknown>> {
-	return JSON.parse(await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8")).profiles;
-}
+		for (const args of ["create", "edit review", "delete review", "duplicate"]) {
+			await driver.send({ type: "prompt", message: `/profile ${args}` }, 60_000);
+			await driver.waitFor((message) => {
+				const text = JSON.stringify(message);
+				return text.includes("requires TUI mode") && text.includes("rpc");
+			});
+		}
 
-describe("profile catalog CRUD against a real spawned pi", () => {
-	it("create → listed with source → usable via /profile use", async () => {
-		await start("default");
-
-		driver.answerDialogs([
-			{ value: "global" }, // scope (project is trusted: empty .pi)
-			{ value: "qa" }, // name
-			{ value: "QA profile" }, // label
-			{ value: "" }, // description
-			{ value: "" }, // skills
-			{ value: "" }, // extensions
-			{ value: "" }, // mcp
-			{ value: "" }, // tools
-			{ value: "" }, // instructions
-			{ value: "" }, // model
-		]);
-		await command("profile create");
-		await messageContaining("created profile");
-
-		expect(await profilesFile()).toEqual({ qa: { label: "QA profile" } });
-
-		await command("profile list");
-		await messageContaining("qa [global]");
-
-		// Immediately usable: switching to it works through the standard path.
-		await command("profile use qa");
-		expect(await driver.skillCommandNames()).toEqual([]);
+		expect(await profilesFile()).toEqual({ review: { skills: ["review"] }, impl: { skills: ["impl"] } });
 	}, 90_000);
 
-	it("editing the active profile reloads in place with the new skills", async () => {
-		await writeFile(
-			path.join(fixture.agentDir, "profiles.json"),
-			JSON.stringify({ schemaVersion: 1, profiles: { review: { skills: ["review"] } } }),
-		);
+	it("switching is not CRUD: /profile use keeps working in RPC mode", async () => {
 		await start("review");
 		expect(await driver.skillCommandNames()).toEqual(["skill:review"]);
 
-		// Edit: keep label/description empty, change skills to impl.
-		driver.answerDialogs([
-			{ value: "" }, // label (keep)
-			{ value: "" }, // description
-			{ value: "impl" }, // skills — replaced wholesale
-			{ value: "" },
-			{ value: "" },
-			{ value: "" },
-			{ value: "" },
-			{ value: "" },
-		]);
-		await command("profile edit review");
-
-		expect((await profilesFile()).review).toEqual({ skills: ["impl"] });
-		expect(await driver.skillCommandNames()).toEqual(["skill:impl"]);
-	}, 90_000);
-
-	it("deleting the active profile requires choosing a replacement, then switches", async () => {
-		await writeFile(
-			path.join(fixture.agentDir, "profiles.json"),
-			JSON.stringify({
-				schemaVersion: 1,
-				profiles: { review: { skills: ["review"] }, impl: { skills: ["impl"] } },
-			}),
-		);
-		await start("review");
-
-		driver.answerDialogs([{ value: "impl [global]" }]); // replacement selection
-		await command("profile delete review");
-		await messageContaining("switching to");
-
-		expect((await profilesFile()).review).toBeUndefined();
+		await driver.send({ type: "prompt", message: "/profile use impl" }, 60_000);
 		expect(await driver.skillCommandNames()).toEqual(["skill:impl"]);
 	}, 90_000);
 });

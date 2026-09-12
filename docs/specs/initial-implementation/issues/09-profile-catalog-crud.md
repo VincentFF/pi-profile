@@ -15,7 +15,9 @@
 
 ## Comments
 
-**2026-09-12 — completed** (review fixes: trust-gated catalog reads via exported `readCatalogScope`/`catalogStore`, symmetric override-reveal both directions, wizard docblock, duplicate non-interactive gate test)
+**2026-09-12 — completed**
+
+**Addendum (ticket 11)**: the CRUD availability gate moved from `hasUI` to `ctx.mode === "tui"` (RPC has dialog-capable UI, so hasUI was the wrong predicate for TUI-only CRUD). The RPC-driven wizard integration tests became mode-refusal assertions; wizard flows remain unit-tested with a TUI-mode fake context. (review fixes: trust-gated catalog reads via exported `readCatalogScope`/`catalogStore`, symmetric override-reveal both directions, wizard docblock, duplicate non-interactive gate test)
 
 Write side `src/profile-catalog-store.ts` mirrors the resource store (whole-file overwrite, schema envelope, definitions re-parsed through the catalog's own `parseProfileDefinition` — now exported — so only declared fields survive a save; inheritance keys like `extends` can't persist by construction). Orchestration `src/switching/profile-crud.ts`: scope trust gate, duplicate/unknown-name refusals, active-delete requires a replacement, `default` untouchable. Wizard `src/switching/profile-wizard.ts`: create asks scope first (no dialog when untrusted — global only), captures label/description/skills/extensions/mcp/tools/instructions/model (`provider/id[/thinking]`); edit prefills and empty answers keep current values (no field-clearing gesture — delete + create instead); duplicate copies the complete definition under a new name.
 
