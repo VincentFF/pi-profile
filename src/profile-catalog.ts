@@ -44,6 +44,11 @@ export interface ProfileDefinition {
 /** Where a profile's definition came from. */
 export type ProfileSource = "builtin" | "global" | "project";
 
+interface CatalogEntry {
+	source: "global" | "project";
+	definition: ProfileDefinition;
+}
+
 export interface ResolvedProfile {
 	name: string;
 	source: ProfileSource;
@@ -130,9 +135,9 @@ async function loadCatalogFile(catalogPath: string): Promise<Map<string, Profile
 }
 
 export class ProfileCatalog {
-	readonly #profiles: ReadonlyMap<string, { source: "global" | "project"; definition: ProfileDefinition }>;
+	readonly #profiles: ReadonlyMap<string, CatalogEntry>;
 
-	private constructor(profiles: ReadonlyMap<string, { source: "global" | "project"; definition: ProfileDefinition }>) {
+	private constructor(profiles: ReadonlyMap<string, CatalogEntry>) {
 		this.#profiles = profiles;
 	}
 
@@ -144,7 +149,7 @@ export class ProfileCatalog {
 	 */
 	static async load(agentDir: string, options?: { projectDir?: string }): Promise<ProfileCatalog> {
 		const globalProfiles = await loadCatalogFile(path.join(agentDir, "profiles.json"));
-		const profiles = new Map<string, { source: "global" | "project"; definition: ProfileDefinition }>();
+		const profiles = new Map<string, CatalogEntry>();
 		for (const [name, definition] of globalProfiles) {
 			profiles.set(name, { source: "global", definition });
 		}

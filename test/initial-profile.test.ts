@@ -75,13 +75,16 @@ describe("resolveInitialProfile", () => {
 		expect(plan.profile).toBe("review");
 	});
 
-	it("fails loudly when the saved active profile no longer exists", async () => {
+	it("warns and falls back to default when the saved active profile no longer exists", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "pi-profile-state.json"),
 			JSON.stringify({ activeProfile: "ghost" }),
 		);
 
-		await expect(resolveInitialProfile(undefined, context())).rejects.toThrow(UnknownProfileError);
+		const { plan, warnings } = await resolveInitialProfile(undefined, context());
+
+		expect(plan.profile).toBe("default");
+		expect(warnings.some((warning) => warning.includes("ghost"))).toBe(true);
 	});
 
 	it("rejects an unknown positional profile before any spawn", async () => {

@@ -46,6 +46,9 @@ export interface InitialProfile {
 	/** The trusted project's `.pi/settings.json` content, when trusted and
 	 *  present. The generator merges it into the base for selection plans. */
 	projectSettings?: Record<string, unknown>;
+	/** Non-fatal notices for the user (e.g. a dangling restored profile that
+	 *  fell back to default). The launcher prints them. */
+	warnings: string[];
 }
 
 /** Reads the real global `defaultProjectTrust` setting (a trust input) and,
@@ -84,6 +87,7 @@ export async function resolveInitialProfile(
 	const catalog = await ProfileCatalog.load(context.agentDir, { projectDir });
 
 	let selected = name;
+	const warnings: string[] = [];
 	if (selected === undefined) {
 		// No positional name: the trusted project's saved selection is the more
 		// specific one and wins; otherwise the global state, then default.
@@ -95,10 +99,17 @@ export async function resolveInitialProfile(
 
 	const profile = catalog.resolve(selected);
 	if (profile === undefined) {
-		throw new UnknownProfileError(selected);
+		// Explicit positional selection fails loudly; a restored selection that
+		// no longer exists falls back to default with a warning instead of
+		// blocking the launch (restore is a convenience, not a commitment).
+		if (name !== undefined) {
+			throw new UnknownProfileError(selected);
+		}
+		warnings.push(`saved profile "${selected}" no longer exists; starting the default profile`);
+		return { plan: defaultPlan(), warnings };
 	}
 	if (profile.source === "builtin") {
-		return { plan: defaultPlan() };
+		return { plan: defaultPlan(), warnings };
 	}
 
 	const [discovery, resources] = await Promise.all([
@@ -111,5 +122,5 @@ export async function resolveInitialProfile(
 		resources,
 		validateModel: (model) => checkDeclaredModel(context.agentDir, model),
 	});
-	return { plan, discovery, projectSettings };
+	return { plan, discovery, projectSettings, warnings };
 }

@@ -16,7 +16,10 @@
  * - packages: user-configured package entries rewritten to object form with
  *   per-type allowlists (unmanaged types keep the user's key or Pi's default)
  * - `defaultProjectTrust: "never"` suppresses all project auto-discovery
- *   (project resources are gated by the resolver instead — ticket 03)
+ *   (project resources enter only through the trust-gated resolver)
+ * - project `packages` are stripped from the settings merge (project
+ *   packages are unsupported — the key would install into the global npm
+ *   root as a launch side effect)
  * - unmanaged kinds (prompts, themes) pass through: the user's arrays are
  *   preserved and the real agent dir's prompts/themes dirs re-included
  * - tools/model become generated flags; the launch plan file feeds the
@@ -31,6 +34,7 @@ import { homedir } from "node:os";
 import path from "node:path";
 
 import type { ActivationPlan } from "./profile-resolver.ts";
+import { isRecord } from "./json-file.ts";
 import type { SkillEntry } from "./skill-registry.ts";
 
 /** A configured global package and its resolved install/local root. */
@@ -106,15 +110,11 @@ function deepMergeSettings(base: Record<string, unknown>, overrides: Record<stri
 		if (overrideValue === undefined) continue;
 		const baseValue = result[key];
 		result[key] =
-			isPlainObject(baseValue) && isPlainObject(overrideValue)
+			isRecord(baseValue) && isRecord(overrideValue)
 				? deepMergeSettings(baseValue, overrideValue)
 				: overrideValue;
 	}
 	return result;
-}
-
-function isPlainObject(value: unknown): value is Record<string, unknown> {
-	return typeof value === "object" && value !== null && !Array.isArray(value);
 }
 
 function isUnderPath(target: string, root: string): boolean {
@@ -215,8 +215,8 @@ function buildSelectionSettings(
 		}
 	}
 
-	// Project auto-discovery is suppressed entirely; the resolver gates
-	// project resources (ticket 03).
+	// Project auto-discovery is suppressed entirely; selected project
+	// resources enter additively through the trust-gated resolver.
 	settings.defaultProjectTrust = "never";
 	return settings;
 }
@@ -255,10 +255,16 @@ export async function generateRuntimeDir(
 		// per Pi's merge rules (project wins, nested objects merge), then the
 		// filtering encoding replaces the managed keys on top. With
 		// defaultProjectTrust: "never", Pi itself never reads project settings.
-		const base =
-			options.projectSettings !== undefined
-				? deepMergeSettings(userSettings, options.projectSettings)
-				: { ...userSettings };
+		//
+		// The project's `packages` key is stripped: project packages install
+		// under the project's .pi/npm and are unreferenceable in generated
+		// global-scope settings — merging the key would make Pi install them
+		// into the (symlinked) global npm root as a launch side effect.
+		let base = { ...userSettings };
+		if (options.projectSettings !== undefined) {
+			const { packages: _stripped, ...mergeable } = options.projectSettings;
+			base = deepMergeSettings(base, mergeable);
+		}
 		settings = buildSelectionSettings(plan, base, agentDir, options.discovery ?? { skills: [], packages: [] });
 	}
 	await writeFile(path.join(runtimeDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);

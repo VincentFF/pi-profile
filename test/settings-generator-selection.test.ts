@@ -285,6 +285,21 @@ describe("generateRuntimeDir (trusted project merge)", () => {
 		expect(settings.defaultProjectTrust).toBe("never");
 	});
 
+	it("strips the project packages key so project packages never install into the global npm root", async () => {
+		await writeFile(projectSettingsPath(), JSON.stringify({ packages: ["npm:evil-package"], theme: "light" }));
+		const projectSettings = JSON.parse(await readFile(projectSettingsPath(), "utf8"));
+
+		const result = await generateRuntimeDir(selectionPlan({}), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+			projectSettings,
+		});
+		const settings = await generatedSettings(result.runtimeDir);
+
+		expect(settings.packages).toBeUndefined();
+		expect(settings.theme).toBe("light");
+	});
+
 	it("additively includes selected project-scope skills, ordered before user-scope ones", async () => {
 		// Reference order is user-first on purpose: the generator must still
 		// emit project paths first so Pi's first-wins collision rule keeps

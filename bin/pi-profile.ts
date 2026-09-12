@@ -23,11 +23,14 @@ try {
 	const agentDir = getAgentDir();
 	// Fails before spawning when the profile is unknown or cannot activate.
 	// --approve/--no-approve are consumed here as a one-run trust input.
-	const { plan, discovery, projectSettings } = await resolveInitialProfile(args.profile, {
+	const { plan, discovery, projectSettings, warnings } = await resolveInitialProfile(args.profile, {
 		agentDir,
 		cwd: process.cwd(),
 		trustOverride: args.trustOverride,
 	});
+	for (const warning of warnings) {
+		console.error(`pi-profile: warning: ${warning}`);
+	}
 	const generated = await generateRuntimeDir(plan, { agentDir, discovery, projectSettings });
 	process.exitCode = await spawnPi({
 		generated,

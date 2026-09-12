@@ -46,7 +46,7 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 | --- | --- | --- |
 | agentDir 级（`~/.pi/agent/skills`、`extensions`） | 发现根随 `PI_CODING_AGENT_DIR` 移走，天然不发现；settings 数组写入选中项绝对路径 | 白名单（附加路径） |
 | `~/.agents/skills`（HOME 级，无法抑制） | settings `skills` 数组写 `-绝对路径` / `!glob` 排除未选中项 | 补集排除 |
-| 项目级（`.pi/*`、项目 ancestor `.agents/skills`） | 生成 settings 置 `defaultProjectTrust: "never"` 抑制全部项目自动发现；resolver 自读真实 `trust.json`，仅已信任时把选中项绝对路径写入 settings 数组 | 白名单（附加路径）+ trust 守门 |
+| 项目级（`.pi/*`、项目 ancestor `.agents/skills`） | 生成 settings 置 `defaultProjectTrust: "never"` 且不链接 `trust.json`（stored trust 优先于 never）；launcher 自读真实 `trust.json`，仅已信任时把选中项绝对路径写入 settings 数组（附加用户级路径不经 Pi trust 检查）；项目 `packages` 被剥除（会装进全局 npm 根） | 白名单（附加路径）+ trust 守门 |
 | packages（全局与项目） | settings `packages` 数组对象形式按类别写 allowlist glob | 白名单 |
 | tools | 生成 `--tools` flag（全量 tool 严格 allowlist，含 extension tools） | 白名单 |
 | MCP servers | extension 经 `pi.events` 向 adapter 发布运行时 allowlist | 白名单（内存） |
@@ -62,7 +62,7 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 **Rules**：
 
 - 仅消费两段输入：首个不以 `-` 开头的位置参数（profile 名）与其后的第一个 `--` 分隔符本身。`--` 之后的内容原样成为 pi 的 argv。
-- `--approve` / `--no-approve` 不透传：改写为 resolver 的 trust 输入（见 ProfileResolver），防止 Pi 侧自动发现未过滤的项目资源。
+- `--approve` / `--no-approve` 对命名 profile 不透传：改写为 launcher 的 trust 输入，防止 Pi 侧自动发现未过滤的项目资源。`default` profile 无过滤，按原生语义原样透传（ticket 01）。
 - 位置参数只作用于本次启动（不写 runtime state）；无位置参数时读取保存的活动 profile，不存在则用 `default`。
 - 未知 profile 在 spawn 前失败退出。
 
@@ -98,7 +98,7 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 - 一个 plan 对应一个 profile 和一个 overlay；展开四类 glob，应用 overlay，合并 `alwaysOn` 与依赖闭包。
 - overlay 可以调整当前 profile 声明的资源引用，但不能关闭 `alwaysOn` extension 或其直接依赖。
 - 未声明的 model、thinking 或 instructions 不进入 plan（保持 Pi 当前状态）。
-- **Trust 守门**：resolver 读取真实 `trust.json`（含 `--approve` 的一次性输入）；项目 catalog、registry、资源仅在已信任时进入 plan。pi-profile 因此成为项目资源的唯一信任守门人——生成 settings 中 `defaultProjectTrust: "never"` 保证 Pi 侧永不自动发现项目资源。
+- **Trust 守门**：launcher（`project-trust.ts`）按 Pi 的判定序镜像 trust 布尔量：一次性 `--approve` 输入 → 无任何 trust-requiring 项目资源则信任（含 pi-profile 自己的 catalog/state 文件，Pi 的原生清单不认识它们）→ 真实 `trust.json` 最近祖先条目 → `defaultProjectTrust: always`；项目 catalog、registry、资源仅在已信任时进入 plan。pi-profile 因此成为项目资源的唯一信任守门人——命名 profile 的生成 settings 置 `defaultProjectTrust: "never"` 且不链接 `trust.json`（已存储的 trust 决定在 Pi 侧优先于 never），保证 Pi 侧永不自动发现项目资源。已知偏离：不咨询 extension 的 `project_trust` 事件（那需要在 launcher 里执行扩展代码）。
 
 ### `SettingsGenerator`
 
