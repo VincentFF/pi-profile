@@ -32,4 +32,3 @@ pi-profile review -- --model openai/gpt-5.4
 ## 状态
 
 设计已完成，产品代码尚未实现。
-# pi-profile
