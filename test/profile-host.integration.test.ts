@@ -1,52 +1,35 @@
-import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
-import path from "node:path";
+import { rm } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 import { SessionManager } from "@earendil-works/pi-coding-agent";
 
 import { parseLauncherArgs } from "../src/launcher/args.ts";
 import { UnknownProfileError } from "../src/launcher/initial-profile.ts";
-import { createProfileRuntime } from "../src/profile-host.ts";
+import { createProfileRuntime, type ProfileHostOptions } from "../src/profile-host.ts";
+import { addGlobalSkill, createPiFixture, listFiles, type PiFixture } from "./helpers/pi-fixture.ts";
 
-let fixture: string;
-let cwd: string;
-let agentDir: string;
+let fixture: PiFixture;
 
 beforeEach(async () => {
-	fixture = await mkdtemp(path.join(tmpdir(), "pi-profile-host-"));
-	cwd = path.join(fixture, "project");
-	agentDir = path.join(fixture, "agent");
-	await mkdir(path.join(cwd, ".pi"), { recursive: true });
-	await mkdir(path.join(agentDir, "skills", "fixture-skill"), { recursive: true });
-	await writeFile(
-		path.join(agentDir, "skills", "fixture-skill", "SKILL.md"),
-		"---\nname: fixture-skill\ndescription: A fixture skill for launcher integration tests\n---\n\nFixture skill body.\n",
-	);
+	fixture = await createPiFixture();
+	await addGlobalSkill(fixture, "fixture-skill");
 });
 
 afterEach(async () => {
-	await rm(fixture, { recursive: true, force: true });
+	await rm(fixture.root, { recursive: true, force: true });
 });
 
-async function listFiles(dir: string): Promise<string[]> {
-	const entries = await readdir(dir, { withFileTypes: true });
-	const files: string[] = [];
-	for (const entry of entries) {
-		const full = path.join(dir, entry.name);
-		if (entry.isDirectory()) files.push(...(await listFiles(full)));
-		else files.push(full);
-	}
-	return files;
+/** The launcher's real build path against the standard fixture layout. */
+function hostOptions(): ProfileHostOptions {
+	return {
+		cwd: fixture.cwd,
+		agentDir: fixture.agentDir,
+		sessionManager: SessionManager.inMemory(fixture.cwd),
+	};
 }
 
-describe("createProfileRuntime (integration: real launcher build path, fixture dirs)", () => {
+describe("createProfileRuntime (integration: real launcher build path, fixture layout)", () => {
 	it("starts the default profile and exposes the fixture skill before any agent turn", async () => {
-		const args = parseLauncherArgs([]);
-		const { runtime, plan } = await createProfileRuntime(args, {
-			cwd,
-			agentDir,
-			sessionManager: SessionManager.inMemory(cwd),
-		});
+		const { runtime, plan } = await createProfileRuntime(parseLauncherArgs([]), hostOptions());
 
 		expect(plan.profile).toBe("default");
 
@@ -54,25 +37,25 @@ describe("createProfileRuntime (integration: real launcher build path, fixture d
 		expect(skills.map((skill) => skill.name)).toContain("fixture-skill");
 	});
 
-	it("writes no runtime state anywhere under the fixture root", async () => {
-		await createProfileRuntime(parseLauncherArgs([]), {
-			cwd,
-			agentDir,
-			sessionManager: SessionManager.inMemory(cwd),
-		});
+	it("writes no profile state and no pi settings; SDK-managed stores stay inside the isolated agent dir", async () => {
+		const before = await listFiles(fixture.root);
 
-		const files = await listFiles(fixture);
-		expect(files.filter((file) => file.endsWith("pi-profile-state.json"))).toEqual([]);
+		await createProfileRuntime(parseLauncherArgs([]), hostOptions());
+
+		const after = await listFiles(fixture.root);
+		const created = after.filter((file) => !before.includes(file));
+		// ModelRuntime creates auth.json/models-store.json in the agent dir — the
+		// same stores native pi maintains on every start. pi-profile must not add
+		// anything beyond those: no state file, no settings.json anywhere.
+		expect(created.every((file) => file.startsWith(fixture.agentDir))).toBe(true);
+		expect(after.filter((file) => file.endsWith("pi-profile-state.json"))).toEqual([]);
+		expect(after.filter((file) => file.endsWith("settings.json"))).toEqual([]);
 	});
 
 	it("rejects an unknown profile name before creating a runtime", async () => {
-		await expect(
-			createProfileRuntime(parseLauncherArgs(["review"]), {
-				cwd,
-				agentDir,
-				sessionManager: SessionManager.inMemory(cwd),
-			}),
-		).rejects.toBeInstanceOf(UnknownProfileError);
+		await expect(createProfileRuntime(parseLauncherArgs(["review"]), hostOptions())).rejects.toBeInstanceOf(
+			UnknownProfileError,
+		);
 	});
 
 	it("loads the pi-profile extension entry as a valid extension module", async () => {
