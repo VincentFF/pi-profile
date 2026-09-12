@@ -20,9 +20,10 @@ import { generateRuntimeDir } from "../src/settings-generator.ts";
 
 try {
 	const args = parseLauncherArgs(process.argv.slice(2));
-	// Fails before spawning when the profile is unknown.
-	const plan = resolveInitialProfile(args.profile);
-	const generated = await generateRuntimeDir(plan, { agentDir: getAgentDir() });
+	const agentDir = getAgentDir();
+	// Fails before spawning when the profile is unknown or cannot activate.
+	const { plan, discovery } = await resolveInitialProfile(args.profile, { agentDir, cwd: process.cwd() });
+	const generated = await generateRuntimeDir(plan, { agentDir, discovery });
 	process.exitCode = await spawnPi({
 		generated,
 		piArgs: args.piArgs,
