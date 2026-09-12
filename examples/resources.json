@@ -1,0 +1,16 @@
+{
+  "schemaVersion": 1,
+  "resources": {
+    "mcp-adapter": {
+      "kind": "extension",
+      "entry": "/home/you/.pi/agent/node_modules/pi-mcp-adapter/index.ts",
+      "alwaysOn": false
+    },
+    "team-conventions": {
+      "kind": "extension",
+      "entry": "/home/you/team/extensions/conventions.ts",
+      "dependsOn": [],
+      "alwaysOn": true
+    }
+  }
+}

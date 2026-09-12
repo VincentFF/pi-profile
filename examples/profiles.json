@@ -1,0 +1,44 @@
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "review": {
+      "label": "Code review",
+      "description": "Read-heavy review workflow",
+      "skills": [
+        "code-review",
+        "diagnosing-bugs"
+      ],
+      "extensions": [
+        "mcp-adapter"
+      ],
+      "mcp": [
+        "github"
+      ],
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "bash"
+      ],
+      "instructions": "Review only; do not modify files."
+    },
+    "impl": {
+      "label": "Implementation",
+      "skills": [
+        "tdd"
+      ],
+      "extensions": [
+        "mcp-adapter"
+      ],
+      "mcp": [
+        "github",
+        "linear"
+      ],
+      "model": {
+        "provider": "deepseek",
+        "id": "deepseek-v4-pro",
+        "thinkingLevel": "high"
+      }
+    }
+  }
+}

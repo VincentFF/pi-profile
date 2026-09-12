@@ -8,7 +8,7 @@
   ],
   "license": "MIT",
   "bin": {
-    "pi-profile": "./bin/pi-profile.ts"
+    "pi-profile": "./bin/pi-profile.js"
   },
   "pi": {
     "extensions": [
@@ -26,10 +26,20 @@
   "devDependencies": {
     "@earendil-works/pi-coding-agent": "*",
     "@types/node": "^24.0.0",
+    "ajv": "^8.20.0",
     "typescript": "^5.8.0",
     "vitest": "^3.0.0"
   },
   "dependencies": {
+    "jiti": "^2.7.0",
     "minimatch": "^10.2.6"
-  }
+  },
+  "files": [
+    "bin",
+    "extensions",
+    "src",
+    "schemas",
+    "examples",
+    "README.md"
+  ]
 }

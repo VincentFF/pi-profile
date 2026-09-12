@@ -1,0 +1,93 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "pi-profile profile catalog",
+  "description": "Named profile definitions (global ~/.pi/agent/profiles.json or project .pi/profiles.json). Definitions are complete and self-contained: there is no inheritance field, and resource references are names/globs, never copies. The built-in \"default\" profile must not be defined here.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "profiles"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "profiles": {
+      "type": "object",
+      "propertyNames": {
+        "not": {
+          "const": "default"
+        }
+      },
+      "additionalProperties": {
+        "$ref": "#/$defs/profile"
+      }
+    }
+  },
+  "$defs": {
+    "profile": {
+      "type": "object",
+      "additionalProperties": false,
+      "properties": {
+        "label": {
+          "type": "string",
+          "description": "Display label in the selector and /profile list."
+        },
+        "description": {
+          "type": "string"
+        },
+        "skills": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Skill names or globs (e.g. \"review\", \"internal-*\") referencing discovered skills."
+        },
+        "extensions": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Resource-registry IDs or globs. alwaysOn entries and their dependency closure join every profile."
+        },
+        "mcp": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "MCP server names or globs, discovered by pi-mcp-adapter configuration. Connection details stay in adapter-managed config."
+        },
+        "tools": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Tool names or globs expanded against Pi's live registry (including extension tools)."
+        },
+        "model": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": [
+            "provider",
+            "id"
+          ],
+          "properties": {
+            "provider": {
+              "type": "string"
+            },
+            "id": {
+              "type": "string"
+            },
+            "thinkingLevel": {
+              "type": "string"
+            }
+          }
+        },
+        "instructions": {
+          "type": "string",
+          "description": "Appended to Pi's fully built system prompt on every turn."
+        }
+      }
+    }
+  }
+}

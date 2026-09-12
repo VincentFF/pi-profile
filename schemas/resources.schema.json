@@ -1,0 +1,53 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "pi-profile extension resource registry",
+  "description": "Extension resources (global ~/.pi/agent/resources.json or project .pi/resources.json). Project IDs override global ones. Entries are extension kind only — MCP capabilities cannot be declared here.",
+  "type": "object",
+  "required": [
+    "schemaVersion",
+    "resources"
+  ],
+  "additionalProperties": false,
+  "properties": {
+    "schemaVersion": {
+      "const": 1
+    },
+    "resources": {
+      "type": "object",
+      "additionalProperties": {
+        "$ref": "#/$defs/resource"
+      }
+    }
+  },
+  "$defs": {
+    "resource": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": [
+        "kind",
+        "entry"
+      ],
+      "properties": {
+        "kind": {
+          "const": "extension"
+        },
+        "entry": {
+          "type": "string",
+          "minLength": 1,
+          "description": "Absolute path to the extension entry file."
+        },
+        "dependsOn": {
+          "type": "array",
+          "items": {
+            "type": "string"
+          },
+          "description": "Other resource IDs loaded before this one; cycles and missing IDs fail activation loudly."
+        },
+        "alwaysOn": {
+          "type": "boolean",
+          "description": "Load in every (named) profile; cannot be disabled by a runtime overlay."
+        }
+      }
+    }
+  }
+}
