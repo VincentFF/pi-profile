@@ -123,11 +123,11 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 
 **Rules**：
 
-- **切换**：`/profile use <name>` 校验 → 按来源 scope 保存 state → 等待 agent idle → 重新 resolve → 重写生成的 `settings.json` → `ctx.reload()`（Pi 原生 reload 重读磁盘并重建 runtime，保留 session）→ 下一个 agent turn 收到变更摘要。
+- **切换**：`/profile use <name>` 校验 → 等待 agent idle（`ctx.waitForIdle()`）→ 内存快照当前 runtime 文件 → 重新 resolve → 重写生成的 `settings.json` 与 launch plan（标记 `persistSelection` 与 `switchedFrom`）→ `ctx.reload()`（Pi 原生 reload 重读磁盘并重建 runtime，保留 session）→ 验证 reload 真的执行（旧 ctx 失效探针；interactive 模式的 reload 拒绝不会 reject）→ 失败时恢复快照并再次 reload，runtime 绝不半切换。state（`activeProfile` + `lastVerifiedProfile` 回滚锚）由 reload 后的新 extension 实例在 `session_start` 里按来源 scope 写入——只有验证成功的激活才落锚。下一个 agent turn 收到一次性变更摘要。
 - **reload**：`/profile reload` 重新发现与 resolve 后走同一路径，共享 skill 的修改随之传播。
 - **失败回滚**：reload 前保留上一份已验证 settings 快照；reload 失败时写回快照并再次 reload。
 - **instructions**：在 `before_agent_start` 中把 profile instructions 追加到 Pi 已构建的 system prompt 末尾（初始与切换路径统一走 extension，不用 flag）。
-- **tools/model/thinking**：初始由生成 flags 生效；切换或 reload 后由 extension 依据 Pi 实际注册结果重新设置活动 tools（`pi.setActiveTools`）、可选 model（`pi.setModel`）与 thinking。
+- **tools/model/thinking**：初始由生成 flags 生效；session_start（含 reload）后由 extension 把原始 tool 引用对 Pi 实际注册表（含扩展工具）重新展开并 `pi.setActiveTools`、可选 `pi.setModel` 与 thinking。
 - **MCP 协调**：经 `pi.events` 与 `pi-mcp-adapter` 通信：激活时发布当前 profile 的运行时 server allowlist（仅内存，不触碰 adapter 的 `.pi/mcp.json`）；`/mcp enable|disable` 经 adapter 的 profile-scoped state store 写当前 profile 的 `mcp` 数组并触发 MCP 级 reload。adapter 未安装且 profile 声明 `mcp` 时激活失败；未声明 `mcp` 时不注册协调。
 - CRUD 只在 TUI mode 提供；extension 可获知当前运行 mode，非交互模式下命令族退化为只读状态输出。
 

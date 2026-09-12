@@ -2,6 +2,15 @@
  * SettingsGenerator: materializes an ActivationPlan as a pi-profile-owned
  * runtime directory (ADR-0005).
  *
+ * Two entry points:
+ * - `generateRuntimeDir` (launcher): mkdtemp a fresh runtime dir, write the
+ *   files, link state (auth/models/mcp/npm/git/bin; trust.json only for
+ *   default), derive env + flags.
+ * - `writeRuntimeFiles` (in-session switch, ticket 05): rewrite
+ *   settings.json + pi-profile.json inside the EXISTING runtime dir (the
+ *   running process's PI_CODING_AGENT_DIR cannot move), and transition the
+ *   trust.json link to match the new plan's filter mode.
+ *
  * For the built-in `default` profile the generated settings preserve the
  * user's global settings untouched and re-include the real agent dir's
  * resource dirs (their discovery root moves with `PI_CODING_AGENT_DIR`), so
@@ -29,7 +38,7 @@
  */
 
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -224,6 +233,114 @@ function buildSelectionSettings(
 	return settings;
 }
 
+export interface RuntimeFileOptions {
+	/** The user's real agent dir (e.g. ~/.pi/agent). */
+	agentDir: string;
+	/** Required for selection plans; unused for the default profile. */
+	discovery?: DiscoveryContext;
+	/** The trusted project's `.pi/settings.json` content (already parsed). */
+	projectSettings?: Record<string, unknown>;
+	/** Extra launch-plan fields written by the in-session switch path:
+	 *  `switchedFrom` triggers the one-shot change summary; `persistSelection`
+	 *  tells the post-reload extension instance to save the selection and
+	 *  record the rollback anchor. */
+	planExtras?: { switchedFrom?: string; persistSelection?: boolean };
+}
+
+/** Computes the generated settings for a plan (pure-ish: reads the user's
+ *  real settings + unmanaged dir existence, writes nothing). */
+async function computeSettings(
+	plan: ActivationPlan,
+	options: RuntimeFileOptions,
+): Promise<Record<string, unknown>> {
+	const { agentDir } = options;
+	const userSettingsPath = path.join(agentDir, "settings.json");
+	const userSettings: Record<string, unknown> = (await exists(userSettingsPath))
+		? JSON.parse(await readFile(userSettingsPath, "utf8"))
+		: {};
+
+	if (plan.filter === "none") {
+		// default profile: the user's global settings plus re-inclusion of the
+		// real agent dir's resource dirs. User-defined keys, including their own
+		// resource patterns and enable/disable state, are preserved untouched.
+		// Project settings are NOT merged here: with native trust behavior, Pi
+		// reads the project's settings itself.
+		const settings = { ...userSettings };
+		for (const kind of RESOURCE_DIR_KINDS) {
+			const resourceDir = path.join(agentDir, kind);
+			if (await exists(resourceDir)) {
+				const entries = Array.isArray(settings[kind]) ? (settings[kind] as unknown[]) : [];
+				settings[kind] = [...entries, resourceDir];
+			}
+		}
+		return settings;
+	}
+
+	// Selection plans: the trusted project's settings merge into the base
+	// per Pi's merge rules (project wins, nested objects merge), then the
+	// filtering encoding replaces the managed keys on top. With
+	// defaultProjectTrust: "never", Pi itself never reads project settings.
+	//
+	// The project's `packages` key is stripped: project packages install
+	// under the project's .pi/npm and are unreferenceable in generated
+	// global-scope settings — merging the key would make Pi install them
+	// into the (symlinked) global npm root as a launch side effect.
+	let base = { ...userSettings };
+	if (options.projectSettings !== undefined) {
+		const { packages: _stripped, ...mergeable } = options.projectSettings;
+		base = deepMergeSettings(base, mergeable);
+	}
+	return buildSelectionSettings(plan, base, agentDir, options.discovery ?? { skills: [], packages: [] });
+}
+
+/** Writes settings.json + pi-profile.json into an existing runtime dir and
+ *  transitions the trust.json link to the plan's filter mode: linked for
+ *  `default` (native trust behavior), absent for named profiles (a stored
+ *  trust decision would beat the generated `defaultProjectTrust: "never"`
+ *  inside Pi and re-enable unfiltered project auto-discovery). */
+export async function writeRuntimeFiles(
+	runtimeDir: string,
+	plan: ActivationPlan,
+	options: RuntimeFileOptions,
+): Promise<void> {
+	const settings = await computeSettings(plan, options);
+	await writeFile(path.join(runtimeDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);
+
+	// The launch plan feeds the in-pi extension: instructions injection,
+	// tool/model re-application after reload, MCP coordination, switching.
+	// agentDir is the REAL agent dir — the extension needs it for trust
+	// checks, state files, and catalog/registry reads (its own
+	// PI_CODING_AGENT_DIR points at this runtime dir).
+	await writeFile(
+		path.join(runtimeDir, "pi-profile.json"),
+		`${JSON.stringify(
+			{
+				profile: plan.profile,
+				source: plan.source,
+				agentDir: options.agentDir,
+				...(plan.instructions !== undefined ? { instructions: plan.instructions } : {}),
+				...(plan.model !== undefined ? { model: plan.model } : {}),
+				...(plan.tools !== undefined ? { tools: plan.tools } : {}),
+				...(plan.toolReferences !== undefined ? { toolReferences: plan.toolReferences } : {}),
+				...(plan.mcp !== undefined ? { mcp: plan.mcp } : {}),
+				...options.planExtras,
+			},
+			null,
+			2,
+		)}\n`,
+	);
+
+	const trustLink = path.join(runtimeDir, "trust.json");
+	const trustTarget = path.join(options.agentDir, "trust.json");
+	if (plan.filter === "none") {
+		if ((await exists(trustTarget)) && !(await exists(trustLink))) {
+			await symlink(trustTarget, trustLink);
+		}
+	} else if (await exists(trustLink)) {
+		await rm(trustLink);
+	}
+}
+
 export async function generateRuntimeDir(
 	plan: ActivationPlan,
 	options: GenerateOptions,
@@ -233,71 +350,13 @@ export async function generateRuntimeDir(
 	await mkdir(runtimeRoot, { recursive: true });
 	const runtimeDir = await mkdtemp(path.join(runtimeRoot, "launch-"));
 
-	const userSettingsPath = path.join(agentDir, "settings.json");
-	const userSettings: Record<string, unknown> = (await exists(userSettingsPath))
-		? JSON.parse(await readFile(userSettingsPath, "utf8"))
-		: {};
+	await writeRuntimeFiles(runtimeDir, plan, options);
 
-	let settings: Record<string, unknown>;
-	if (plan.filter === "none") {
-		// default profile: the user's global settings plus re-inclusion of the
-		// real agent dir's resource dirs. User-defined keys, including their own
-		// resource patterns and enable/disable state, are preserved untouched.
-		// Project settings are NOT merged here: with native trust behavior, Pi
-		// reads the project's settings itself.
-		settings = { ...userSettings };
-		for (const kind of RESOURCE_DIR_KINDS) {
-			const resourceDir = path.join(agentDir, kind);
-			if (await exists(resourceDir)) {
-				const entries = Array.isArray(settings[kind]) ? (settings[kind] as unknown[]) : [];
-				settings[kind] = [...entries, resourceDir];
-			}
-		}
-	} else {
-		// Selection plans: the trusted project's settings merge into the base
-		// per Pi's merge rules (project wins, nested objects merge), then the
-		// filtering encoding replaces the managed keys on top. With
-		// defaultProjectTrust: "never", Pi itself never reads project settings.
-		//
-		// The project's `packages` key is stripped: project packages install
-		// under the project's .pi/npm and are unreferenceable in generated
-		// global-scope settings — merging the key would make Pi install them
-		// into the (symlinked) global npm root as a launch side effect.
-		let base = { ...userSettings };
-		if (options.projectSettings !== undefined) {
-			const { packages: _stripped, ...mergeable } = options.projectSettings;
-			base = deepMergeSettings(base, mergeable);
-		}
-		settings = buildSelectionSettings(plan, base, agentDir, options.discovery ?? { skills: [], packages: [] });
-	}
-	await writeFile(path.join(runtimeDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);
-
-	// The launch plan feeds the in-pi extension (instructions injection now;
-	// switching/status in later tickets).
-	await writeFile(
-		path.join(runtimeDir, "pi-profile.json"),
-		`${JSON.stringify(
-			{
-				profile: plan.profile,
-				source: plan.source,
-				...(plan.instructions !== undefined ? { instructions: plan.instructions } : {}),
-				...(plan.model !== undefined ? { model: plan.model } : {}),
-				...(plan.tools !== undefined ? { tools: plan.tools } : {}),
-				...(plan.mcp !== undefined ? { mcp: plan.mcp } : {}),
-			},
-			null,
-			2,
-		)}\n`,
-	);
-
-	// Keep auth/model state in the real agent dir, so the spawned pi shares
-	// credentials and model catalogs with native pi. trust.json is only
-	// linked for the default profile: a stored trust decision beats the
-	// generated defaultProjectTrust: "never" inside Pi, so named profiles must
-	// not expose it — the launcher reads the real trust.json itself and is the
-	// sole trust gatekeeper (ADR-0005).
+	// Keep auth/model/adapter state in the real agent dir, so the spawned pi
+	// shares credentials, model catalogs, and MCP config with native pi.
+	// (trust.json is handled by writeRuntimeFiles — default only.)
 	for (const name of STATE_FILE_LINKS) {
-		if (name === "trust.json" && plan.filter !== "none") continue;
+		if (name === "trust.json") continue;
 		const target = path.join(agentDir, name);
 		if (await exists(target)) {
 			await symlink(target, path.join(runtimeDir, name));

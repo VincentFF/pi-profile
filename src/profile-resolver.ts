@@ -54,6 +54,10 @@ export interface ActivationPlan {
 	extensions: Array<{ id: string; entry: string }>;
 	/** Expanded tool allowlist; undefined when the profile declares no tools. */
 	tools?: string[];
+	/** The raw tool references (globs included) for extension-side expansion
+	 *  against Pi's live tool registry, which includes extension-provided
+	 *  tools the pre-spawn expansion cannot know. Set iff `tools` is set. */
+	toolReferences?: string[];
 	/** Declared model; undefined leaves Pi's current model untouched. */
 	model?: ProfileModel;
 	/** Declared instructions; appended to Pi's system prompt by the extension. */
@@ -179,7 +183,7 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		filter: "selection",
 		skills: selectedSkills,
 		extensions: closure.map((entry) => ({ id: entry.id, entry: entry.entry })),
-		...(tools !== undefined ? { tools } : {}),
+		...(tools !== undefined ? { tools, toolReferences: [...(definition.tools ?? [])] } : {}),
 		...(model !== undefined ? { model } : {}),
 		...(definition.instructions !== undefined ? { instructions: definition.instructions } : {}),
 		...(mcp !== undefined ? { mcp } : {}),

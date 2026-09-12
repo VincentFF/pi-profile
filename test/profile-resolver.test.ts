@@ -143,6 +143,16 @@ describe("resolveProfile", () => {
 		expect(plan.tools).toEqual(["read", "search_issues", "grep"]);
 	});
 
+	it("keeps the raw tool references for extension-side expansion", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { tools: ["read", "mcp__*"] }),
+			skills: [],
+			resources: await registryWith({}),
+		});
+
+		expect(plan.toolReferences).toEqual(["read", "mcp__*"]);
+	});
+
 	it("leaves tools, model, and instructions out of the plan when undeclared", async () => {
 		const plan = await resolveProfile({
 			profile: profile("review", { skills: ["code-review"] }),

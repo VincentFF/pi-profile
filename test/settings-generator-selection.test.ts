@@ -1,11 +1,12 @@
+import { existsSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import { defaultPlan, type ActivationPlan } from "../src/profile-resolver.ts";
-import { generateRuntimeDir, type DiscoveryContext } from "../src/settings-generator.ts";
+import { generateRuntimeDir, writeRuntimeFiles, type DiscoveryContext } from "../src/settings-generator.ts";
 import type { SkillEntry } from "../src/skill-registry.ts";
-import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
+import { addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
 let savedHome: string | undefined;
@@ -244,7 +245,6 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		expect(await realpath(path.join(result.runtimeDir, "auth.json"))).toBe(await realpath(path.join(fixture.agentDir, "auth.json")));
 		// A stored trust decision would beat defaultProjectTrust: "never" inside
 		// Pi and re-enable project auto-discovery — so it must not be linked.
-		const { existsSync } = await import("node:fs");
 		expect(existsSync(path.join(result.runtimeDir, "trust.json"))).toBe(false);
 	});
 });
@@ -354,5 +354,64 @@ describe("generateRuntimeDir (default profile, unchanged)", () => {
 
 		expect(settings.defaultProjectTrust).toBeUndefined();
 		expect(result.flags).toEqual([]);
+	});
+});
+
+describe("writeRuntimeFiles (in-session switch rewrite)", () => {
+	it("rewrites settings and the launch plan inside an existing runtime dir", async () => {
+		const first = await generateRuntimeDir(selectionPlan({}), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+		await addGlobalSkill(fixture, "alpha-skill");
+		const next = selectionPlan({
+			profile: "impl",
+			skills: [agentDirSkill("alpha-skill")],
+			toolReferences: ["read", "mcp__*"],
+		});
+		(next as ActivationPlan).tools = ["read"];
+
+		await writeRuntimeFiles(first.runtimeDir, next, {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [agentDirSkill("alpha-skill")], packages: [] },
+			planExtras: { switchedFrom: "review", persistSelection: true },
+		});
+
+		const settings = await generatedSettings(first.runtimeDir);
+		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md")]);
+		const plan = JSON.parse(await readFile(path.join(first.runtimeDir, "pi-profile.json"), "utf8"));
+		expect(plan.profile).toBe("impl");
+		expect(plan.agentDir).toBe(fixture.agentDir);
+		expect(plan.toolReferences).toEqual(["read", "mcp__*"]);
+		expect(plan.switchedFrom).toBe("review");
+		expect(plan.persistSelection).toBe(true);
+	});
+
+	it("removes the trust.json link when switching from default to a named profile", async () => {
+		await writeFile(path.join(fixture.agentDir, "trust.json"), "{}");
+		const first = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+		expect(existsSync(path.join(first.runtimeDir, "trust.json"))).toBe(true);
+
+		await writeRuntimeFiles(first.runtimeDir, selectionPlan({}), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
+		expect(existsSync(path.join(first.runtimeDir, "trust.json"))).toBe(false);
+	});
+
+	it("restores the trust.json link when switching back to default", async () => {
+		await writeFile(path.join(fixture.agentDir, "trust.json"), "{}");
+		const first = await generateRuntimeDir(selectionPlan({}), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+		expect(existsSync(path.join(first.runtimeDir, "trust.json"))).toBe(false);
+
+		await writeRuntimeFiles(first.runtimeDir, defaultPlan(), { agentDir: fixture.agentDir });
+
+		expect(await realpath(path.join(first.runtimeDir, "trust.json"))).toBe(
+			await realpath(path.join(fixture.agentDir, "trust.json")),
+		);
 	});
 });

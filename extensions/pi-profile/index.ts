@@ -1,88 +1,114 @@
-import { readFileSync } from "node:fs";
-import path from "node:path";
-
 import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";
 
-import {
-	MCP_ALLOWLIST_EVENT,
-	MCP_ALLOWLIST_VERSION,
-	MissingMcpAdapterError,
-	probeAdapterPresence,
-} from "../../src/mcp-coordination.ts";
+import { applyLaunchPlan, readLaunchPlanFile } from "../../src/switching/apply-plan.ts";
+import { switchProfile } from "../../src/switching/switch-profile.ts";
 
 /**
  * pi-profile extension entry.
  *
- * Loaded into the spawned pi via `-e`. Responsibilities so far:
+ * Loaded into the spawned pi via `-e`. Responsibilities:
  * - Append the profile's declared instructions to Pi's fully built system
  *   prompt on every turn (`before_agent_start`), so the default prompt,
  *   AGENTS.md, and other extensions keep working.
- * - MCP coordination (ticket 04): when the launch plan declares `mcp`,
- *   probe pi-mcp-adapter over the event bus at session start and publish
- *   the profile's runtime server allowlist (memory-only; the adapter's
- *   `.pi/mcp.json` overlay is never written by pi-profile). No `mcp`
- *   declaration means no coordination at all — the adapter keeps its own
- *   discovered/enabled set (the `default` profile's native behavior).
+ * - After every session start (startup/reload/new/resume/fork), apply the
+ *   launch plan: re-expand tool references against Pi's live registry,
+ *   set the declared model/thinking, publish the MCP allowlist, persist the
+ *   selection + rollback anchor after switches, and produce the one-shot
+ *   change summary injected into the next turn.
+ * - `/profile use <name>` / `/profile reload`: in-session switching without
+ *   restarting the Pi process (src/switching/switch-profile.ts).
  *
- * The launch plan is written by the launcher into the generated runtime
- * dir (`pi-profile.json`); the `/profile` command family lands in the
- * switching/CRUD tickets.
+ * Pi re-executes this module on reload, so post-reload state is established
+ * exclusively through `session_start` — nothing stale survives.
  */
 
-interface LaunchPlan {
-	profile?: string;
-	source?: string;
-	instructions?: string;
-	mcp?: string[];
-}
-
-function readLaunchPlan(): LaunchPlan {
-	const agentDir = process.env.PI_CODING_AGENT_DIR;
-	if (agentDir === undefined) return {};
-	try {
-		const parsed: unknown = JSON.parse(readFileSync(path.join(agentDir, "pi-profile.json"), "utf8"));
-		return typeof parsed === "object" && parsed !== null ? (parsed as LaunchPlan) : {};
-	} catch {
-		return {};
-	}
-}
-
-function declaredMcpServers(plan: LaunchPlan): string[] | undefined {
-	if (!Array.isArray(plan.mcp)) return undefined;
-	const servers = plan.mcp.filter((name): name is string => typeof name === "string" && name.length > 0);
-	return servers.length > 0 ? servers : undefined;
-}
-
 export default function piProfileExtension(pi: ExtensionAPI): void {
-	const plan = readLaunchPlan();
+	const runtimeDir = process.env.PI_CODING_AGENT_DIR;
+	if (runtimeDir === undefined) return;
 
-	const instructions =
-		typeof plan.instructions === "string" && plan.instructions.length > 0 ? plan.instructions : undefined;
-	if (instructions !== undefined) {
-		pi.on("before_agent_start", (event) => ({
-			systemPrompt: `${event.systemPrompt}\n\n${instructions}`,
-		}));
-	}
+	let pendingSummary: string | undefined;
 
-	const mcpServers = declaredMcpServers(plan);
-	if (mcpServers !== undefined) {
-		const profile = typeof plan.profile === "string" ? plan.profile : "unknown";
-		pi.on("session_start", (_event, ctx) => {
-			if (!probeAdapterPresence(pi.events)) {
-				const error = new MissingMcpAdapterError(profile);
-				// Loud on both surfaces: the UI notification for interactive
-				// sessions, the thrown error for Pi's extension-error reporting
-				// (RPC sessions have no visible UI). The launcher already gates
-				// adapter presence before spawn; this is the in-session backstop
-				// for an adapter that was selected but failed to load.
-				ctx.ui?.notify(error.message, "error");
-				throw error;
-			}
-			pi.events.emit(MCP_ALLOWLIST_EVENT, {
-				version: MCP_ALLOWLIST_VERSION,
-				profile,
-				servers: mcpServers,
-			});
+	pi.on("session_start", async (event, ctx) => {
+		const result = await applyLaunchPlan({
+			runtimeDir,
+			cwd: ctx.cwd,
+			reason: event.reason,
+			surface: {
+				getAllTools: () => pi.getAllTools(),
+				setActiveTools: (names) => pi.setActiveTools(names),
+				modelRegistry: ctx.modelRegistry,
+				setModel: (model) => pi.setModel(model as Parameters<ExtensionAPI["setModel"]>[0]),
+				setThinkingLevel: (level) =>
+					pi.setThinkingLevel(level as Parameters<ExtensionAPI["setThinkingLevel"]>[0]),
+				events: pi.events,
+				notify: (message, level) => ctx.ui?.notify(message, level),
+			},
 		});
-	}
+		pendingSummary = result.summary;
+	});
+
+	pi.on("before_agent_start", async (event) => {
+		const plan = await readLaunchPlanFile(runtimeDir);
+		const instructions = plan?.instructions;
+		let systemPrompt = event.systemPrompt;
+		if (instructions !== undefined && instructions.length > 0) {
+			systemPrompt = `${systemPrompt}\n\n${instructions}`;
+		}
+		if (pendingSummary !== undefined) {
+			systemPrompt = `${systemPrompt}\n\n[${pendingSummary}]`;
+			pendingSummary = undefined;
+		}
+		return { systemPrompt };
+	});
+
+	pi.registerCommand("profile", {
+		description: "pi-profile: /profile use <name> | /profile reload",
+		handler: async (args, ctx) => {
+			const [subcommand, ...rest] = args.trim().split(/\s+/);
+			const notify = (message: string, level: "info" | "warning" | "error") => ctx.ui?.notify(message, level);
+			if (subcommand !== "use" && subcommand !== "reload") {
+				notify("usage: /profile use <name> | /profile reload (list/status/selector land in ticket 07)", "error");
+				return;
+			}
+			const name = subcommand === "use" ? rest[0] : undefined;
+			if (subcommand === "use" && name === undefined) {
+				notify("usage: /profile use <name>", "error");
+				return;
+			}
+			try {
+				const plan = await readLaunchPlanFile(runtimeDir);
+				if (plan?.agentDir === undefined) {
+					// Without the real agent dir the switch cannot reach catalogs,
+					// trust state, or state files — fail loudly, never guess one.
+					notify("cannot switch: the launch plan carries no real agent dir", "error");
+					return;
+				}
+				const result = await switchProfile(
+					name,
+					{
+						runtimeDir,
+						realAgentDir: plan.agentDir,
+						cwd: ctx.cwd,
+						waitForIdle: () => ctx.waitForIdle(),
+						reload: () => ctx.reload(),
+						// A real reload invalidates this context (Pi re-executes
+						// extensions); property access then throws. Interactive Pi
+						// swallows reload refusals, so this probe is the switch's
+						// proof that the reload actually ran.
+						assertStale: () => {
+							void ctx.cwd;
+						},
+					},
+					{ reloadCurrent: subcommand === "reload" },
+				);
+				for (const warning of result.warnings) notify(warning, "warning");
+				notify(
+					subcommand === "reload" ? `profile reloaded: ${result.profile}` : `profile active: ${result.profile}`,
+					"info",
+				);
+			} catch (error) {
+				notify(error instanceof Error ? error.message : String(error), "error");
+			}
+		},
+	});
 }
