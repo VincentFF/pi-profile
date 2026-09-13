@@ -63,6 +63,7 @@ overlay 是临时调整：`/profile customize` 收窄当前 profile，`/profile 
 | --- | --- | --- |
 | `Profile` | 命名工作流定义，选择 prompt/skills/mcp/tools 并声明可选 model | 全局或项目 catalog |
 | `default` | 内建、不可删除的"什么都不声明"profile；overlay 可临时收窄 | `pi-profile-switch` |
+| `Preset` | 随包发布的零假设起点；只在 `/profile create` 时被复制一次，之后即为用户定义，不参与解析 | `pi-profile-switch` |
 | `RuntimeOverlay` | 当前 profile 的临时收窄（skills/mcp/tools） | runtime state |
 | `Selection` | 解析后的选择：可见 skill、MCP allowlist、活动 tools、instructions、model 预设与 warnings | resolver |
 | `pi-mcp-adapter` | MCP server 配置、连接与凭证的所有者；profile 只引用 server 名 | 外部 package |
@@ -150,7 +151,7 @@ profile 的 `instructions` 追加到 Pi 已构建的 system prompt 末尾。Pi �
 | `/profile status` | 显示 profile、overlay、可见 skills、tools（含 pending）、MCP 三态与未解析引用 |
 | `/profile customize` | 编辑当前 profile 的 runtime overlay |
 | `/profile reset` | 删除 overlay 并恢复声明内容 |
-| `/profile create` | 选择 global 或 project catalog 后创建 profile |
+| `/profile create` | 选择 global 或 project catalog 后创建 profile；可从随包预设 `read-only` 开始，或从空定义开始 |
 | `/profile edit <name>` | 编辑 profile；编辑活动 profile 时保存后立即重新应用 |
 | `/profile delete <name>` | 删除 profile；删除活动 profile 前必须先选择替代 profile |
 | `/profile duplicate` | 复制完整定义到新名称 |

@@ -4,7 +4,7 @@
 
 Named profiles for [Pi](https://github.com/badlogic/pi-mono). A profile selects what the model sees and which capabilities the session uses — skills, MCP servers, tools, a model preset, and extra instructions — switchable in the same Pi process.
 
-Use a lean read-only profile for code review, a full-powered one for implementation, a minimal one for a quick question.
+A shipped `read-only` preset covers the read-and-report workflow; other workflows you write yourself — a profile can narrow the tool set, hide skills, pin a model, or add instructions.
 
 `pi-profile-switch` is a plain Pi package (ADR-0007). It installs like any other extension, leaves Pi's configuration directory untouched, and keeps sessions, packages, project trust, and every other installed extension native.
 
@@ -23,30 +23,34 @@ Requires [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) (in
 pi
 
 # Use a profile for this run only (not saved)
-pi --profile review
+pi --profile read-only
 
 # The explicit native baseline
 pi --profile default
 ```
 
-Define profiles in `~/.pi/agent/profiles.json` (global) or `<project>/.pi/profiles.json` (project, trusted projects only):
+Create profiles with `/profile create`, which writes `~/.pi/agent/profiles.json` (global) or `<project>/.pi/profiles.json` (project, trusted projects only). The wizard offers the shipped `read-only` preset — Pi's built-in tools only, no skills, MCP servers, or model assumed — or a blank definition:
 
 ```json
 {
   "schemaVersion": 1,
   "profiles": {
-    "review": {
-      "label": "Code review",
-      "skills": ["code-review"],
-      "mcp": ["github"],
-      "tools": ["read", "grep", "find", "bash"],
-      "instructions": "Review only; do not modify files."
+    "read-only": {
+      "label": "Read-only",
+      "description": "Read-only session; no skills or MCP servers assumed — add your own.",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ],
+      "instructions": "Read-only session: inspect and report; never create, edit, rename, or delete files.\nIf a change is needed, describe it in your reply instead of applying it.\nDo not run commands that modify state (installs, formatters, commits, pushes, network writes).\nPrefer an available skill or MCP tool when it fits the request; otherwise use the tools you have.\nGround claims in evidence: cite file:line and separate verified facts from inferences.\nReply in English."
     }
   }
 }
 ```
 
-Profiles **reference** resources by name — they never copy them. Full schema with more examples: [`examples/profiles.json`](examples/profiles.json).
+A preset is a one-time copy into your catalog: it is not tracked, so a package update never changes a profile you already created. Profiles **reference** resources by name — they never copy them. [`examples/profiles.json`](examples/profiles.json) is that same preset as a catalog; the field reference is [`schemas/profiles.schema.json`](schemas/profiles.schema.json).
 
 `schemaVersion` is 1; a catalog written by v0.1.0 (which wrote `2`) reads the same, and saves always write `1`. A legacy `extensions` field is ignored: extensions load natively in every profile, so profiles do not select them — manage them with `pi install`.
 
@@ -89,11 +93,11 @@ All commands work in non-interactive modes (`--mode rpc|print|json`); CRUD wizar
 ## Migrating from the launcher
 
 ```bash
-pi-profile review          # before
-pi --profile review        # after
+pi-profile read-only          # before
+pi --profile read-only        # after
 
-pi-profile review -- --mode rpc   # before
-pi --profile review --mode rpc    # after
+pi-profile read-only -- --mode rpc   # before
+pi --profile read-only --mode rpc    # after
 ```
 
 `/profile reload` and the `/profile resource` commands are gone: skills are read on demand and catalogs are re-read on every use, so there is nothing to reload. Remove leftover `~/.pi/agent/pi-profile/runtime/` directories; the extension no longer creates them.

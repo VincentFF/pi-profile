@@ -154,6 +154,12 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 **Rules**：`default` 不存在于文件中且不可删除；项目同名完整替换全局；`schemaVersion` 1 为当前值、2 作兼容读，保存一律写 1；`extensions` 与未知字段静默忽略、不进入解析结果（无继承）。
 
+### `ProfilePresets`
+
+**Interface**：`PROFILE_PRESETS`——随包发布的起点数组 `{ name, definition }`；create 向导以 `start from which preset?` 呈现，`blank` 为第一项，预设按选项下标识别（不解析名字，避免命名冲突）。
+
+**Rules**：预设是数据，不是 profile——不进入 `/profile list`，只有被 `/profile create` 复制进用户 catalog 后才存在，`default` 仍是唯一内建 profile，复制后预设不被跟踪（包升级不会改动用户已创建的 profile）。每个预设必须零资源假设：不得声明 `mcp`（adapter 缺失即激活失败）、`model`（未认证即激活失败）、`skills`（字面量缺失告警、`[]` 屏蔽全部、省略即不过滤）；`tools` 只列 Pi 内建工具且必含 `read`（否则 Pi 不产出 skills 段落）；`instructions` 只描述行为、不引用具体 skill 或 MCP server 名，并有行数上限（每轮追加，长度直接摊销成本）。`test/profile-presets.test.ts` 强制以上规则，并断言 `examples/profiles.json` 与该 catalog 完全一致。
+
 ### `ProfileResolver`
 
 **Interface**：纯函数——输入 profile、可选 overlay、`LiveResources`，输出 `ResolvedSelection`；声明 MCP 无法满足时抛 `ActivationError`。
@@ -239,6 +245,7 @@ pi-profile-switch/
 ├── src/
 │   ├── profile-catalog.ts       # v2 读取 + v1 兼容
 │   ├── profile-catalog-store.ts # 写入侧
+│   ├── profile-presets.ts       # 随包预设（create 起点，零资源假设）
 │   ├── runtime-state-store.ts
 │   ├── profile-resolver.ts      # 纯函数选择解析
 │   ├── profile-badge.ts         # footer badge 构造与列宽截断

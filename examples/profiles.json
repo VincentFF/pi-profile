@@ -1,38 +1,16 @@
 {
   "schemaVersion": 1,
   "profiles": {
-    "review": {
-      "label": "Code review",
-      "description": "Read-heavy review workflow",
-      "skills": [
-        "code-review",
-        "diagnosing-bugs"
-      ],
-      "mcp": [
-        "github"
-      ],
+    "read-only": {
+      "label": "Read-only",
+      "description": "Read-only session; no skills or MCP servers assumed — add your own.",
       "tools": [
         "read",
         "grep",
         "find",
-        "bash"
+        "ls"
       ],
-      "instructions": "Review only; do not modify files."
-    },
-    "impl": {
-      "label": "Implementation",
-      "skills": [
-        "tdd"
-      ],
-      "mcp": [
-        "github",
-        "linear"
-      ],
-      "model": {
-        "provider": "deepseek",
-        "id": "deepseek-v4-pro",
-        "thinkingLevel": "high"
-      }
+      "instructions": "Read-only session: inspect and report; never create, edit, rename, or delete files.\nIf a change is needed, describe it in your reply instead of applying it.\nDo not run commands that modify state (installs, formatters, commits, pushes, network writes).\nPrefer an available skill or MCP tool when it fits the request; otherwise use the tools you have.\nGround claims in evidence: cite file:line and separate verified facts from inferences.\nReply in English."
     }
   }
 }
