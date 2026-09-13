@@ -19,8 +19,7 @@ pnpm-debug.log*
 !.env.example
 
 # Project-local Pi runtime state (catalog files remain trackable)
-/.pi/mcp.json
-/.pi/pi-profile-state.json
+.pi/
 
 # Editor and operating-system files
 .DS_Store
