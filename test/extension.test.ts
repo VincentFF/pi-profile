@@ -171,7 +171,7 @@ beforeEach(async () => {
 	await writeFile(
 		path.join(fixture.agentDir, "profiles.json"),
 		JSON.stringify({
-			schemaVersion: 2,
+			schemaVersion: 1,
 			profiles: {
 				review: { skills: ["alpha"], tools: ["read"], instructions: "Review only." },
 				plain: {},

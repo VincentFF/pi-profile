@@ -13,7 +13,7 @@ printf -- '---\nname: beta-skill\ndescription: Beta\n---\n\nBeta body v1.\n' > ~
 # 2. 两个 profile（global catalog）
 cat > ~/.pi/agent/profiles.json <<'EOF'
 {
-  "schemaVersion": 2,
+  "schemaVersion": 1,
   "profiles": {
     "review": { "skills": ["alpha-skill"], "mcp": ["atlassian"] },
     "implement": { "skills": ["beta-skill"], "mcp": ["atlassian"], "tools": ["read", "grep", "find", "ls"] }

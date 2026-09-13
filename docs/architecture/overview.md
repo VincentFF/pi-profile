@@ -85,7 +85,7 @@ filtered   = formatSkillsForPrompt(visibleSkills(all, filter), fileReadTool)
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 1,
   "profiles": {
     "review": {
       "label": "Code review",
@@ -151,7 +151,7 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 **Interface**：只读列出/解析 winning 定义；写入侧提供 create/edit/delete/duplicate。
 
-**Rules**：`default` 不存在于文件中且不可删除；项目同名完整替换全局；读取 `schemaVersion: 1` 时忽略 `extensions` 并警告一次；`extensions` 与未知字段不进入解析结果（无继承）。
+**Rules**：`default` 不存在于文件中且不可删除；项目同名完整替换全局；`schemaVersion` 1 为当前值、2 作兼容读，保存一律写 1；`extensions` 与未知字段静默忽略、不进入解析结果（无继承）。
 
 ### `ProfileResolver`
 
@@ -181,7 +181,7 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 ### `switching/activate-profile.ts` / `customize.ts`
 
-**Interface**：`activateProfile`（解析 → 校验 → 可选持久化 → 应用，返回 `{ selection, warnings, overlay? }`）；`customizeOverlay` / `resetOverlay`。
+**Interface**：`activateProfile`（解析 → 校验 → 可选持久化 → 应用，返回 `{ selection, overlay? }`）；`customizeOverlay` / `resetOverlay`。
 
 ### `RuntimeStateStore` / `mcps`
 
@@ -191,7 +191,7 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 | 文件 | 用途 | 备注 |
 | --- | --- | --- |
-| `~/.pi/agent/profiles.json` | 全局 catalog | schemaVersion 2（v1 兼容读） |
+| `~/.pi/agent/profiles.json` | 全局 catalog | schemaVersion 1（v2 兼容读） |
 | `.pi/profiles.json` | 项目 catalog | 仅 Pi 报告项目已信任时读取 |
 | `~/.pi/agent/pi-profile-state.json` | 全局 runtime state | `activeProfile` + `overlay` |
 | `.pi/pi-profile-state.json` | 项目 runtime state | 同上 |

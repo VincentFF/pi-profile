@@ -200,19 +200,16 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 			persist: options?.persist ?? true,
 		});
 		setCurrent(ctx, activationOf(result));
-		reportWarnings(ctx, result.warnings);
 		reportWarnings(ctx, formatSelectionWarnings(result.selection));
 		return result;
 	}
 
 	async function profileEntries(ctx: ExtensionContext): Promise<ProfileListEntry[]> {
-		const { entries, warnings } = await listProfiles({
+		return listProfiles({
 			realAgentDir: getAgentDir(),
 			cwd: ctx.cwd,
 			projectTrusted: ctx.isProjectTrusted(),
 		});
-		reportWarnings(ctx, warnings);
-		return entries;
 	}
 
 	function sendListMessage(entries: ProfileListEntry[]): void {
@@ -461,7 +458,6 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 						const target = { profile: { name: current.selection.name, source: current.selection.source } };
 						const result = await customizeOverlay({ ...deps, ...target }, parseCustomizeArgs(rest.join(" ")));
 						setCurrent(ctx, activationOf(result));
-						reportWarnings(ctx, result.warnings);
 						notify(ctx, `overlay updated: ${result.selection.name}`, "info");
 						return;
 					}
@@ -474,7 +470,6 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 						const target = { profile: { name: current.selection.name, source: current.selection.source } };
 						const result = await resetOverlay({ ...deps, ...target });
 						setCurrent(ctx, activationOf(result));
-						reportWarnings(ctx, result.warnings);
 						notify(ctx, `overlay cleared: ${result.selection.name}`, "info");
 						return;
 					}

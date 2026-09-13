@@ -29,7 +29,7 @@ const untrusted = () => ({ realAgentDir: fixture.agentDir, cwd: fixture.cwd, pro
 async function writeGlobal(): Promise<void> {
 	await writeFile(
 		path.join(fixture.agentDir, "profiles.json"),
-		JSON.stringify({ schemaVersion: 2, profiles: { review: { skills: ["git-commit"] } } }),
+		JSON.stringify({ schemaVersion: 1, profiles: { review: { skills: ["git-commit"] } } }),
 	);
 }
 
@@ -47,7 +47,7 @@ describe("profile CRUD", () => {
 	it("does not read the project catalog when the project is not trusted", async () => {
 		await writeFile(
 			path.join(fixture.cwd, ".pi", "profiles.json"),
-			JSON.stringify({ schemaVersion: 2, profiles: { local: {} } }),
+			JSON.stringify({ schemaVersion: 1, profiles: { local: {} } }),
 		);
 
 		expect(await readCatalogScope(untrusted(), "project")).toEqual(new Map());

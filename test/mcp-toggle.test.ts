@@ -13,7 +13,7 @@ beforeEach(async () => {
 	await writeFile(
 		path.join(fixture.agentDir, "profiles.json"),
 		JSON.stringify({
-			schemaVersion: 2,
+			schemaVersion: 1,
 			profiles: { review: { mcp: ["atlassian"] }, empty: {} },
 		}),
 	);
@@ -66,7 +66,7 @@ describe("setMcpServerEnabled", () => {
 	it("allows disabling a name the adapter no longer discovers", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "profiles.json"),
-			JSON.stringify({ schemaVersion: 2, profiles: { review: { mcp: ["removed"] } } }),
+			JSON.stringify({ schemaVersion: 1, profiles: { review: { mcp: ["removed"] } } }),
 		);
 
 		expect(await setMcpServerEnabled(globalInput(), "removed", false)).toEqual({ mcp: [], changed: true });

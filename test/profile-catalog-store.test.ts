@@ -30,14 +30,14 @@ describe("ProfileCatalogStore", () => {
 		expect(await store().readDefinitions()).toEqual(new Map());
 	});
 
-	it("writes schemaVersion 2 and only declared fields", async () => {
+	it("writes schemaVersion 1 and only declared fields", async () => {
 		await store().upsert("review", {
 			skills: ["git-commit"],
 			model: { provider: "openai", id: "gpt-5.4" },
 		});
 
 		const document = await readFileJson();
-		expect(document.schemaVersion).toBe(2);
+		expect(document.schemaVersion).toBe(1);
 		expect(document.profiles).toEqual({
 			review: { skills: ["git-commit"], model: { provider: "openai", id: "gpt-5.4" } },
 		});
@@ -47,7 +47,7 @@ describe("ProfileCatalogStore", () => {
 		await writeFile(
 			path.join(fixture.agentDir, "profiles.json"),
 			JSON.stringify({
-				schemaVersion: 2,
+				schemaVersion: 1,
 				profiles: { review: { skills: ["git-commit"], extensions: ["x"], extends: "base" } },
 			}),
 		);
@@ -58,11 +58,11 @@ describe("ProfileCatalogStore", () => {
 		expect(document.profiles).toEqual({ review: { skills: ["git-commit", "code-review"] } });
 	});
 
-	it("reads a version 1 file and upgrades it to version 2 on write", async () => {
+	it("reads a legacy file and writes the current envelope back", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "profiles.json"),
 			JSON.stringify({
-				schemaVersion: 1,
+				schemaVersion: 2,
 				profiles: { review: { skills: ["git-commit"], extensions: ["pi-plan-build"] } },
 			}),
 		);
@@ -73,7 +73,7 @@ describe("ProfileCatalogStore", () => {
 		await store().upsert("implement", { tools: ["read"] });
 
 		const document = await readFileJson();
-		expect(document.schemaVersion).toBe(2);
+		expect(document.schemaVersion).toBe(1);
 		expect(document.profiles).toEqual({
 			implement: { tools: ["read"] },
 			review: { skills: ["git-commit"] },

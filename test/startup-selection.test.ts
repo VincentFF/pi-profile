@@ -18,7 +18,7 @@ afterEach(async () => {
 async function writeGlobalCatalog(): Promise<void> {
 	await writeFile(
 		path.join(fixture.agentDir, "profiles.json"),
-		JSON.stringify({ schemaVersion: 2, profiles: { review: { skills: ["git-commit"] } } }),
+		JSON.stringify({ schemaVersion: 1, profiles: { review: { skills: ["git-commit"] } } }),
 	);
 }
 
@@ -77,7 +77,7 @@ describe("resolveStartupProfile", () => {
 		await writeGlobalCatalog();
 		await writeFile(
 			path.join(fixture.cwd, ".pi", "profiles.json"),
-			JSON.stringify({ schemaVersion: 2, profiles: { local: { skills: [] } } }),
+			JSON.stringify({ schemaVersion: 1, profiles: { local: { skills: [] } } }),
 		);
 		await writeState(fixture.agentDir, { activeProfile: "review" });
 		await writeState(path.join(fixture.cwd, ".pi"), { activeProfile: "local" });
@@ -140,17 +140,6 @@ describe("resolveStartupProfile", () => {
 
 		expect(result.name).toBe("default");
 		expect(result.warnings.join("\n")).toMatch(/saved profile "removed" no longer exists/);
-	});
-
-	it("carries catalog compatibility warnings", async () => {
-		await writeFile(
-			path.join(fixture.agentDir, "profiles.json"),
-			JSON.stringify({ schemaVersion: 1, profiles: { review: { extensions: ["x"] } } }),
-		);
-
-		const result = await resolveStartupProfile({ agentDir: fixture.agentDir, cwd: fixture.cwd, projectTrusted: false });
-
-		expect(result.warnings.join("\n")).toMatch(/schemaVersion 1/);
 	});
 
 	it("warns once about a leftover resources.json in the agent dir", async () => {

@@ -14,7 +14,7 @@ beforeEach(async () => {
 	await writeFile(
 		path.join(fixture.agentDir, "profiles.json"),
 		JSON.stringify({
-			schemaVersion: 2,
+			schemaVersion: 1,
 			profiles: {
 				review: { skills: ["git-commit"], tools: ["read"], mcp: ["atlassian"] },
 				plain: {},
@@ -65,7 +65,7 @@ describe("activateProfile", () => {
 	it("writes project profiles to the project state file", async () => {
 		await writeFile(
 			path.join(fixture.cwd, ".pi", "profiles.json"),
-			JSON.stringify({ schemaVersion: 2, profiles: { local: { tools: ["grep"] } } }),
+			JSON.stringify({ schemaVersion: 1, profiles: { local: { tools: ["grep"] } } }),
 		);
 		const deps = makeDeps({ projectTrusted: true });
 
@@ -153,7 +153,7 @@ describe("activateProfile", () => {
 	it("inspects zero-match skill globs through the selection warnings", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "profiles.json"),
-			JSON.stringify({ schemaVersion: 2, profiles: { review: { skills: ["zzz-*"] } } }),
+			JSON.stringify({ schemaVersion: 1, profiles: { review: { skills: ["zzz-*"] } } }),
 		);
 		const deps = makeDeps();
 

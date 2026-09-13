@@ -29,10 +29,10 @@ describe("profiles.schema.json", () => {
 	it("rejects a profile redefining the built-in default", async () => {
 		const validate = newAjv().compile(await loadSchema("profiles.schema.json"));
 
-		expect(validate({ schemaVersion: 2, profiles: { default: {} } })).toBe(false);
+		expect(validate({ schemaVersion: 1, profiles: { default: {} } })).toBe(false);
 	});
 
-	it("accepts a version 1 catalog with the deprecated extensions field", async () => {
+	it("accepts a catalog with a legacy extensions field", async () => {
 		const validate = newAjv().compile(await loadSchema("profiles.schema.json"));
 
 		expect(
@@ -44,9 +44,15 @@ describe("profiles.schema.json", () => {
 		).toBe(true);
 	});
 
+	it("accepts a version 2 catalog written by v0.1.0", async () => {
+		const validate = newAjv().compile(await loadSchema("profiles.schema.json"));
+
+		expect(validate({ schemaVersion: 2, profiles: { review: { skills: ["git-commit"] } } })).toBe(true);
+	});
+
 	it("rejects an unknown profile field (no inheritance)", async () => {
 		const validate = newAjv().compile(await loadSchema("profiles.schema.json"));
 
-		expect(validate({ schemaVersion: 2, profiles: { review: { extends: "base" } } })).toBe(false);
+		expect(validate({ schemaVersion: 1, profiles: { review: { extends: "base" } } })).toBe(false);
 	});
 });

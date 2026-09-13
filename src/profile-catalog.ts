@@ -7,9 +7,11 @@
  * - A profile references skills, MCP servers, and tools, and may declare
  *   instructions and a model preset. Extensions are not a profile resource:
  *   every installed extension loads natively in every profile.
- * - schemaVersion 2 is current. Version 1 files load with their per-profile
- *   `extensions` field ignored and a warning, so existing catalogs keep
- *   working without an edit.
+ * - schemaVersion 1 is current. Version 2 describes the same fields — the
+ *   number only marked the era in which `extensions` was still a profile
+ *   resource — and reads the same; every save writes version 1.
+ * - A legacy `extensions` field is ignored silently, like any other unknown
+ *   field: extensions load natively and are managed with `pi install`.
  *
  * Invariants:
  * - The built-in `default` profile never exists in either file and cannot be
@@ -27,7 +29,9 @@ import path from "node:path";
 
 import { isRecord, readJsonFile } from "./json-file.ts";
 
-export const PROFILE_SCHEMA_VERSION = 2;
+export const PROFILE_SCHEMA_VERSION = 1;
+/** The number v0.1.0 wrote for the same field shape: read, never written. */
+const LEGACY_SCHEMA_VERSION = 2;
 export const DEFAULT_PROFILE_NAME = "default";
 
 export interface ProfileModel {
@@ -62,13 +66,6 @@ export interface ResolvedProfile {
 	definition: ProfileDefinition;
 }
 
-/** One parsed catalog file: definitions plus non-fatal compatibility
- *  warnings the caller surfaces once per activation. */
-export interface CatalogDocument {
-	profiles: Map<string, ProfileDefinition>;
-	warnings: string[];
-}
-
 export class CatalogError extends Error {
 	constructor(message: string) {
 		super(message);
@@ -94,8 +91,8 @@ function readOptionalString(value: unknown, field: string, profileName: string):
 
 /** Parses one raw profile definition; exported for the write-side store
  *  (profile-catalog-store.ts) so anything written is loadable. Unknown
- *  fields are ignored by design — `extensions` is reported by
- *  parseCatalogDocument, which has the file path for the warning. */
+ *  fields are ignored by design — a legacy `extensions` declaration is
+ *  dropped silently, exactly like any other unknown key. */
 export function parseProfileDefinition(name: string, raw: unknown): ProfileDefinition {
 	if (!isRecord(raw)) {
 		throw new CatalogError(`profile "${name}" must be an object`);
@@ -123,20 +120,14 @@ export function parseProfileDefinition(name: string, raw: unknown): ProfileDefin
 
 /** Parses one catalog document. Missing files are handled by the caller;
  *  this function sees only parsed JSON. */
-export function parseCatalogDocument(value: unknown, filePath: string): CatalogDocument {
+export function parseCatalogDocument(value: unknown, filePath: string): Map<string, ProfileDefinition> {
 	if (!isRecord(value)) {
 		throw new CatalogError(`${filePath}: catalog must be an object`);
 	}
-	const warnings: string[] = [];
 	const version = value.schemaVersion;
-	if (version !== 1 && version !== PROFILE_SCHEMA_VERSION) {
+	if (version !== PROFILE_SCHEMA_VERSION && version !== LEGACY_SCHEMA_VERSION) {
 		throw new CatalogError(
 			`${filePath}: unsupported schemaVersion ${JSON.stringify(version)} (expected ${PROFILE_SCHEMA_VERSION})`,
-		);
-	}
-	if (version === 1) {
-		warnings.push(
-			`${filePath}: schemaVersion 1 is read as version ${PROFILE_SCHEMA_VERSION}; profiles declaring "extensions" are upgraded with that field ignored`,
 		);
 	}
 	if (!isRecord(value.profiles)) {
@@ -149,21 +140,16 @@ export function parseCatalogDocument(value: unknown, filePath: string): CatalogD
 				`${filePath}: "${DEFAULT_PROFILE_NAME}" is built in and must not be defined in the catalog`,
 			);
 		}
-		if (isRecord(raw) && raw.extensions !== undefined) {
-			warnings.push(
-				`${filePath}: profile "${name}" declares "extensions"; extensions are always loaded natively (ADR-0007) and the field is ignored — manage extensions with pi install`,
-			);
-		}
 		profiles.set(name, parseProfileDefinition(name, raw));
 	}
-	return { profiles, warnings };
+	return profiles;
 }
 
 /** Reads one catalog file; missing → empty map, malformed → CatalogError. */
-async function loadCatalogFile(catalogPath: string): Promise<CatalogDocument> {
+async function loadCatalogFile(catalogPath: string): Promise<Map<string, ProfileDefinition>> {
 	const result = await readJsonFile(catalogPath);
 	if (!result.ok) {
-		if (result.reason === "missing") return { profiles: new Map(), warnings: [] };
+		if (result.reason === "missing") return new Map();
 		throw new CatalogError(`invalid JSON in ${catalogPath}`);
 	}
 	return parseCatalogDocument(result.value, catalogPath);
@@ -171,17 +157,9 @@ async function loadCatalogFile(catalogPath: string): Promise<CatalogDocument> {
 
 export class ProfileCatalog {
 	readonly #profiles: ReadonlyMap<string, CatalogEntry>;
-	readonly #warnings: readonly string[];
 
-	private constructor(profiles: ReadonlyMap<string, CatalogEntry>, warnings: readonly string[]) {
+	private constructor(profiles: ReadonlyMap<string, CatalogEntry>) {
 		this.#profiles = profiles;
-		this.#warnings = warnings;
-	}
-
-	/** Compatibility warnings from reading the catalog files (v1 schema,
-	 *  ignored `extensions` fields). Empty for a current, well-formed pair. */
-	get warnings(): readonly string[] {
-		return this.#warnings;
 	}
 
 	/**
@@ -193,18 +171,16 @@ export class ProfileCatalog {
 	static async load(agentDir: string, options?: { projectDir?: string }): Promise<ProfileCatalog> {
 		const global = await loadCatalogFile(path.join(agentDir, "profiles.json"));
 		const profiles = new Map<string, CatalogEntry>();
-		const warnings = [...global.warnings];
-		for (const [name, definition] of global.profiles) {
+		for (const [name, definition] of global) {
 			profiles.set(name, { source: "global", definition });
 		}
 		if (options?.projectDir !== undefined) {
 			const project = await loadCatalogFile(path.join(options.projectDir, ".pi", "profiles.json"));
-			warnings.push(...project.warnings);
-			for (const [name, definition] of project.profiles) {
+			for (const [name, definition] of project) {
 				profiles.set(name, { source: "project", definition });
 			}
 		}
-		return new ProfileCatalog(profiles, warnings);
+		return new ProfileCatalog(profiles);
 	}
 
 	/** Resolves a profile by name. `default` always resolves to the built-in

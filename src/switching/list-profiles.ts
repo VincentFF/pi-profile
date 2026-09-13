@@ -24,20 +24,17 @@ export async function listProfiles(input: {
 	realAgentDir: string;
 	cwd: string;
 	projectTrusted: boolean;
-}): Promise<{ entries: ProfileListEntry[]; warnings: string[] }> {
+}): Promise<ProfileListEntry[]> {
 	const catalog = await ProfileCatalog.load(input.realAgentDir, {
 		projectDir: input.projectTrusted ? input.cwd : undefined,
 	});
-	return {
-		entries: catalog.list().map((profile) => ({
-			name: profile.name,
-			source: profile.source,
-			...(typeof profile.definition.label === "string" ? { label: profile.definition.label } : {}),
-			...(typeof profile.definition.description === "string" ? { description: profile.definition.description } : {}),
-			shadowsGlobal: profile.source === "project" && catalog.shadowsGlobal(profile.name),
-		})),
-		warnings: [...catalog.warnings],
-	};
+	return catalog.list().map((profile) => ({
+		name: profile.name,
+		source: profile.source,
+		...(typeof profile.definition.label === "string" ? { label: profile.definition.label } : {}),
+		...(typeof profile.definition.description === "string" ? { description: profile.definition.description } : {}),
+		shadowsGlobal: profile.source === "project" && catalog.shadowsGlobal(profile.name),
+	}));
 }
 
 export function formatProfileList(entries: ProfileListEntry[], activeProfile?: string): string {
