@@ -75,6 +75,8 @@ In the TUI, the `/profile` command family manages everything in-session:
 | `/profile customize` / `/profile reset` | Narrow the active profile for this session only |
 | `/mcp enable\|disable <server>` | Toggle MCP servers in the active profile |
 
+While a non-`default` profile is active, the footer shows `profile: <name>`, with `*` appended when a session-only overlay is in effect. `default` shows no badge, so an unprofiled session keeps Pi's native footer.
+
 All commands work in non-interactive modes (`--mode rpc|print|json`); CRUD wizards are TUI-only.
 
 ## Guarantees

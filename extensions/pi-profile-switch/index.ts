@@ -9,13 +9,14 @@ import {
 import { discoverAdapterServerNames } from "../../src/mcp-config.ts";
 import { probeAdapterPresence } from "../../src/mcp-coordination.ts";
 import { readSessionChoices } from "../../src/model-selection.ts";
+import { buildProfileBadge, PROFILE_STATUS_KEY, renderProfileBadge } from "../../src/profile-badge.ts";
 import type { ProfileDefinition } from "../../src/profile-catalog.ts";
 import {
 	formatSelectionWarnings,
 	type LiveResources,
 	type ResolvedSelection,
 } from "../../src/profile-resolver.ts";
-import { RuntimeStateStore, stateDirFor, type RuntimeOverlay } from "../../src/runtime-state-store.ts";
+import { RuntimeStateStore, overlayNarrows, stateDirFor, type RuntimeOverlay } from "../../src/runtime-state-store.ts";
 import {
 	applySkillsFilter,
 	formatInstructionsBlock,
@@ -69,6 +70,8 @@ import { buildStatusReport, formatStatusMarkdown } from "../../src/switching/sta
  *   instructions. Unselected skills stay loaded and `/skill:`-invocable.
  * - `/profile …` command family and `/mcp enable|disable`.
  * - Retry pending tool literals each turn until MCP/extension tools register.
+ * - Footer badge: `profile: <name>` (plus `*` for a runtime overlay) in Pi's
+ *   footer status line while a non-`default` profile is active.
  */
 
 type ContextWithOptions = ExtensionContext & { getSystemPromptOptions?: () => BuildSystemPromptOptions };
@@ -77,6 +80,13 @@ type ContextWithOptions = ExtensionContext & { getSystemPromptOptions?: () => Bu
 interface Activation {
 	selection: ResolvedSelection;
 	skillsOutcome?: SkillsFilterOutcome;
+	/** The overlay this runtime was activated with, when one is in effect. */
+	overlay?: RuntimeOverlay;
+}
+
+/** Maps an activation result onto the runtime state `current` mirrors. */
+function activationOf(result: ActivationResult): Activation {
+	return { selection: result.selection, ...(result.overlay === undefined ? {} : { overlay: result.overlay }) };
 }
 
 /** Subcommands that mutate a catalog; they need dialog-capable UI. */
@@ -98,6 +108,31 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	const explicit = detectExplicitDeclarations(process.argv.slice(2));
 	let current: Activation | undefined;
 	let filterWarningShown = false;
+	/** The last badge written to the footer, so a refresh only talks to Pi
+	 *  when the rendering actually changed. */
+	let badgeText: string | undefined;
+
+	/** The only writer of `current` and of the footer badge. Both mirror the
+	 *  selection this runtime applied, so a failed activation (which throws
+	 *  before reaching here) never claims to be active. */
+	function setCurrent(ctx: ExtensionContext, next: Activation | undefined): void {
+		current = next;
+		refreshBadge(ctx);
+	}
+
+	/** Re-renders the badge from `current`. `default` and an unapplied profile
+	 *  render no badge, which removes Pi's footer status line entirely. */
+	function refreshBadge(ctx: ExtensionContext): void {
+		if (!ctx.hasUI) return;
+		const badge =
+			current === undefined
+				? undefined
+				: buildProfileBadge(current.selection.name, { overlay: overlayNarrows(current.overlay) });
+		const text = badge === undefined ? undefined : renderProfileBadge(badge, ctx.ui.theme);
+		if (text === badgeText) return;
+		badgeText = text;
+		ctx.ui.setStatus(PROFILE_STATUS_KEY, text);
+	}
 
 	const surface = (ctx: ExtensionContext): ApplySurface => ({
 		getAllTools: () => pi.getAllTools(),
@@ -162,7 +197,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 			overlay: options?.overlay ?? null,
 			persist: options?.persist ?? true,
 		});
-		current = { selection: result.selection };
+		setCurrent(ctx, activationOf(result));
 		reportWarnings(ctx, result.warnings);
 		reportWarnings(ctx, formatSelectionWarnings(result.selection));
 		return result;
@@ -307,7 +342,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	}
 
 	pi.on("session_start", async (_event, ctx) => {
-		current = undefined;
+		setCurrent(ctx, undefined);
 		filterWarningShown = false;
 		const agentDir = getAgentDir();
 		const projectTrusted = ctx.isProjectTrusted();
@@ -351,6 +386,11 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				},
 			};
 		}
+		// Pi has no extension-visible theme-change event and footer statuses are
+		// stored as finished strings, so re-render once per turn: a `/theme`
+		// switch is picked up without waiting for the next profile change.
+		// `refreshBadge` dedupes, so an unchanged badge sends nothing.
+		refreshBadge(ctx);
 		const filtered = applySkillsFilter({
 			systemPrompt: event.systemPrompt,
 			options: event.systemPromptOptions,
@@ -418,7 +458,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 						const deps = await activationDeps(ctx, false);
 						const target = { profile: { name: current.selection.name, source: current.selection.source } };
 						const result = await customizeOverlay({ ...deps, ...target }, parseCustomizeArgs(rest.join(" ")));
-						current = { selection: result.selection };
+						setCurrent(ctx, activationOf(result));
 						reportWarnings(ctx, result.warnings);
 						notify(ctx, `overlay updated: ${result.selection.name}`, "info");
 						return;
@@ -431,7 +471,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 						const deps = await activationDeps(ctx, false);
 						const target = { profile: { name: current.selection.name, source: current.selection.source } };
 						const result = await resetOverlay({ ...deps, ...target });
-						current = { selection: result.selection };
+						setCurrent(ctx, activationOf(result));
 						reportWarnings(ctx, result.warnings);
 						notify(ctx, `overlay cleared: ${result.selection.name}`, "info");
 						return;

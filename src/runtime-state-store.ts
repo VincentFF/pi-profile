@@ -42,6 +42,19 @@ export interface RuntimeOverlay {
 	tools?: string[];
 }
 
+/** True when an overlay actually narrows the active profile. An overlay whose
+ *  fields were all removed again (`/profile customize enable …`) is not a
+ *  difference from the catalog, and `parseOverlay` drops an empty overlay on
+ *  read. A `tools: []` override is a difference: it selects no tools. */
+export function overlayNarrows(overlay: RuntimeOverlay | undefined): boolean {
+	if (overlay === undefined) return false;
+	return (
+		(overlay.disabledSkills?.length ?? 0) > 0 ||
+		(overlay.disabledMcp?.length ?? 0) > 0 ||
+		overlay.tools !== undefined
+	);
+}
+
 function parseOverlay(value: unknown): RuntimeOverlay | undefined {
 	if (!isRecord(value)) return undefined;
 	const overlay: RuntimeOverlay = {};
