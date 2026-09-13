@@ -2,7 +2,7 @@ import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { RuntimeStateStore } from "../src/runtime-state-store.ts";
+import { RuntimeStateStore, overlayNarrows } from "../src/runtime-state-store.ts";
 import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
@@ -97,5 +97,20 @@ describe("RuntimeStateStore", () => {
 		await store().update({ overlay: undefined });
 
 		expect(await store().read()).toEqual({ activeProfile: "review" });
+	});
+});
+
+describe("overlayNarrows", () => {
+	it("sees no difference in no overlay or an emptied one", () => {
+		expect(overlayNarrows(undefined)).toBe(false);
+		expect(overlayNarrows({})).toBe(false);
+		expect(overlayNarrows({ disabledSkills: [], disabledMcp: [] })).toBe(false);
+	});
+
+	it("sees a difference in a disabled entry or a tools override", () => {
+		expect(overlayNarrows({ disabledSkills: ["x"] })).toBe(true);
+		expect(overlayNarrows({ disabledMcp: ["atlassian"] })).toBe(true);
+		// `tools: []` selects no tools: a runtime difference, not an empty overlay.
+		expect(overlayNarrows({ tools: [] })).toBe(true);
 	});
 });

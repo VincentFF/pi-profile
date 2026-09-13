@@ -75,6 +75,8 @@ Profile 只**引用**资源，从不复制资源。完整示例见 [`examples/pr
 | `/profile customize` / `/profile reset` | 仅本次会话收窄活动 profile |
 | `/mcp enable\|disable <server>` | 在活动 profile 中开关 MCP server |
 
+活动 profile 不是 `default` 时，footer 显示 `profile: <name>`；本次会话的 overlay 生效时追加 `*`。`default` 不显示 badge，未使用 profile 的会话保持 Pi 原生 footer。
+
 非交互模式（`--mode rpc|print|json`）下命令同样生效；CRUD 向导仅 TUI 可用。
 
 ## 保证

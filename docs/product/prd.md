@@ -158,6 +158,8 @@ profile 的 `instructions` 追加到 Pi 已构建的 system prompt 末尾。Pi �
 
 CRUD 只在 TUI mode 提供。RPC、print 和 JSON mode 可以用 `pi --profile <name>` 启动目标 profile，也可以执行 `/profile use|list|status|customize|reset` 与 `/mcp enable|disable`，但不提供交互式向导。
 
+TUI 中 footer 常驻显示 `profile: <name>`；runtime overlay 生效时追加 `*`。`default` 不显示 badge：它什么都不声明，因此也不改变 footer（未使用 profile 的会话与原生 Pi 完全一致）。badge 只反映已成功应用的运行时状态。
+
 `/profile list` 与 `/profile status` 经 `pi.sendMessage` 发出 `customType: "pi-profile-switch"` 的结构化消息，`details` 携带 `{kind, ...}` 载荷供 RPC 消费者使用。
 
 ## 通用规则

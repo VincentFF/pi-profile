@@ -142,7 +142,8 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 **Rules**：
 
 - `session_start`：解析启动 profile（flag → 项目 state（已信任）→ 全局 state → `default`）→ 构建 live view → 解析 + 校验 + 应用；失败时不应用任何设置并报出可行动错误。
-- `before_agent_start`：重试 pending tools；重建 skills 段落；追加 instructions；无可变更时返回 undefined。
+- `before_agent_start`：重试 pending tools；重建 skills 段落；追加 instructions；每轮刷新 footer badge（主题变更无事件，只能靠这一轮刷新自愈）；无可变更时返回 undefined。
+- footer badge（`src/profile-badge.ts`）：`profile: <name>`，overlay 生效时追加 `*`；`default` 与未应用的 profile 不写 badge。`setCurrent` 是 profile 身份（`selection.name` 与 `overlay`）与 badge 的唯一写入点，只反映已成功应用的激活；`pendingTools`/`skillsOutcome` 的原地更新不改身份，也不触碰 badge。
 - 启动选择（`--profile`）不写 state；stored overlay 不在启动时应用。
 - CRUD 向导仅 TUI（`ctx.mode === "tui"`）；list/status 经 `pi.sendMessage` 发送 `customType: "pi-profile-switch"` 的结构化 `details`。
 
@@ -172,13 +173,19 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 **Interface**：`validateSelection` / `applySelection` / `retryPendingTools`，依赖注入到窄 interface `ApplySurface`。
 
-### `switching/switch-profile.ts` / `customize.ts`
+### `ProfileBadge`
 
-**Interface**：`activateProfile`（解析 → 校验 → 可选持久化 → 应用）；`customizeOverlay` / `resetOverlay`。
+**Interface**：`buildProfileBadge`（`default` 返回 undefined）、`renderProfileBadge`、`PROFILE_STATUS_KEY`、`truncateToColumns` / `displayWidth`。
+
+**Rules**：纯展示，无状态无 I/O；名字截到 16 列（按显示宽度，CJK 记 2 列）；颜色在渲染时向 theme 索取。
+
+### `switching/activate-profile.ts` / `customize.ts`
+
+**Interface**：`activateProfile`（解析 → 校验 → 可选持久化 → 应用，返回 `{ selection, warnings, overlay? }`）；`customizeOverlay` / `resetOverlay`。
 
 ### `RuntimeStateStore` / `mcps`
 
-**Interface**：按 scope 读写 `pi-profile-state.json`；adapter 配置只读发现（`mcp-config.ts`）与事件契约（`mcp-coordination.ts`，ADR-0002 不变）。
+**Interface**：按 scope 读写 `pi-profile-state.json`（`overlayNarrows` 判定 overlay 是否真有差异）；adapter 配置只读发现（`mcp-config.ts`）与事件契约（`mcp-coordination.ts`，ADR-0002 不变）。
 
 ## 数据契约
 
@@ -231,6 +238,8 @@ pi-profile-switch/
 │   ├── profile-catalog-store.ts # 写入侧
 │   ├── runtime-state-store.ts
 │   ├── profile-resolver.ts      # 纯函数选择解析
+│   ├── profile-badge.ts         # footer badge 构造与列宽截断
+│   ├── name-matching.ts         # 名字/glob 匹配与 did-you-mean
 │   ├── skill-selection.ts       # 可见性过滤与 instructions 块
 │   ├── model-selection.ts       # 预设优先级
 │   ├── startup-selection.ts     # --profile flag 与启动选择
@@ -239,14 +248,13 @@ pi-profile-switch/
 │   ├── json-file.ts
 │   └── switching/
 │       ├── apply-profile.ts     # 窄 surface 上的运行时应用
-│       ├── switch-profile.ts    # 激活编排
+│       ├── activate-profile.ts  # 激活编排
 │       ├── customize.ts         # overlay
 │       ├── profile-crud.ts      # catalog CRUD
 │       ├── profile-wizard.ts    # TUI 向导
 │       ├── list-profiles.ts
 │       ├── status.ts
-│       ├── mcp-toggle.ts
-│       └── tool-references.ts
+│       └── mcp-toggle.ts
 ├── schemas/profiles.schema.json
 ├── examples/profiles.json
 └── test/                        # 单测 + 真实 pi 子进程集成测试

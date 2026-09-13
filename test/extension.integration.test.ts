@@ -411,4 +411,32 @@ describe("native Pi behavior with the extension loaded", () => {
 			}
 		},
 	);
+
+	it(
+		"publishes the active profile to Pi's footer status channel",
+		{ timeout: 90_000 },
+		async () => {
+			await writeCatalog({ review: {} });
+			await writeState("review");
+			const rpc = await start(["-e", EXTENSION], { model: false });
+			try {
+				await rpc.waitFor(
+					(entry) =>
+						(entry as { type?: string }).type === "extension_ui_request" &&
+						(entry as { method?: string }).method === "setStatus" &&
+						(entry as { statusKey?: string }).statusKey === "active-profile",
+				);
+				const badge = rpc.messages
+					.filter((entry) => (entry as { method?: string }).method === "setStatus")
+					.at(-1) as { statusText?: string } | undefined;
+
+				// RPC forwards the rendered string verbatim, colors included; strip
+				// the theme's escape sequences to assert the canonical text.
+				const text = String(badge?.statusText).replace(/\x1b\[[0-9;]*m/g, "");
+				expect(text).toBe("profile: review");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
 });
