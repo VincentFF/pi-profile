@@ -5,6 +5,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true # a newer push supersedes the run in flight
+
 jobs:
   test:
     runs-on: ubuntu-latest

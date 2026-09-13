@@ -20,6 +20,10 @@ This repo contains two things:
 
 Issues and specs are tracked as local Markdown files under `docs/specs/` (one directory per feature). See `docs/agents/issue-tracker.md`.
 
+## Branches and releases
+
+`main` is protected: changes land only through a squash-merged PR, and the PR title becomes the commit message that release-please reads. Work on `feat/<slug>` or `fix/<slug>` branches. A PR title is a Conventional Commit — `fix:` and `deps:` release a patch, `feat:` a minor, every other type releases nothing — and the major version is named by hand with a `Release-As: <version>` footer as the last paragraph of the PR body. Merging a PR on `main` updates a release PR; merging that one tags and publishes to npm. Full rules, including one-time setup: `CONTRIBUTING.md`.
+
 ## Triage labels
 
 Default vocabulary: `needs-triage`, `needs-info`, `ready-for-agent`, `ready-for-human`, `wontfix`. See `docs/agents/triage-labels.md`.

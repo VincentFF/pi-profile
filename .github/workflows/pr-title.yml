@@ -3,12 +3,16 @@
 # land on main. This check keeps PR titles valid Conventional Commits so a
 # release can never be silently swallowed by a malformed or non-releasable
 # title — the usual failure being `chore: ...` wrapping real `feat:` work.
+# It also enforces the version policy in CONTRIBUTING.md: fix/deps → patch,
+# feat → minor, major named by hand.
 name: PR title
 
 on:
   pull_request:
     # synchronize matters: required checks are tracked per commit, so the title
     # check must re-report on every new head commit of the PR.
+    # edited matters: a fixed title must re-report, otherwise the PR stays
+    # blocked on the commit that carried the bad title.
     types: [opened, edited, reopened, synchronize]
 
 permissions:
@@ -19,9 +23,14 @@ jobs:
     name: lint-pr-title
     runs-on: ubuntu-latest
     steps:
+      # The version on main decides what a breaking commit releases: the minor
+      # below 1.0.0, the major above it.
+      - uses: actions/checkout@v4
+
       - name: Check title is a Conventional Commit
         env:
           TITLE: ${{ github.event.pull_request.title }}
+          BODY: ${{ github.event.pull_request.body }}
         run: |
           set -euo pipefail
 
@@ -45,15 +54,65 @@ jobs:
           # `[[ =~ ]]` is a bash parse error.
           breaking='^[a-z]+(\([^)]*\))?!: '
           type=$(printf '%s' "$TITLE" | sed -E 's/^([a-z]+).*/\1/')
-          if [[ "$TITLE" =~ $breaking ]]; then
-            bump="breaking → minor while < 1.0.0 (next release 0.x.0)"
-          elif [[ "$type" == "feat" ]]; then
-            bump="minor → next release 0.x.0"
-          elif [[ "$type" == "fix" || "$type" == "deps" ]]; then
-            bump="patch → next release 0.x.y"
+
+          # A squash merge copies the PR body into the commit body, where
+          # release-please reads `Release-As:` as a Conventional Commit footer.
+          # Footers survive parsing only in the final, blank-line-separated
+          # paragraph, so that is where the line has to be, on its own line.
+          last_paragraph=$(printf '%s' "$BODY" | awk 'BEGIN { RS = "" } { last = $0 } END { print last }')
+          release_as=$(printf '%s' "$last_paragraph" | head -n 1 | grep -iE '^release-as: ' | sed -E 's/^[Rr]elease-[Aa][Ss]: *[vV]?//; s/[[:space:]]+$//' || true)
+          release_as_lines=$(printf '%s' "$BODY" | grep -ciE '^release-as: ' || true)
+
+          if [[ -z "$release_as" ]] && (( release_as_lines > 0 )); then
+            {
+              echo "::error::Release-As: must be its own paragraph at the end of the PR body."
+              echo "release-please reads footers only in the final paragraph of the squash"
+              echo "commit body, so put the line on its own at the bottom, after a blank line."
+            } >&2
+            exit 1
+          fi
+
+          if [[ -n "$release_as" ]] && ! printf '%s' "$release_as" | grep -qE '^[0-9]+\.[0-9]+\.[0-9]+$'; then
+            echo "::error::Release-As must name a version: Release-As: 1.0.0" >&2
+            exit 1
+          fi
+
+          is_breaking=0
+          if [[ "$TITLE" =~ $breaking ]] || printf '%s' "$BODY" | grep -qE '^BREAKING[ -]CHANGE:'; then
+            is_breaking=1
+          fi
+
+          version=$(jq -r .version package.json)
+          if [[ "$version" =~ ^([0-9]+)\.([0-9]+)\.([0-9]+)$ ]]; then
+            major=${BASH_REMATCH[1]}
+            minor=${BASH_REMATCH[2]}
+            patch=${BASH_REMATCH[3]}
           else
-            bump="no release (only feat / fix / deps are releasable units)"
+            major=0 minor=0 patch=0
+          fi
+
+          if (( is_breaking )) && (( major >= 1 )) && [[ -z "$release_as" ]]; then
+            {
+              echo "::error::Breaking change with ${version} released: the major version is named by hand."
+              echo
+              echo "Add this footer as the last paragraph of the PR body:"
+              echo
+              echo "  Release-As: $((major + 1)).0.0"
+            } >&2
+            exit 1
+          fi
+
+          if [[ -n "$release_as" ]]; then
+            next="$release_as (Release-As)"
+          elif (( is_breaking )); then
+            next="$major.$((minor + 1)).0 (breaking, pre-1.0)"
+          elif [[ "$type" == "feat" ]]; then
+            next="$major.$((minor + 1)).0"
+          elif [[ "$type" == "fix" || "$type" == "deps" ]]; then
+            next="$major.$minor.$((patch + 1))"
+          else
+            next="no release ($type is not releasable)"
           fi
 
           echo "OK: $TITLE"
-          echo "release-please: $bump"
+          echo "release-please: next release $next"
