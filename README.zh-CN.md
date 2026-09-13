@@ -29,30 +29,11 @@ pi --profile read-only
 pi --profile default
 ```
 
-用 `/profile create` 创建 profile，写入 `~/.pi/agent/profiles.json`（全局）或 `<项目>/.pi/profiles.json`（项目级，仅限已信任项目）。向导提供随包的 `read-only` 预设——只用 Pi 内建工具，不假设任何 skill、MCP server 或模型——也可以从空定义开始：
+用 `/profile create` 创建 profile，写入 `~/.pi/agent/profiles.json`（全局）或 `<项目>/.pi/profiles.json`（项目级，仅限已信任项目）。向导提供随包的 `read-only` 预设——只用 Pi 内建工具，不假设任何 skill、MCP server 或模型——也可以从空定义开始。
 
-```json
-{
-  "schemaVersion": 1,
-  "profiles": {
-    "read-only": {
-      "label": "Read-only",
-      "description": "Read-only session; no skills or MCP servers assumed — add your own.",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ],
-      "instructions": "Read-only session: inspect and report; never create, edit, rename, or delete files.\nIf a change is needed, describe it in your reply instead of applying it.\nDo not run commands that modify state (installs, formatters, commits, pushes, network writes).\nPrefer an available skill or MCP tool when it fits the request; otherwise use the tools you have.\nGround claims in evidence: cite file:line and separate verified facts from inferences.\nReply in English."
-    }
-  }
-}
-```
+预设只被复制一次：它不被跟踪，包升级不会改动你已经创建的 profile。Profile 只**引用**资源，从不复制资源。[`examples/profiles.example.json`](examples/profiles.example.json) 是覆盖全部字段的完整 catalog，示例中的资源名请替换成你本机已有的名字。
 
-预设只被复制一次：它不被跟踪，包升级不会改动你已经创建的 profile。Profile 只**引用**资源，从不复制资源。[`examples/profiles.json`](examples/profiles.json) 就是同一个预设构成的 catalog；字段参考见 [`schemas/profiles.schema.json`](schemas/profiles.schema.json)。
-
-`schemaVersion` 为 1。Profile 不选择 extension：extensions 在所有 profile 中原生加载，请用 `pi install` 管理。
+`schemaVersion` 为 1，也是唯一接受的值。Profile 不选择 extension：extensions 在所有 profile 中原生加载，请用 `pi install` 管理。
 
 ## Profile 控制的范围
 
@@ -93,7 +74,6 @@ pi --profile default
 ## 文档
 
 - [架构设计](docs/architecture/overview.md) · [ADR](docs/adr/) · [术语表](CONTEXT.md)
-- JSON Schema：[`schemas/profiles.schema.json`](schemas/profiles.schema.json)
 
 ## 许可证
 

@@ -25,8 +25,9 @@
  * - `instructions` states behavior, never a capability name, and stays
  *   short: Pi appends it to the system prompt on every turn.
  *
- * `test/profile-presets.test.ts` enforces every rule above and asserts
- * `examples/profiles.json` is exactly this catalog.
+ * `test/profile-presets.test.ts` enforces every rule above, asserts
+ * `examples/profiles.json` is exactly this catalog, and asserts each preset
+ * appears verbatim in `examples/profiles.example.json`.
  */
 
 import type { ProfileDefinition } from "./profile-catalog.ts";

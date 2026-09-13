@@ -85,7 +85,7 @@ profile 不支持继承。项目同名 profile 是完整替换，不深度合并
 
 `model` 与 `instructions` 可选。未声明时不修改 Pi 当前的模型与 system prompt。
 
-`schemaVersion: 1` 的 catalog 继续可读：`extensions` 字段被警告一次并忽略，下一次写入升级为 version 2。
+`schemaVersion` 只接受 1；catalog 中的未知字段（如 v0.1.0 的 `extensions`）静默忽略、不进入解析结果，写入时被丢弃。
 
 ## 资源选择
 

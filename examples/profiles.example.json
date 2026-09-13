@@ -1,0 +1,74 @@
+{
+  "schemaVersion": 1,
+  "profiles": {
+    "read-only": {
+      "label": "Read-only",
+      "description": "Read-only session; no skills or MCP servers assumed — add your own.",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ],
+      "instructions": "Read-only session: inspect and report; never create, edit, rename, or delete files.\nIf a change is needed, describe it in your reply instead of applying it.\nDo not run commands that modify state (installs, formatters, commits, pushes, network writes).\nPrefer an available skill or MCP tool when it fits the request; otherwise use the tools you have.\nGround claims in evidence: cite file:line and separate verified facts from inferences.\nReply in English."
+    },
+    "review": {
+      "label": "Code review",
+      "description": "Review a diff or a branch: read the change, report findings, modify nothing.",
+      "skills": [
+        "code-review",
+        "git-*"
+      ],
+      "mcp": [
+        "github"
+      ],
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls",
+        "bash"
+      ],
+      "model": {
+        "provider": "anthropic",
+        "id": "claude-sonnet-4-5",
+        "thinkingLevel": "high"
+      },
+      "instructions": "Review only: read the change under review, then report findings with file:line evidence.\nNever edit tracked files, commit, or push; describe the required fix instead.\nSeparate verified behavior from suspected issues."
+    },
+    "plan": {
+      "label": "Plan",
+      "description": "Research a change and write the plan; no edits, no implementation.",
+      "skills": [],
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls",
+        "bash"
+      ],
+      "instructions": "Planning session: research the code first, then write the plan in your reply.\nDo not create, edit, rename, or delete files."
+    },
+    "implement": {
+      "label": "Implement",
+      "description": "Full tool access for implementing a change end to end.",
+      "skills": [
+        "git-commit",
+        "test-*"
+      ],
+      "mcp": [
+        "github"
+      ],
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls",
+        "bash",
+        "edit",
+        "write"
+      ],
+      "instructions": "Implement the requested change: read before writing, keep the diff minimal.\nRun the tests that cover your change and report the exact commands."
+    }
+  }
+}

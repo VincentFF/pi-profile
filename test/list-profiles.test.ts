@@ -65,19 +65,15 @@ describe("listProfiles", () => {
 		expect(trusted.some((entry) => entry.name === "local")).toBe(true);
 	});
 
-	it("reads a catalog written by v0.1.0 (schemaVersion 2) and drops a legacy extensions field", async () => {
+	it("refuses a catalog written by v0.1.0 (schemaVersion 2)", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "profiles.json"),
-			JSON.stringify({ schemaVersion: 2, profiles: { review: { extensions: ["x"] } } }),
+			JSON.stringify({ schemaVersion: 2, profiles: { review: {} } }),
 		);
 
-		const entries = await listProfiles({
-			realAgentDir: fixture.agentDir,
-			cwd: fixture.cwd,
-			projectTrusted: false,
-		});
-
-		expect(entries.map((entry) => entry.name)).toEqual(["default", "review"]);
+		await expect(
+			listProfiles({ realAgentDir: fixture.agentDir, cwd: fixture.cwd, projectTrusted: false }),
+		).rejects.toThrow(/unsupported schemaVersion/);
 	});
 });
 

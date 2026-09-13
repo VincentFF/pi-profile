@@ -29,30 +29,11 @@ pi --profile read-only
 pi --profile default
 ```
 
-Create profiles with `/profile create`, which writes `~/.pi/agent/profiles.json` (global) or `<project>/.pi/profiles.json` (project, trusted projects only). The wizard offers the shipped `read-only` preset — Pi's built-in tools only, no skills, MCP servers, or model assumed — or a blank definition:
+Create profiles with `/profile create`, which writes `~/.pi/agent/profiles.json` (global) or `<project>/.pi/profiles.json` (project, trusted projects only). The wizard offers the shipped `read-only` preset — Pi's built-in tools only, no skills, MCP servers, or model assumed — or a blank definition.
 
-```json
-{
-  "schemaVersion": 1,
-  "profiles": {
-    "read-only": {
-      "label": "Read-only",
-      "description": "Read-only session; no skills or MCP servers assumed — add your own.",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ],
-      "instructions": "Read-only session: inspect and report; never create, edit, rename, or delete files.\nIf a change is needed, describe it in your reply instead of applying it.\nDo not run commands that modify state (installs, formatters, commits, pushes, network writes).\nPrefer an available skill or MCP tool when it fits the request; otherwise use the tools you have.\nGround claims in evidence: cite file:line and separate verified facts from inferences.\nReply in English."
-    }
-  }
-}
-```
+A preset is a one-time copy into your catalog: it is not tracked, so a package update never changes a profile you already created. Profiles **reference** resources by name — they never copy them. [`examples/profiles.example.json`](examples/profiles.example.json) is a complete catalog with several profiles covering every field; replace its resource names with ones you own.
 
-A preset is a one-time copy into your catalog: it is not tracked, so a package update never changes a profile you already created. Profiles **reference** resources by name — they never copy them. [`examples/profiles.json`](examples/profiles.json) is that same preset as a catalog; the field reference is [`schemas/profiles.schema.json`](schemas/profiles.schema.json).
-
-`schemaVersion` is 1. A profile cannot select extensions: they load natively in every profile, so manage them with `pi install`.
+`schemaVersion` is 1 and is the only accepted value. A profile cannot select extensions: they load natively in every profile, so manage them with `pi install`.
 
 ## What a profile controls
 
@@ -93,7 +74,6 @@ All commands work in non-interactive modes (`--mode rpc|print|json`); CRUD wizar
 ## Docs
 
 - [Architecture](docs/architecture/overview.md) · [ADRs](docs/adr/) · [Glossary](CONTEXT.md) (Chinese)
-- JSON Schema: [`schemas/profiles.schema.json`](schemas/profiles.schema.json)
 
 ## License
 

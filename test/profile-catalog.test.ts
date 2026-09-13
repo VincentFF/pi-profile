@@ -95,6 +95,12 @@ describe("ProfileCatalog (global catalog)", () => {
 		await expect(ProfileCatalog.load(fixture.agentDir)).rejects.toThrow(/unsupported schemaVersion/);
 	});
 
+	it("fails loudly on the version 2 shape written by v0.1.0", async () => {
+		await writeGlobal({ schemaVersion: 2, profiles: { review: { skills: ["git-commit"] } } });
+
+		await expect(ProfileCatalog.load(fixture.agentDir)).rejects.toThrow(/unsupported schemaVersion 2/);
+	});
+
 	it("fails loudly on a malformed profile field", async () => {
 		await writeGlobal({ schemaVersion: 1, profiles: { review: { skills: "git-commit" } } });
 
@@ -102,19 +108,8 @@ describe("ProfileCatalog (global catalog)", () => {
 	});
 });
 
-describe("ProfileCatalog legacy shape compatibility", () => {
-	it("reads a version 2 catalog (written by v0.1.0) as the current shape", async () => {
-		await writeGlobal({
-			schemaVersion: 2,
-			profiles: { review: { skills: ["git-commit"], mcp: ["atlassian"] } },
-		});
-
-		const catalog = await ProfileCatalog.load(fixture.agentDir);
-
-		expect(catalog.resolve("review")?.definition).toEqual({ skills: ["git-commit"], mcp: ["atlassian"] });
-	});
-
-	it("drops a profile's legacy extensions field silently", async () => {
+describe("ProfileCatalog unknown-field tolerance", () => {
+	it("drops a profile's extensions field silently", async () => {
 		await writeGlobal({
 			schemaVersion: 1,
 			profiles: { review: { skills: ["git-commit"], extensions: ["pi-plan-build"] } },

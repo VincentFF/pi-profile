@@ -10,8 +10,8 @@
   "additionalProperties": false,
   "properties": {
     "schemaVersion": {
-      "description": "1 is current. 2 is the number v0.1.0 wrote for the same field shape and still reads; saves always write 1.",
-      "enum": [1, 2]
+      "description": "Catalog format version. Only 1 is accepted.",
+      "const": 1
     },
     "profiles": {
       "type": "object",
@@ -43,13 +43,6 @@
             "type": "string"
           },
           "description": "Skill names or globs. Controls what the model sees in the system prompt's skills section; every loaded skill stays callable by the user through /skill:name."
-        },
-        "extensions": {
-          "type": "array",
-          "items": {
-            "type": "string"
-          },
-          "description": "Ignored. Extensions always load natively (ADR-0007) and are managed with pi install; the field is accepted so existing catalogs keep validating."
         },
         "mcp": {
           "type": "array",

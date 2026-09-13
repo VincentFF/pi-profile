@@ -1,12 +1,14 @@
 /**
- * The shipped JSON schema validates the shipped example and agrees with the
- * runtime parser's loadable surface.
+ * The shipped JSON schema validates the shipped examples and agrees with the
+ * runtime parser on what a catalog may declare.
  */
 
 import Ajv2020Module from "ajv/dist/2020.js";
 import { readFile } from "node:fs/promises";
 import path from "node:path";
 import { describe, expect, it } from "vitest";
+
+import { parseCatalogDocument } from "../src/profile-catalog.ts";
 
 const Ajv2020 = Ajv2020Module.default;
 
@@ -21,9 +23,20 @@ async function loadSchema(name: string): Promise<Record<string, unknown>> {
 describe("profiles.schema.json", () => {
 	it("accepts the published example", async () => {
 		const validate = newAjv().compile(await loadSchema("profiles.schema.json"));
-		const example = JSON.parse(await readFile(path.resolve("examples/profiles.json"), "utf8"));
+		const example = JSON.parse(await readFile(path.resolve("examples/profiles.example.json"), "utf8"));
 
 		expect(validate(example), JSON.stringify(validate.errors)).toBe(true);
+	});
+
+	it("parses the published example with the runtime parser", async () => {
+		const example = JSON.parse(await readFile(path.resolve("examples/profiles.example.json"), "utf8")) as {
+			profiles: Record<string, unknown>;
+		};
+
+		const parsed = parseCatalogDocument(example, "examples/profiles.example.json");
+
+		expect([...parsed.keys()].sort()).toEqual(Object.keys(example.profiles).sort());
+		expect(parsed.size).toBeGreaterThan(1);
 	});
 
 	it("rejects a profile redefining the built-in default", async () => {
@@ -32,7 +45,7 @@ describe("profiles.schema.json", () => {
 		expect(validate({ schemaVersion: 1, profiles: { default: {} } })).toBe(false);
 	});
 
-	it("accepts a catalog with a legacy extensions field", async () => {
+	it("rejects a catalog with a legacy extensions field", async () => {
 		const validate = newAjv().compile(await loadSchema("profiles.schema.json"));
 
 		expect(
@@ -41,13 +54,13 @@ describe("profiles.schema.json", () => {
 				profiles: { review: { skills: ["git-commit"], extensions: ["pi-plan-build"] } },
 			}),
 			JSON.stringify(validate.errors),
-		).toBe(true);
+		).toBe(false);
 	});
 
-	it("accepts a version 2 catalog written by v0.1.0", async () => {
+	it("rejects a version 2 catalog written by v0.1.0", async () => {
 		const validate = newAjv().compile(await loadSchema("profiles.schema.json"));
 
-		expect(validate({ schemaVersion: 2, profiles: { review: { skills: ["git-commit"] } } })).toBe(true);
+		expect(validate({ schemaVersion: 2, profiles: { review: { skills: ["git-commit"] } } })).toBe(false);
 	});
 
 	it("rejects an unknown profile field (no inheritance)", async () => {
