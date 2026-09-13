@@ -42,7 +42,7 @@ pi --profile default
 | `instructions` | 每个 turn 追加到 system prompt 末尾 |
 | `model` | 会话启动的模型预设；显式 `--model`/`--thinking` 或 session 历史中记录的模型优先 |
 | `skills` | 模型在 prompt skills 列表中看到的内容；所有已安装 skill 仍保持加载，用户可用 `/skill:name` 手动调用 |
-| `mcp` | 发布给 `pi-mcp-adapter` 的运行时 server allowlist；连接参数仍由 adapter 自己管理 |
+| `mcp` | 本次会话暴露哪些 MCP server：白名单写入 adapter 自己的配置（`~/.pi/agent/mcp.json`），其余 server 一律标为 disabled。你原本放在该文件里的 server 会迁移到 `mcp.user.json`；连接参数只在你自己的配置里，从不进入 profile |
 | `tools` | 活动工具集：声明的名字/glob 成为活动集合；之后才注册的工具（MCP、扩展）在出现时补上 |
 
 未声明的字段保持 Pi 原生行为，`default` 什么都不声明。
@@ -55,7 +55,7 @@ pi --profile default
 | --- | --- |
 | `/profile` | 交互式选择 profile |
 | `/profile list` / `/profile status` | 列出 profile / 查看活动 profile 详情 |
-| `/profile use <name>` | 即时切换——同一 session，无 reload |
+| `/profile use <name>` | 原位切换——同一 session；当 MCP 选择发生变化时会自动 reload 以重新应用 |
 | `/profile create\|edit\|delete\|duplicate` | 向导式 profile 增删改（仅 TUI） |
 | `/profile customize` / `/profile reset` | 仅本次会话收窄活动 profile |
 | `/mcp enable\|disable <server>` | 在活动 profile 中开关 MCP server |
@@ -69,7 +69,7 @@ pi --profile default
 - **引用而非复制**——profile 指向你自己拥有和维护的资源。
 - **Pi 原生**——配置目录就是 Pi 自己的目录，session、扩展配置、packages、context 文件和信任行为与原生 Pi 完全一致。
 - **失败安全**——未信任的项目目录从不读取；激活失败时不应用任何设置并报出原因。
-- **无 reload**——切换在原位重新应用运行时状态；下一个 turn 的 prompt 直接带上新选择。
+- **无需手动 reload**——切换在原位重新应用运行时状态，下一个 turn 的 prompt 直接带上新选择；只有 MCP 选择变化时才会自动重建运行时（同一 session）
 
 ## 文档
 

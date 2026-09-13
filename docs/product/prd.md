@@ -125,7 +125,7 @@ MCP 集成锁定为 `pi-mcp-adapter`。它是可选依赖：未安装 adapter �
 }
 ```
 
-profile 只引用 adapter 已配置的 server 名称；命令、地址、OAuth、token 和 timeout 保留在 adapter 管理配置中。`/mcp enable|disable` 修改当前 profile 的 `mcp` 数组并保存到所属 catalog，随后重新发布运行时 allowlist；adapter 自己的 `mcp.json` 永不被 pi-profile-switch 写入。
+profile 只引用 adapter 已配置的 server 名称；命令、地址、OAuth、token 和 timeout 保留在 adapter 自己的配置里，profile 从不保存它们。adapter 尚未实现 `pi-profile:mcp-allowlist:v1`，因此运行时过滤由**生成式 disable overlay** 完成（ADR-0008）：本包按 profile 的 `mcp` 白名单生成 `<agentDir>/mcp.json`（adapter 的 Pi-global 槽位），未授权 server 标 `disabled`（不连接、不注册工具、网关调用被拒）；用户原本放在该文件的 server 由 sidecar `<agentDir>/mcp.user.json` 承载。`/mcp enable|disable` 修改当前 profile 的 `mcp` 数组并保存到所属 catalog，随后重写 overlay 并（内容变化时）reload。
 
 ### Tools
 

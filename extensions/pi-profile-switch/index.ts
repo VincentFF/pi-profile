@@ -6,6 +6,7 @@ import {
 	type ExtensionContext,
 } from "@earendil-works/pi-coding-agent";
 
+import { adapterPresent } from "../../src/adapter-presence.ts";
 import { discoverAdapterServerNames } from "../../src/mcp-config.ts";
 import { probeAdapterPresence } from "../../src/mcp-coordination.ts";
 import { readSessionChoices } from "../../src/model-selection.ts";
@@ -30,6 +31,11 @@ import {
 	registerProfileFlag,
 	resolveStartupProfile,
 } from "../../src/startup-selection.ts";
+import {
+	readFlagFromArgv,
+	syncMcpOverlayForSelection,
+	syncStartupMcpOverlay,
+} from "../../src/startup-mcp-scope.ts";
 import { retryPendingTools, type ApplySurface } from "../../src/switching/apply-profile.ts";
 import {
 	activateProfile,
@@ -115,7 +121,27 @@ const PROFILE_USAGE = [
 
 export default function piProfileExtension(pi: ExtensionAPI): void {
 	registerProfileFlag(pi);
-	const explicit = detectExplicitDeclarations(process.argv.slice(2));
+	const argv = process.argv.slice(2);
+	const explicit = detectExplicitDeclarations(argv);
+	// pi-mcp-adapter reads its config before any session event fires (and, for
+	// eager servers, at its own load time), so the startup profile's overlay
+	// is generated here, synchronously. Pi applies CLI flag values only after
+	// extension loading, hence argv.
+	const loadAgentDir = getAgentDir();
+	const adapterInstalled = adapterPresent({
+		agentDir: loadAgentDir,
+		argv,
+		probeAnswered: probeAdapterPresence(pi.events),
+	});
+	if (adapterInstalled) {
+		const requestedConfigPath = readFlagFromArgv(argv, "mcp-config");
+		syncStartupMcpOverlay({
+			agentDir: loadAgentDir,
+			cwd: process.cwd(),
+			argv,
+			...(requestedConfigPath === undefined ? {} : { overridePath: requestedConfigPath }),
+		});
+	}
 	let current: Activation | undefined;
 	let filterWarningShown = false;
 	/** The last badge written to the footer, so a refresh only talks to Pi
@@ -239,6 +265,75 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 		});
 	}
 
+	/** `session_start` re-check. The load-time pass cannot know an interactive
+	 *  trust answer, and the adapter has already read its config by now — so a
+	 *  difference is written for the next reload and reported instead. */
+	function reportMcpOverlayState(
+		ctx: ExtensionContext,
+		profileName: string,
+		selection: ResolvedSelection,
+		input: { agentDir: string; cwd: string; projectTrusted: boolean },
+	): void {
+		const configOverride = readFlagFromArgv(argv, "mcp-config");
+		const sync = syncStartupMcpOverlay({
+			agentDir: input.agentDir,
+			cwd: input.cwd,
+			projectTrusted: input.projectTrusted,
+			profileName,
+			argv,
+			...(configOverride === undefined ? {} : { overridePath: configOverride }),
+		});
+		if (sync.error !== undefined) {
+			notify(ctx, `pi-profile-switch: MCP overlay unavailable — ${sync.error}`, "warning");
+			return;
+		}
+		if (!sync.managed) {
+			if (selection.mcp !== undefined) {
+				notify(
+					ctx,
+					`pi-profile-switch: --mcp-config points at another file — profile "${profileName}" cannot filter MCP servers`,
+					"warning",
+				);
+			}
+			return;
+		}
+		if (!sync.changed) return;
+		notify(ctx, `pi-profile-switch: MCP config updated for profile "${profileName}" — run /reload to apply`, "warning");
+	}
+
+	/** Repoints the adapter at the overlay for a just-activated selection and
+	 *  rebuilds the runtime when the MCP surface actually moved. Must be the
+	 *  caller's LAST use of `ctx`: `reload()` invalidates the old context. */
+	async function reloadForMcpOverlay(ctx: ExtensionCommandContext, selection: ResolvedSelection): Promise<void> {
+		if (!adapterInstalled) return;
+		const configOverride = readFlagFromArgv(argv, "mcp-config");
+		const sync = syncMcpOverlayForSelection({
+			agentDir: getAgentDir(),
+			cwd: ctx.cwd,
+			projectTrusted: ctx.isProjectTrusted(),
+			allowed: selection.mcp === undefined ? "all" : selection.mcp,
+			...(configOverride === undefined ? {} : { overridePath: configOverride }),
+		});
+		if (sync.error !== undefined) {
+			notify(ctx, `pi-profile-switch: MCP overlay not updated — ${sync.error}`, "warning");
+			return;
+		}
+		if (!sync.managed) {
+			if (selection.mcp !== undefined) {
+				notify(
+					ctx,
+					`pi-profile-switch: --mcp-config points at another file — profile "${selection.name}" cannot filter MCP servers`,
+					"warning",
+				);
+			}
+			return;
+		}
+		if (!sync.changed) return;
+		notify(ctx, `profile "${selection.name}": MCP servers updated — reloading runtime`, "info");
+		await ctx.waitForIdle();
+		await ctx.reload();
+	}
+
 	/** Bare `/profile`: the interactive picker, with a list fallback for
 	 *  modes without dialogs. */
 	async function runPicker(ctx: ExtensionCommandContext, entries: ProfileListEntry[]): Promise<void> {
@@ -258,6 +353,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 		if (chosen === undefined || chosen.name === current?.selection.name) return;
 		const result = await activate(ctx, chosen.name, { force: true, overlay: null, persist: true });
 		notify(ctx, `profile active: ${result.selection.name}`, "info");
+		await reloadForMcpOverlay(ctx, result.selection);
 	}
 
 	/** `/profile create|duplicate|edit|delete`: TUI-only catalog CRUD. */
@@ -319,8 +415,9 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 			if (wizard === undefined) return;
 			await editProfile(scopeInput, wizard.scope, wizard.name, wizard.definition);
 			if (current !== undefined && name === current.selection.name) {
-				await activate(ctx, name, { persist: true });
+				const reactivated = await activate(ctx, name, { persist: true });
 				notify(ctx, `saved and reactivated profile "${name}"`, "info");
+				await reloadForMcpOverlay(ctx, reactivated.selection);
 			} else {
 				notify(ctx, `saved profile "${name}" (inactive — runtime untouched)`, "info");
 			}
@@ -358,6 +455,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 		if (isActive) {
 			const result = await activate(ctx, replacement ?? name, { force: replacement !== undefined, persist: true });
 			notify(ctx, `deleted "${name}" (${scope}); profile active: ${result.selection.name}`, "info");
+			await reloadForMcpOverlay(ctx, result.selection);
 		} else {
 			notify(ctx, `deleted profile "${name}" (${scope})`, "info");
 		}
@@ -384,8 +482,15 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 		try {
 			// Startup activation never persists (a `--profile` selection is for
 			// this run only) and never applies a stored overlay.
-			await activate(ctx, startup.name, { persist: false, overlay: null });
+			const activated = await activate(ctx, startup.name, { persist: false, overlay: null });
 			reportWarnings(ctx, startup.warnings);
+			if (adapterInstalled) {
+				reportMcpOverlayState(ctx, startup.name, activated.selection, {
+					agentDir,
+					cwd: ctx.cwd,
+					projectTrusted,
+				});
+			}
 		} catch (error) {
 			notify(ctx, error instanceof Error ? error.message : String(error), "error");
 			reportWarnings(ctx, startup.warnings);
@@ -498,6 +603,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					case "use": {
 						const result = await activate(ctx, rest[0] as string, { force: true, overlay: null, persist: true });
 						notify(ctx, `profile active: ${result.selection.name}`, "info");
+						await reloadForMcpOverlay(ctx, result.selection);
 						return;
 					}
 					case "customize": {
@@ -578,12 +684,13 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				// catalog; the stored overlay is preserved.
 				const overlay = (await new RuntimeStateStore(stateDirFor(profile.source, { agentDir, cwd: ctx.cwd })).read())
 					.overlay;
-				await activate(ctx, profile.name, { overlay: overlay ?? null, persist: true });
+				const reactivated = await activate(ctx, profile.name, { overlay: overlay ?? null, persist: true });
 				notify(
 					ctx,
 					`${action}d MCP server "${server}" in profile "${profile.name}" (mcp: [${result.mcp.join(", ")}])`,
 					"info",
 				);
+				await reloadForMcpOverlay(ctx, reactivated.selection);
 			} catch (error) {
 				notify(ctx, error instanceof Error ? error.message : String(error), "error");
 			}

@@ -1,6 +1,6 @@
 # MCP profile 过滤（生成式 overlay） spec
 
-Status: ready-for-agent
+Status: done
 
 ## Problem Statement
 
@@ -21,7 +21,7 @@ profile 的 `mcp` 白名单目前不产生任何运行时效果：
 
 - overlay 只包含 `{ "<server>": { "disabled": true } }` 这样的禁用条目，**不复制连接参数、不复制凭据**——这正是 adapter 自己 `/mcp disable` 的惯用法（其源码注释：*"Persist only the disabled field… this writer never copies a server definition or its credentials into the file."*）。
 - 被禁 server 由 adapter 彻底禁用：不连接、不注册直连/namespace 工具，且网关工具（`mcp`/`mcpScript`）调用该 server 会被拒绝（`MCP server "X" is disabled`）。
-- 读取路径通过**代码内置的 `mcp-config` flag 默认值**注入，用户无需配置；用户显式传 `--mcp-config` 时仍以用户为准。
+- 生成文件就是 adapter 默认读取的 Pi-global 槽位 `<agentDir>/mcp.json`（不需要任何启动参数）；用户自己的 Pi-global server 由 sidecar `<agentDir>/mcp.user.json` 承载，首次运行时从手写槽位采用。用户显式传 `--mcp-config <自己的文件>` 时以用户为准，本包不写任何文件并提示。
 - 未安装 `pi-mcp-adapter` 时整段逻辑不执行：不注册 flag、不写文件、不报错、不阻塞启动。
 
 语义（三种声明形态）：
@@ -72,7 +72,7 @@ profile 的 `mcp` 白名单目前不产生任何运行时效果：
   - 其他来源中的 server：不在允许集合内则写 `{ "<name>": { "disabled": true } }`（不复制定义）。
   - 槽位文件中的 `settings` / `imports` / `claudePlugins` 等非 `mcpServers` 键原样透传（因为该槽位被 overlay 文件替换）。
 - **接线（既有 extension 入口）**：
-  - 扩展加载阶段（同步，必须先于 adapter 的 `session_start` 读配置）：存在性门禁 → 注册 flag 默认值 → 生成并写 overlay。
+  - 扩展加载阶段（同步，必须先于 adapter 的 `session_start` 读配置）：存在性门禁 → 采用手写槽位（如有）→ 生成并写 overlay。
   - `session_start`：用 `ctx.isProjectTrusted()` 复核；与加载阶段结果不一致时重写 overlay 并提示一次 `/reload`（无法在事件上下文里 reload）。
   - 切换路径（`/profile use`、picker、`/mcp enable|disable`、CRUD 重激活）：重写 overlay → `ctx.waitForIdle()` → `ctx.reload()`（必须为最后一步，`await` 之后不得再使用旧 `ctx`/`pi`）。
 - **activation 校验与 `pi.events` 发布保持不变**：`mcp` 引用的合法性与 `pi-profile:mcp-allowlist:v1` 事件保留（作为上游实现后的兼容路径）。
@@ -82,12 +82,12 @@ profile 的 `mcp` 白名单目前不产生任何运行时效果：
 - **disable-only 条目合法**：adapter 的条目校验只要求"是一个对象"。
 - **合并是逐字段的**：`merged[name] = { ...baseEntry, ...definition }`，所以高优先级来源只写 `disabled` 即可禁用低优先级来源里的完整定义；项目来源后合并也不会清掉该字段。
 - **adapter 读取路径可被 flag 替换**：`--mcp-config` 替换的是 "Pi global override" 这一个槽位（`getPiGlobalConfigPath`），因此 overlay 文件**必须**承担该槽位原有的 server 定义。
-- **flag 默认值可由本包注册**：Pi 的 flag 值是所有扩展共享的一张大表，`getFlag` 只要求调用方注册过该名字；注册默认值即可让 adapter 读到。CLI 值在扩展加载之后应用且**无条件覆盖** string flag，因此用户显式传值优先；reload 会保留 flag 值。
+- **flag 注入不可行（实测）**：Pi 的 `detectExtensionConflicts` 把「两个扩展注册同名 flag」判为致命冲突（后加载的扩展整体加载失败，报 `Flag "--mcp-config" conflicts with …`），因此本包不能替 adapter 注册 `mcp-config`。改为写 adapter 默认读取的槽位，用户显式传的 `--mcp-config` 仍然优先（此时本包关闭管理）。
 - **没有文件监听**：adapter 只在扩展加载时（eager/keep-alive 场景）与 `session_start` 读取配置，所以必须"先写文件、后 reload"；加载阶段写入是唯一能赶在 adapter session 初始化之前的时机。
 - **加载阶段读不到 `--profile` 的 flag 值**（CLI 值在加载后才应用）：加载阶段改为解析 `process.argv`；`session_start` 起使用正式的 `readProfileFlag`。
 - **信任镜像**（加载阶段）：`hasTrustRequiringProjectResources(cwd)` 为假 → 视为信任；否则 `ProjectTrustStore.get(cwd)`；再否则 Pi settings 的 `defaultProjectTrust`（`always`/`never`/`ask`，`ask` 在加载阶段按"未信任"处理），与 Pi 的 `resolveProjectTrusted` 顺序一致（不含交互询问与扩展投票）。
 - **存在性门禁**（任一命中即视为已安装）：`<agentDir>/npm/node_modules/pi-mcp-adapter/package.json`、`process.argv` 的 `-e <path>` 含 `pi-mcp-adapter`、Pi settings `packages` 含 `pi-mcp-adapter`、`pi.events` 的 snapshot 探测有回应。未命中 → 不注册 flag、不写文件。
-- **文件与写入**：`<agentDir>/mcp.profile-overlay.json`；原子写（临时文件 + rename）；仅内容变化时写；权限 `0600`（槽位透传可能含用户字段）。
+- **文件与写入**：生成物 = `<agentDir>/mcp.json`（adapter 的 Pi-global 槽位），带 `piProfileSwitch` 标记；sidecar = `<agentDir>/mcp.user.json`。原子写（临时文件 + rename）、仅内容变化时写、权限 `0600`（透传的用户定义可能含凭据）。
 - **失败处理**：加载阶段任何异常都不得抛出（catch → 静默/一条 warning）；切换阶段的生成失败按普通激活错误报告，且不得留下半成品文件。
 - **无 schema 变更**：不新增 profile 字段，复用现有 `mcp` 数组（含 glob）。
 
@@ -120,6 +120,15 @@ profile 的 `mcp` 白名单目前不产生任何运行时效果：
 - 连接级隔离保证（被禁 server 不会被连接）：`disabled` 已在 adapter 内产生"不连接、不注册、网关拒绝"的效果，但本包不额外保证进程级无接触。
 - 交互式首信任目录的精确一致性（用"纠偏 + 提示 reload"兜底）。
 - 为 MCP 过滤新增配置开关或 profile 字段。
+
+## Comments
+
+2026-09-13 — 实现期修正（`feat` 分支，未发布）：
+
+- 原设计的「代码内置 `--mcp-config` flag 默认值」被实测否定：真实 `pi` 加载第二个注册同名 flag 的扩展直接失败（`Flag "--mcp-config" conflicts with …`，`resource-loader.js` 的 `detectExtensionConflicts` 无条件判定）。改为写 adapter 默认读取的 Pi-global 槽位 `<agentDir>/mcp.json` + sidecar `<agentDir>/mcp.user.json` + 生成标记；用户显式 `--mcp-config` 时关闭管理。
+- 已实现并通过：`src/mcp-overlay.ts`（纯生成，11 例）、`src/mcp-config.ts`（发现范围扩到 `.agents`/`~/.config/mcp`/项目两处，10 例）、`src/mcp-overlay-file.ts`、`src/adapter-presence.ts`（6 例）、`src/startup-mcp-scope.ts`（20 例）、`test/mcp-overlay.integration.test.ts`（4 例：假 adapter 端到端 3 例 + 真 adapter 状态事件 1 例，后者在未安装时自动跳过）。
+- 真机验证（pi-mcp-adapter 2.33.0）：`review`（`mcp: ["alpha"]`）下 adapter 自身状态事件报告 `alpha: failed（已尝试连接）`、`beta: disabled`。
+- 收尾：`npm run check` 干净，`npm test` 25 个文件 276/276 通过；`docs/adr/0008`、架构文档、README（中英）、PRD、acceptance 已同步。仍未自动化的只有 `docs/acceptance.md` 的 11/12 两步人工检查（等价断言已由集成测试覆盖）。
 
 ## Further Notes
 

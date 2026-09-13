@@ -5,6 +5,7 @@
  * fallback); this helper only classifies the outcome.
  */
 
+import { readFileSync } from "node:fs";
 import { readFile } from "node:fs/promises";
 
 export type JsonFileResult =
@@ -17,6 +18,25 @@ export async function readJsonFile(filePath: string): Promise<JsonFileResult> {
 	let raw: string;
 	try {
 		raw = await readFile(filePath, "utf8");
+	} catch (error) {
+		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
+			return { ok: false, reason: "missing" };
+		}
+		throw error;
+	}
+	try {
+		return { ok: true, value: JSON.parse(raw) };
+	} catch {
+		return { ok: false, reason: "invalid" };
+	}
+}
+
+/** Synchronous twin of `readJsonFile`, for callers that must finish before
+ *  an event Pi is about to emit (extension loading). Same classification. */
+export function readJsonFileSync(filePath: string): JsonFileResult {
+	let raw: string;
+	try {
+		raw = readFileSync(filePath, "utf8");
 	} catch (error) {
 		if ((error as NodeJS.ErrnoException).code === "ENOENT") {
 			return { ok: false, reason: "missing" };
