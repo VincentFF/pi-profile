@@ -8,6 +8,8 @@
  */
 
 import { spawn } from "node:child_process";
+import { writeFile } from "node:fs/promises";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 import type { GeneratedRuntime } from "../settings-generator.ts";
@@ -39,6 +41,17 @@ export async function spawnPi(options: SpawnPiOptions): Promise<number> {
 		stdio: "inherit",
 		env: { ...process.env, ...options.generated.env },
 	});
+
+	// Liveness token for the next launch's startup sweep (runtime-cleanup.ts).
+	// Best-effort: the dir was just written by generateRuntimeDir, so this can
+	// only fail under disk/permission trouble that would have surfaced earlier.
+	if (child.pid !== undefined) {
+		try {
+			await writeFile(path.join(options.generated.runtimeDir, "pid"), String(child.pid));
+		} catch (error) {
+			console.error(`pi-profile: warning: could not write pid file: ${(error as Error).message}`);
+		}
+	}
 
 	const onSigint = () => child.kill("SIGINT");
 	const onSigterm = () => child.kill("SIGTERM");

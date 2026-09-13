@@ -15,6 +15,7 @@ import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
 import { parseLauncherArgs } from "../src/launcher/args.ts";
 import { UnknownProfileError, resolveInitialProfile } from "../src/launcher/initial-profile.ts";
+import { sweepStaleRuntimeDirs } from "../src/launcher/runtime-cleanup.ts";
 import { spawnPi } from "../src/launcher/spawn.ts";
 import { McpConfigError } from "../src/mcp-config.ts";
 import { MissingMcpAdapterError } from "../src/mcp-coordination.ts";
@@ -36,6 +37,10 @@ try {
 	for (const warning of warnings) {
 		console.error(`pi-profile: warning: ${warning}`);
 	}
+	// Stale per-launch runtime dirs (dead pid, or no pid past the grace
+	// window) are swept before this launch materializes its own. Best-effort:
+	// sweep errors never block the launch.
+	await sweepStaleRuntimeDirs(agentDir);
 	const generated = await generateRuntimeDir(plan, { agentDir, discovery, projectSettings });
 	process.exitCode = await spawnPi({
 		generated,

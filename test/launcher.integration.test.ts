@@ -1,5 +1,6 @@
-import { execFile } from "node:child_process";
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { execFile, spawn } from "node:child_process";
+import { existsSync } from "node:fs";
+import { mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -114,6 +115,93 @@ describe("launcher integration: real pi subprocess, default profile", () => {
 			});
 			expect(failure.code).toBe(2);
 			expect(failure.stderr).toContain("unknown profile: review");
+		},
+	);
+});
+
+describe("launcher integration: runtime dir cleanup", () => {
+	function runtimeRoot(): string {
+		return path.join(fixture.agentDir, "pi-profile", "runtime");
+	}
+
+	async function launchDirNames(): Promise<string[]> {
+		try {
+			return (await readdir(runtimeRoot())).filter((entry) => entry.startsWith("launch-")).sort();
+		} catch {
+			return [];
+		}
+	}
+
+	/** Spawns a child that exits immediately and returns its (now dead) pid. */
+	async function deadPid(): Promise<number> {
+		const child = spawn(process.execPath, ["-e", ""]);
+		await new Promise((resolve) => child.on("exit", resolve));
+		if (child.pid === undefined) throw new Error("child pid missing");
+		return child.pid;
+	}
+
+	it(
+		"sweeps a pre-seeded stale launch dir (dead pid) at startup",
+		{ timeout: 45_000 },
+		async () => {
+			const stale = path.join(runtimeRoot(), "launch-staleTest");
+			await mkdir(stale, { recursive: true });
+			await writeFile(path.join(stale, "pid"), String(await deadPid()));
+
+			const rpc = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(),
+			});
+			try {
+				await rpc.commandNames();
+				expect(existsSync(stale)).toBe(false);
+				// Exactly one launch dir remains: this session's, with its pid file.
+				const names = await launchDirNames();
+				expect(names).toHaveLength(1);
+				expect(existsSync(path.join(runtimeRoot(), names[0], "pid"))).toBe(true);
+			} finally {
+				await rpc.close();
+				await rpc.waitForExit();
+			}
+		},
+	);
+
+	it(
+		"converges across launches: the previous session's dir is swept by the next launch",
+		{ timeout: 90_000 },
+		async () => {
+			const first = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(),
+			});
+			await first.commandNames();
+			const afterFirst = await launchDirNames();
+			expect(afterFirst).toHaveLength(1);
+			const firstDir = path.join(runtimeRoot(), afterFirst[0]);
+			// The running session's pid file points at its live pi child.
+			const firstPid = Number.parseInt(await readFile(path.join(firstDir, "pid"), "utf8"), 10);
+			expect(() => process.kill(firstPid, 0)).not.toThrow();
+
+			// No exit-time deletion: the dir survives the first session's exit...
+			await first.close();
+			await first.waitForExit();
+			expect(existsSync(firstDir)).toBe(true);
+
+			// ...and is swept by the second launch (its pid is dead by then).
+			const second = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
+				cwd: fixture.cwd,
+				env: launcherEnv(),
+			});
+			try {
+				await second.commandNames();
+				expect(existsSync(firstDir)).toBe(false);
+				const afterSecond = await launchDirNames();
+				expect(afterSecond).toHaveLength(1);
+				expect(afterSecond[0]).not.toBe(afterFirst[0]);
+			} finally {
+				await second.close();
+				await second.waitForExit();
+			}
 		},
 	);
 });
