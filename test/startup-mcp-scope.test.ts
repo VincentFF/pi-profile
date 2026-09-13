@@ -80,6 +80,21 @@ describe("resolveStartupProfileNameSync", () => {
 		expect(resolveStartupProfileNameSync({ ...base, projectTrusted: false, argv: [] })).toBe("review");
 	});
 
+	it("prefers the run's continuation over the flag (a reload keeps the selection)", async () => {
+		await writeCatalog({ review: {}, implement: {} });
+		await writeState("review");
+
+		expect(
+			resolveStartupProfileNameSync({
+				agentDir: fixture.agentDir,
+				cwd: fixture.cwd,
+				projectTrusted: true,
+				argv: ["--profile", "review"],
+				continuation: "implement",
+			}),
+		).toBe("implement");
+	});
+
 	it("falls back to the built-in default", () => {
 		expect(
 			resolveStartupProfileNameSync({ agentDir: fixture.agentDir, cwd: fixture.cwd, projectTrusted: true, argv: [] }),

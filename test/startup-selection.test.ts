@@ -2,7 +2,13 @@ import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { detectExplicitDeclarations, resolveStartupProfile, UnknownProfileError } from "../src/startup-selection.ts";
+import {
+	appliedProfile,
+	detectExplicitDeclarations,
+	recordAppliedProfile,
+	resolveStartupProfile,
+	UnknownProfileError,
+} from "../src/startup-selection.ts";
 import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
@@ -51,6 +57,23 @@ describe("detectExplicitDeclarations", () => {
 			thinking: false,
 			tools: false,
 		});
+	});
+});
+
+describe("run selection", () => {
+	afterEach(() => {
+		recordAppliedProfile(undefined);
+	});
+
+	it("records and clears the profile this process applied", () => {
+		recordAppliedProfile(undefined);
+		expect(appliedProfile()).toBeUndefined();
+
+		recordAppliedProfile("review");
+		expect(appliedProfile()).toBe("review");
+
+		recordAppliedProfile(undefined);
+		expect(appliedProfile()).toBeUndefined();
 	});
 });
 
@@ -140,6 +163,38 @@ describe("resolveStartupProfile", () => {
 
 		expect(result.name).toBe("default");
 		expect(result.warnings.join("\n")).toMatch(/saved profile "removed" no longer exists/);
+	});
+
+	it("continues the run's selection over the startup flag on a reload", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "profiles.json"),
+			JSON.stringify({ schemaVersion: 1, profiles: { review: {}, plain: {} } }),
+		);
+
+		const result = await resolveStartupProfile({
+			agentDir: fixture.agentDir,
+			cwd: fixture.cwd,
+			projectTrusted: false,
+			requested: "review",
+			continuation: "plain",
+		});
+
+		expect(result.name).toBe("plain");
+	});
+
+	it("falls back to the saved selection when the continuation is gone", async () => {
+		await writeGlobalCatalog();
+		await writeState(fixture.agentDir, { activeProfile: "review" });
+
+		const result = await resolveStartupProfile({
+			agentDir: fixture.agentDir,
+			cwd: fixture.cwd,
+			projectTrusted: false,
+			continuation: "removed",
+		});
+
+		expect(result.name).toBe("review");
+		expect(result.warnings.join("\n")).toMatch(/profile "removed" no longer exists/);
 	});
 
 	it("warns once about a leftover resources.json in the agent dir", async () => {

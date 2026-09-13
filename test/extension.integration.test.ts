@@ -116,6 +116,18 @@ async function waitForProbe(
 	}
 }
 
+/** Waits until a probe has recorded `count` `session_start` events; a runtime
+ *  reload fires one, so this is the deterministic "reload finished" signal. */
+async function waitForSessionStarts(count: number, timeoutMs = 20_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		const starts = (await readProbe()).filter((entry) => entry.event === "session_start").length;
+		if (starts >= count) return;
+		if (Date.now() > deadline) throw new Error(`timeout waiting for ${count} session starts`);
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+}
+
 /** The RPC child must not inherit a launcher's session-dir override from the
  *  developer's environment; the test simulates a native shell. */
 function childEnv(): NodeJS.ProcessEnv {
@@ -167,6 +179,51 @@ async function writeState(activeProfile: string): Promise<void> {
 }
 
 describe("saved-selection scope", () => {
+	it(
+		"keeps the in-session profile across the MCP reload it triggers",
+		{ timeout: 90_000 },
+		async () => {
+			// `implement` disables the one discovered server, so the switch
+			// changes the overlay and rebuilds the runtime. The settings entry
+			// makes the extension treat the adapter as installed at load time
+			// (the same gate the real package passes).
+			await writeCatalog({ review: {}, implement: { mcps: [] } });
+			await writeFile(
+				path.join(fixture.agentDir, "settings.json"),
+				JSON.stringify({ packages: ["npm:pi-mcp-adapter"] }),
+			);
+			const probe = await writeProbe(
+				"reload-probe",
+				`pi.events.on("pi-mcp-adapter:runtime-snapshot:v1", (request: unknown) => {
+	(request as { result: unknown }).result = { ok: false, error: new Error("unknown server") };
+});
+pi.on("session_start", async () => record({ event: "session_start" }));`,
+			);
+			// Start with the flag: a reload that re-read it would resurrect
+			// `review` and undo the switch.
+			const rpc = await start(["-e", EXTENSION, "-e", probe, "--profile", "review"], { model: false });
+			try {
+				await waitForSessionStarts(1);
+				await rpc.send({ type: "prompt", message: "/profile use implement" });
+				await waitForNotify(rpc, "reloading runtime");
+				await waitForSessionStarts(2);
+
+				await rpc.send({ type: "prompt", message: "/profile status" });
+				const status = await waitForCustomMessage(rpc, "pi-profile-switch");
+
+				expect(status).toContain("### profile: implement (global)");
+				const badges = rpc.messages.filter(
+					(entry) =>
+						(entry as { method?: string }).method === "setStatus" &&
+						(entry as { statusKey?: string }).statusKey === "active-profile",
+				);
+				expect(String((badges.at(-1) as { statusText?: string }).statusText)).toContain("implement");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
 	it(
 		"restores the built-in default from a project profile switch",
 		{ timeout: 90_000 },

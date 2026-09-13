@@ -5,6 +5,12 @@
  *   one-run selection: it is never written back to runtime state.
  * - Without the flag the saved selection applies: the trusted project's
  *   state wins over the global state, then the built-in `default`.
+ * - Every session start after the first continues THIS process's selection
+ *   (`continuation`): the flag is a startup directive, and re-reading it
+ *   after an in-session switch would resurrect the profile the user just
+ *   left. A continuation that no longer resolves falls back like a saved
+ *   selection, with a warning, because a deleted profile must not strand the
+ *   runtime.
  * - A saved selection that no longer resolves falls back to `default` with
  *   a warning — restore is a convenience, not a commitment. An explicit
  *   flag value never falls back: an unknown name is a loud error.
@@ -94,18 +100,69 @@ async function legacyRegistryWarnings(input: {
 	return warnings;
 }
 
-/** Resolves the profile name for this session: explicit flag → trusted
- *  project state → global state → default. Never writes state. */
+/**
+ * The profile this process last applied. Kept on `globalThis` because Pi
+ * re-imports extension modules on every reload (jiti) — module state resets
+ * exactly when it is needed. It is a run-scoped fact, not saved state: the
+ * `--profile` flag must not resurrect itself over an in-session switch when
+ * the MCP overlay change rebuilds the runtime.
+ */
+const RUN_SELECTION_KEY = "pi-profile-switch:applied-profile";
+
+interface RunSelection {
+	appliedProfile?: string;
+}
+
+function runSelection(): RunSelection {
+	const holder = globalThis as unknown as Record<string, RunSelection | undefined>;
+	const current = holder[RUN_SELECTION_KEY] ?? {};
+	holder[RUN_SELECTION_KEY] = current;
+	return current;
+}
+
+/** Records the profile this process applied (startup or in-session).
+ *  `undefined` clears the record; a fresh process starts empty. */
+export function recordAppliedProfile(name: string | undefined): void {
+	runSelection().appliedProfile = name;
+}
+
+/** The profile this process is running, or undefined before the first
+ *  activation. */
+export function appliedProfile(): string | undefined {
+	return runSelection().appliedProfile;
+}
+
+/** Resolves the profile name for this session: the run's current selection
+ *  (`continuation`) → explicit flag → trusted project state → global state →
+ *  default. Never writes state.
+ *
+ *  `requested` is the CLI flag: an unknown name is a loud error.
+ *  `continuation` is what this process already applied, passed on every
+ *  session start after the first: it keeps the in-session switch, and falls
+ *  back (with a warning) when the name no longer resolves. */
 export async function resolveStartupProfile(input: {
 	agentDir: string;
 	cwd: string;
 	projectTrusted: boolean;
 	requested?: string;
+	continuation?: string;
 }): Promise<StartupProfile> {
 	const catalog = await ProfileCatalog.load(input.agentDir, {
 		projectDir: input.projectTrusted ? input.cwd : undefined,
 	});
 	const warnings: string[] = await legacyRegistryWarnings(input);
+
+	// The continuation first: this process already applied it, so the flag
+	// (a startup directive) has had its say.
+	if (input.continuation !== undefined) {
+		if (catalog.resolve(input.continuation) !== undefined) {
+			return { name: input.continuation, warnings };
+		}
+		warnings.push(
+			`profile ${JSON.stringify(input.continuation)} no longer exists — restoring the saved selection; ` +
+				`available: [${catalog.list().map((profile) => profile.name).join(", ")}]`,
+		);
+	}
 
 	if (input.requested !== undefined) {
 		if (catalog.resolve(input.requested) === undefined) {

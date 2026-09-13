@@ -44,7 +44,7 @@ pi --profile research --model openai/gpt-5.4
 pi --profile review --mode rpc
 ```
 
-`--profile` 由 pi-profile-switch 注册并读取；未安装本扩展时 Pi 按原生 unknown option 报错。`default` 不声明任何字段，行为逐字原生。
+`--profile` 由 pi-profile-switch 注册并读取；未安装本扩展时 Pi 按原生 unknown option 报错。`default` 不声明任何字段，行为逐字原生。`--profile` 只在进程启动时生效：同进程内的后续 session start（reload / new / resume / fork）沿用当前选择，MCP overlay 变化触发的 reload 不会复活启动 profile。
 
 ## 运行语义
 

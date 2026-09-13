@@ -27,8 +27,10 @@ import {
 	type SkillsFilterOutcome,
 } from "../../src/skill-selection.ts";
 import {
+	appliedProfile,
 	detectExplicitDeclarations,
 	readProfileFlag,
+	recordAppliedProfile,
 	registerProfileFlag,
 	resolveStartupProfile,
 } from "../../src/startup-selection.ts";
@@ -74,9 +76,10 @@ import { buildStatusReport, formatStatusMarkdown } from "../../src/switching/sta
  *   when the file does not exist yet (Pi packages have no install hook), and
  *   report a failure once at `session_start`.
  * - `session_start`: resolve the startup profile (`--profile <flag>`, else
- *   the saved selection, else `default`), then apply the runtime parts of
- *   the selection — model preset, active tools, MCP allowlist. A failed
- *   activation applies nothing and reports loudly.
+ *   the saved selection, else `default`; every start after the first
+ *   continues the selection this process already applied), then apply the
+ *   runtime parts of the selection — model preset, active tools, MCP
+ *   allowlist. A failed activation applies nothing and reports loudly.
  * - `before_agent_start`: rebuild the system prompt each turn — replace the
  *   skills section with the profile's visible set and append the profile's
  *   instructions. Unselected skills stay loaded and `/skill:`-invocable.
@@ -149,11 +152,15 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	});
 	if (adapterInstalled) {
 		const requestedConfigPath = readFlagFromArgv(argv, "mcp-config");
+		// A reload's overlay belongs to the run's current selection: the same
+		// continuation `session_start` applies right after this pass.
+		const runProfile = appliedProfile();
 		syncStartupMcpOverlay({
 			agentDir: loadAgentDir,
 			cwd: process.cwd(),
 			argv,
 			...(requestedConfigPath === undefined ? {} : { overridePath: requestedConfigPath }),
+			...(runProfile === undefined ? {} : { continuation: runProfile }),
 		});
 	}
 	let current: Activation | undefined;
@@ -257,6 +264,8 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 			overlay: options?.overlay ?? null,
 			persist: options?.persist ?? true,
 		});
+		// The run's current selection, for the reload continuation.
+		recordAppliedProfile(result.selection.name);
 		setCurrent(ctx, activationOf(result, deps.live.skills !== undefined));
 		reportWarnings(ctx, formatSelectionWarnings(result.selection));
 		return result;
@@ -475,7 +484,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", async (event, ctx) => {
 		setCurrent(ctx, undefined);
 		filterWarningShown = false;
 		if (seedWarning !== undefined) {
@@ -484,6 +493,11 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 		}
 		const agentDir = getAgentDir();
 		const projectTrusted = ctx.isProjectTrusted();
+		// Every session start after the first (reload, new, resume, fork)
+		// continues the selection this process already applied. The `--profile`
+		// flag is a startup directive: re-reading it here would silently
+		// resurrect the profile the user just left.
+		const continuation = event.reason === "startup" ? undefined : appliedProfile();
 		const requested = readProfileFlag(pi);
 		let startup;
 		try {
@@ -492,6 +506,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				cwd: ctx.cwd,
 				projectTrusted,
 				...(requested !== undefined ? { requested } : {}),
+				...(continuation !== undefined ? { continuation } : {}),
 			});
 		} catch (error) {
 			notify(ctx, error instanceof Error ? error.message : String(error), "error");
@@ -510,6 +525,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				});
 			}
 		} catch (error) {
+			recordAppliedProfile(undefined);
 			notify(ctx, error instanceof Error ? error.message : String(error), "error");
 			reportWarnings(ctx, startup.warnings);
 		}

@@ -143,7 +143,7 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 **Rules**：
 
 - load：调用 `seedDefaultProfilesSync`，在 `<agentDir>/profiles.json` 不存在时写入默认 catalog（Pi package 无安装钩子，见 `default-profiles.ts`）；写入失败不在加载阶段抛出，而是在 `session_start` 报告一次。已有文件绝不读取或改写。
-- `session_start`：解析启动 profile（flag → 项目 state（已信任）→ 全局 state → `default`）→ 构建 live view → 解析 + 校验 + 应用；失败时不应用任何设置并报出可行动错误。
+- `session_start`：解析启动 profile（flag → 项目 state（已信任）→ 全局 state → `default`）→ 构建 live view → 解析 + 校验 + 应用；失败时不应用任何设置并报出可行动错误。首次之后的 session start（`reason: "reload" | "new" | "resume" | "fork"`）先沿用本进程已应用的 selection：`--profile` 是启动指令，reload 时重读它会复活用户刚离开的 profile。
 - `before_agent_start`：重试 pending tools；重建 skills 段落；追加 instructions；每轮刷新 footer badge（主题变更无事件，只能靠这一轮刷新自愈）；无可变更时返回 undefined。
 - footer badge（`src/profile-badge.ts`）：`profile: <name>`，overlay 生效时追加 `*`；`default` 与未应用的 profile 不写 badge。`setCurrent` 是 profile 身份（`selection.name` 与 `overlay`）与 badge 的唯一写入点，只反映已成功应用的激活；`pendingTools`/`skillsOutcome` 的原地更新不改身份，也不触碰 badge。
 - 启动选择（`--profile`）不写 state；stored overlay 不在启动时应用。
@@ -195,7 +195,7 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 **Interface**：`syncStartupMcpOverlay`（load 与 `session_start` 复核）/ `syncMcpOverlayForSelection`（切换）/ `readFlagFromArgv` / `resolveStartupProfileNameSync` / `resolveProjectTrustedSync`。
 
-**Rules**：load 阶段同步执行且先于 adapter 的配置读取；Pi 在扩展加载之后才应用 CLI flag 值，因此 `--profile` / `--mcp-config` 从 argv 读取；信任镜像 Pi 的顺序（`hasTrustRequiringProjectResources` → 存储决策 → `defaultProjectTrust`，交互询问在 load 阶段按未信任处理）；用户显式 `--mcp-config` 指向别的文件时整段管理关闭；profile 不可解析时生成"不过滤"的 overlay（真正的错误由随后的激活响亮报告）。
+**Rules**：load 阶段同步执行且先于 adapter 的配置读取；Pi 在扩展加载之后才应用 CLI flag 值，因此 `--profile` / `--mcp-config` 从 argv 读取；本进程已应用的 selection（`continuation`）优先于 `--profile`，因此 reload 生成的 overlay 与 `session_start` 随后应用的 profile 一致；信任镜像 Pi 的顺序（`hasTrustRequiringProjectResources` → 存储决策 → `defaultProjectTrust`，交互询问在 load 阶段按未信任处理）；用户显式 `--mcp-config` 指向别的文件时整段管理关闭；profile 不可解析时生成"不过滤"的 overlay（真正的错误由随后的激活响亮报告）。
 
 ### `switching/apply-profile.ts`
 
@@ -234,7 +234,8 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 ```text
 pi [--profile review]
   │
-  ├─ 解析启动 profile（flag → 项目 state → 全局 state → default）
+  ├─ 解析启动 profile（flag → 项目 state → 全局 state → default；
+  │    非首次 session start 沿用本进程已应用的 selection）
   ├─ 构建 live view：pi.getAllTools() + adapter 探测（skills 此时不可读，首轮再检查）
   ├─ resolve（glob 展开、overlay、warnings）
   ├─ validate（model 存在且已认证；MCP intent 可满足）
@@ -309,3 +310,4 @@ pi-profile-switch/
 | 所有已安装 extension 在任意 profile 下加载 | 扩展不控制 extension 集合 |
 | `default` profile 逐字原生 | 不过滤、不 setActiveTools、不发布 allowlist |
 | 任意 profile 都能切回 `default`，并在下次启动保持 | 集成测试：项目 profile → `/profile use default` → 重启后为 `default`；单测覆盖跨 scope 清理与 overlay 保留 |
+| MCP overlay 触发的 reload 不改变当前选择 | 集成测试：`--profile review` 启动 → `/profile use implement`（overlay 变化触发 reload）→ status 与 badge 仍为 `implement`；load 阶段 overlay 与 `session_start` 都采用 continuation |

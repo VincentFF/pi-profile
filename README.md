@@ -73,7 +73,7 @@ All commands work in non-interactive modes (`--mode rpc|print|json`); CRUD wizar
 - **Reference, never copy** — profiles point at resources you already own and maintain.
 - **Pi-native** — the configuration directory is Pi's own, so sessions, extension config, packages, context files, and trust behave exactly as they do in plain Pi.
 - **Fail safe** — untrusted project directories are never read; a failed activation applies nothing and reports the cause.
-- **No manual reload** — switching re-applies runtime state in place and the next turn's prompt carries the new selection. Only a change to the MCP selection rebuilds the runtime, automatically, in the same session.
+- **No manual reload** — switching re-applies runtime state in place and the next turn's prompt carries the new selection. Only a change to the MCP selection rebuilds the runtime, automatically, in the same session, and the switch survives that rebuild: the rebuild continues the selection you made, it does not fall back to the profile you started with.
 
 ## Docs
 
