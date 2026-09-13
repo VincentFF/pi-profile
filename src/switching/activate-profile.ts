@@ -54,6 +54,10 @@ export interface ActivationDeps {
 export interface ActivationResult {
 	selection: ResolvedSelection;
 	warnings: string[];
+	/** The overlay this activation applied; absent when the runtime runs the
+	 *  profile exactly as it is declared. Callers surface it (the footer badge)
+	 *  instead of re-reading the state file. */
+	overlay?: RuntimeOverlay;
 }
 
 /** Resolves a profile against the live resources without applying it.
@@ -109,5 +113,5 @@ export async function activateProfile(
 		throw new ActivationError(result.error ?? `profile "${name}" could not be applied`);
 	}
 
-	return { selection, warnings };
+	return { selection, warnings, ...(overlay === undefined ? {} : { overlay }) };
 }

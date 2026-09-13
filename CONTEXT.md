@@ -34,6 +34,10 @@ _Avoid_: skill filtering if it implies unloading
 **Activation**:
 Applying a selection to the running Pi: model preset, active tools, MCP allowlist. A failed activation applies nothing.
 
+**Profile badge**:
+The footer status line `profile: <name>` — plus `*` when a runtime overlay is in effect — that names the active profile at a glance. Written only for an activation that succeeded, and absent for `default`, which declares nothing and must not change Pi's footer either.
+_Avoid_: profile indicator, footer label
+
 **pi-mcp-adapter**:
 The optional external Pi package that owns MCP server configuration, connections, and credentials. pi-profile-switch integrates with it but never stores MCP connection details in profiles.
 

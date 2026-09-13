@@ -24,6 +24,8 @@ interface FakePi {
 	flagValues: Map<string, string | boolean>;
 	activeTools: string[];
 	messages: Array<{ customType?: string; content?: string; details?: unknown }>;
+	/** Every `ctx.ui.setStatus` call, in order. */
+	statuses: Array<{ key: string; text: string | undefined }>;
 	events: { emitted: Array<{ channel: string; data: unknown }>; emit(channel: string, data: unknown): void };
 	notifications: Array<{ message: string; level: string }>;
 }
@@ -34,6 +36,7 @@ function fakePi(toolNames: string[]): FakePi {
 	const flagValues = new Map<string, string | boolean>();
 	const messages: FakePi["messages"] = [];
 	const notifications: FakePi["notifications"] = [];
+	const statuses: FakePi["statuses"] = [];
 	const emitted: Array<{ channel: string; data: unknown }> = [];
 	const fake: FakePi = {
 		handlers,
@@ -42,6 +45,7 @@ function fakePi(toolNames: string[]): FakePi {
 		activeTools: [],
 		messages,
 		notifications,
+		statuses,
 		events: {
 			emitted,
 			emit: (channel: string, data: unknown) => {
@@ -101,6 +105,9 @@ interface FakeContextOptions {
 	hasUI?: boolean;
 	/** Answer returned by `ctx.ui.select` (undefined = cancelled). */
 	selectAnswer?: string;
+	/** Theme stub. The default renders text unchanged so assertions read as
+	 *  plain badge text; pass a marker theme to observe the color choices. */
+	theme?: { fg(color: string, text: string): string };
 }
 
 function fakeContext(fake: FakePi, options: FakeContextOptions): ExtensionContext & ExtensionCommandContext {
@@ -113,6 +120,10 @@ function fakeContext(fake: FakePi, options: FakeContextOptions): ExtensionContex
 			notify: (message: string, level: string) => {
 				fake.notifications.push({ message, level });
 			},
+			setStatus: (key: string, text: string | undefined) => {
+				fake.statuses.push({ key, text });
+			},
+			theme: options.theme ?? { fg: (_color: string, text: string) => text },
 			select: async () => options.selectAnswer,
 			input: async () => undefined,
 		},
@@ -424,5 +435,139 @@ describe("pi-profile-switch extension: skills filter visibility", () => {
 		await fake.commands.get("profile")!.handler("status", ctx);
 
 		expect(fake.messages.at(-1)?.content).toMatch(/skills filter: not applied \(no-read-tool\)/);
+	});
+});
+
+describe("pi-profile-switch extension: footer badge", () => {
+	it("shows the active profile after a successful startup activation", async () => {
+		await new RuntimeStateStore(fixture.agentDir).write({ activeProfile: "review" });
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills: [skill("alpha")] });
+
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		expect(fake.statuses).toEqual([{ key: "active-profile", text: "profile: review" }]);
+	});
+
+	it("ignores a stored overlay at startup (it never outlives its runtime)", async () => {
+		await new RuntimeStateStore(fixture.agentDir).write({
+			activeProfile: "review",
+			overlay: { disabledSkills: ["alpha"] },
+		});
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills: [skill("alpha")] });
+
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		// Startup activation passes `overlay: null`, so the badge must not
+		// claim a narrowing the runtime does not have.
+		expect(fake.statuses.at(-1)?.text).toBe("profile: review");
+	});
+
+	it("writes no status at all for the default profile", async () => {
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills: [skill("alpha")] });
+
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		// Touching no status keeps Pi's footer status line absent, so a plain
+		// session looks exactly like native Pi.
+		expect(fake.statuses).toEqual([]);
+	});
+
+	it("follows /profile use and the picker", async () => {
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills: [skill("alpha")], selectAnswer: "plain [global]" });
+
+		await fake.commands.get("profile")!.handler("use review", ctx);
+		expect(fake.statuses.at(-1)?.text).toBe("profile: review");
+
+		await fake.commands.get("profile")!.handler("", ctx);
+		expect(fake.statuses.at(-1)?.text).toBe("profile: plain");
+	});
+
+	it("marks a runtime overlay and drops the marker on /profile reset", async () => {
+		await new RuntimeStateStore(fixture.agentDir).write({ activeProfile: "review" });
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills: [skill("alpha")] });
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		await fake.commands.get("profile")!.handler("customize disable skill alpha", ctx);
+		expect(fake.statuses.at(-1)?.text).toBe("profile: review*");
+
+		await fake.commands.get("profile")!.handler("reset", ctx);
+		expect(fake.statuses.at(-1)?.text).toBe("profile: review");
+	});
+
+	it("keeps the applied profile when an activation fails", async () => {
+		await new RuntimeStateStore(fixture.agentDir).write({ activeProfile: "review" });
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills: [skill("alpha")] });
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		await fake.commands.get("profile")!.handler("use ghost", ctx);
+
+		expect(fake.notifications.at(-1)?.message).toMatch(/unknown profile "ghost"/);
+		expect(fake.statuses.at(-1)?.text).toBe("profile: review");
+		expect(fake.statuses.every((entry) => entry.text !== undefined)).toBe(true);
+	});
+
+	it("does not touch the footer in modes without UI", async () => {
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills: [skill("alpha")], mode: "print", hasUI: false });
+
+		await fake.commands.get("profile")!.handler("use review", ctx);
+
+		expect(fake.statuses).toEqual([]);
+	});
+
+	it("does not re-render an unchanged badge on the next turn", async () => {
+		await new RuntimeStateStore(fixture.agentDir).write({ activeProfile: "review" });
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const skills = [skill("alpha")];
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills });
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		await emit(
+			fake,
+			"before_agent_start",
+			{ type: "before_agent_start", prompt: "hi", systemPrompt: "HEADER", systemPromptOptions: promptOptions(skills) },
+			ctx,
+		);
+
+		expect(fake.statuses).toHaveLength(1);
+	});
+
+	it("re-renders on the next turn when the theme changed", async () => {
+		let themeTag = "t1";
+		const theme = { fg: (color: string, text: string) => `[${themeTag}${color}]${text}` };
+		await new RuntimeStateStore(fixture.agentDir).write({ activeProfile: "review" });
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const skills = [skill("alpha")];
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills, theme });
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+		expect(fake.statuses.at(-1)?.text).toContain("[t1dim]");
+
+		// Pi has no extension-visible theme-change event, so the turn is the
+		// refresh point that keeps the badge's colors current.
+		themeTag = "t2";
+		await emit(
+			fake,
+			"before_agent_start",
+			{ type: "before_agent_start", prompt: "hi", systemPrompt: "HEADER", systemPromptOptions: promptOptions(skills) },
+			ctx,
+		);
+
+		expect(fake.statuses).toHaveLength(2);
+		expect(fake.statuses.at(-1)?.text).toContain("[t2dim]");
 	});
 });
