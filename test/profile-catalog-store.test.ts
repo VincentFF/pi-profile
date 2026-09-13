@@ -58,26 +58,13 @@ describe("ProfileCatalogStore", () => {
 		expect(document.profiles).toEqual({ review: { skills: ["git-commit", "code-review"] } });
 	});
 
-	it("reads a legacy file and writes the current envelope back", async () => {
+	it("refuses a catalog written by v0.1.0 (schemaVersion 2)", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "profiles.json"),
-			JSON.stringify({
-				schemaVersion: 2,
-				profiles: { review: { skills: ["git-commit"], extensions: ["pi-plan-build"] } },
-			}),
+			JSON.stringify({ schemaVersion: 2, profiles: { review: { skills: ["git-commit"] } } }),
 		);
 
-		const definitions = await store().readDefinitions();
-		expect(definitions.get("review")).toEqual({ skills: ["git-commit"] });
-
-		await store().upsert("implement", { tools: ["read"] });
-
-		const document = await readFileJson();
-		expect(document.schemaVersion).toBe(1);
-		expect(document.profiles).toEqual({
-			implement: { tools: ["read"] },
-			review: { skills: ["git-commit"] },
-		});
+		await expect(store().readDefinitions()).rejects.toThrow(/unsupported schemaVersion/);
 	});
 
 	it("refuses to write the built-in default profile", async () => {

@@ -18,7 +18,7 @@
 │  │  session_start   → 解析 profile，应用 model/tools/MCP          │  │
 │  │  before_agent_start → 重建 skills 段落 + 追加 instructions     │  │
 │  │  /profile 命令族、/mcp enable|disable                         │  │
-│  │  pi.events ↔ pi-mcp-adapter（内存 allowlist）                 │  │
+│  │  pi.events ↔ pi-mcp-adapter + MCP overlay（ADR-0008）            │  │
 │  └──────────────────────────────────────────────────────────────┘  │
 │                                                                    │
 │  Pi 原生：agentDir、sessions、packages、trust、context files        │
@@ -32,7 +32,7 @@
 | 资源 | 机制 |
 | --- | --- |
 | skills | prompt 可见性过滤：`before_agent_start` 用 Pi 导出的 `formatSkillsForPrompt` 重建段落并替换 |
-| mcp | `pi.events` 向 `pi-mcp-adapter` 发布运行时 allowlist（内存，不写配置文件） |
+| mcp | profile 的 `mcp` 白名单写入 adapter 的 Pi-global 槽位（生成的 disable overlay），同时保留 `pi.events` allowlist 发布（ADR-0008） |
 | tools | `pi.setActiveTools` 对 live registry 展开后的活动集合；未注册字面量 pending 重试 |
 | model / thinkingLevel | `pi.setModel` / `pi.setThinkingLevel`，遵循显式选择优先 |
 | instructions | 与 skills 过滤合并到同一个 `before_agent_start` 返回值 |
@@ -53,7 +53,7 @@
 | 启动 profile 选择 | `pi.registerFlag("profile", { type: "string" })` + `pi.getFlag`；Pi 无同名 flag，未知 flag 由 `parseArgs` 收进 `unknownFlags` 再匹配已注册扩展 flag |
 | 显式 CLI 声明检测 | 包公开导出 `parseArgs`；扩展对 `process.argv.slice(2)` 重新解析 |
 | 项目信任 | `ctx.isProjectTrusted()` |
-| MCP 协调 | `pi-profile:mcp-allowlist:v1` 发布通道 + `pi-mcp-adapter:runtime-snapshot:v1` 存在性探测（ADR-0002） |
+| MCP 协调 | 生成式 overlay 写入 `<agentDir>/mcp.json`（ADR-0008）+ `pi-profile:mcp-allowlist:v1` 发布通道 + `pi-mcp-adapter:runtime-snapshot:v1` 存在性探测（ADR-0002） |
 
 Pi 的 package `exports` 不暴露 `buildSystemPrompt`，扩展无法自行重建整个 prompt，因此 skills 过滤走"同源格式化 + 段落替换"。
 
@@ -152,13 +152,13 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 **Interface**：只读列出/解析 winning 定义；写入侧提供 create/edit/delete/duplicate。
 
-**Rules**：`default` 不存在于文件中且不可删除；项目同名完整替换全局；`schemaVersion` 1 为当前值、2 作兼容读，保存一律写 1；`extensions` 与未知字段静默忽略、不进入解析结果（无继承）。
+**Rules**：`default` 不存在于文件中且不可删除；项目同名完整替换全局；`schemaVersion` 只接受 1，其他值报错，保存一律写 1；`extensions` 等未知字段静默忽略、不进入解析结果、写入时被丢弃（无继承）。
 
 ### `ProfilePresets`
 
 **Interface**：`PROFILE_PRESETS`——随包发布的起点数组 `{ name, definition }`；create 向导以 `start from which preset?` 呈现，`blank` 为第一项，预设按选项下标识别（不解析名字，避免命名冲突）。
 
-**Rules**：预设是数据，不是 profile——不进入 `/profile list`，只有被 `/profile create` 复制进用户 catalog 后才存在，`default` 仍是唯一内建 profile，复制后预设不被跟踪（包升级不会改动用户已创建的 profile）。每个预设必须零资源假设：不得声明 `mcp`（adapter 缺失即激活失败）、`model`（未认证即激活失败）、`skills`（字面量缺失告警、`[]` 屏蔽全部、省略即不过滤）；`tools` 只列 Pi 内建工具且必含 `read`（否则 Pi 不产出 skills 段落）；`instructions` 只描述行为、不引用具体 skill 或 MCP server 名，并有行数上限（每轮追加，长度直接摊销成本）。`test/profile-presets.test.ts` 强制以上规则，并断言 `examples/profiles.json` 与该 catalog 完全一致。
+**Rules**：预设是数据，不是 profile——不进入 `/profile list`，只有被 `/profile create` 复制进用户 catalog 后才存在，`default` 仍是唯一内建 profile，复制后预设不被跟踪（包升级不会改动用户已创建的 profile）。每个预设必须零资源假设：不得声明 `mcp`（adapter 缺失即激活失败）、`model`（未认证即激活失败）、`skills`（字面量缺失告警、`[]` 屏蔽全部、省略即不过滤）；`tools` 只列 Pi 内建工具且必含 `read`（否则 Pi 不产出 skills 段落）；`instructions` 只描述行为、不引用具体 skill 或 MCP server 名，并有行数上限（每轮追加，长度直接摊销成本）。`test/profile-presets.test.ts` 强制以上规则，并断言 `examples/profiles.json` 与该 catalog 完全一致、每个预设逐字出现在 `examples/profiles.example.json` 中。
 
 ### `ProfileResolver`
 
@@ -178,6 +178,24 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 **Interface**：`registerProfileFlag` / `readProfileFlag` / `detectExplicitDeclarations` / `resolveStartupProfile`。
 
+### `McpOverlay` / `McpOverlayFile`（ADR-0008）
+
+**Interface**：`resolveAllowedServers` / `buildMcpOverlay` / `serializeMcpOverlay`（纯函数）；`mcpSlotPath` / `mcpSourcePath` / `isGeneratedOverlay` / `isDisabledStub`；`readMcpOverlaySync` / `writeMcpOverlayIfChangedSync`（原子写 + 仅内容变化时写 + 0600）。
+
+**Rules**：`allowed` 的三种语义（`"all"` 透传、`[]` 全禁、白名单）；生成文件固定带 `piProfileSwitch` 标记，adapter 忽略未知顶层键；槽位文件里的 server 定义从 sidecar 原样透传，其余来源只写 `{ disabled: true }` 存根（不含任何连接参数或凭据）。
+
+### `AdapterPresence`（ADR-0008）
+
+**Interface**：`adapterPresent({ agentDir, argv, probeAnswered })`。
+
+**Rules**：四个信号任一命中即视为已安装（Pi 的 npm 包根、`-e` argv、settings `packages`、事件探测）；任何失败读作"未安装"——漏判只是关掉 overlay，误判会藏起用户自己的槽位文件。
+
+### `StartupMcpScope`（ADR-0008）
+
+**Interface**：`syncStartupMcpOverlay`（load 与 `session_start` 复核）/ `syncMcpOverlayForSelection`（切换）/ `readFlagFromArgv` / `resolveStartupProfileNameSync` / `resolveProjectTrustedSync`。
+
+**Rules**：load 阶段同步执行且先于 adapter 的配置读取；Pi 在扩展加载之后才应用 CLI flag 值，因此 `--profile` / `--mcp-config` 从 argv 读取；信任镜像 Pi 的顺序（`hasTrustRequiringProjectResources` → 存储决策 → `defaultProjectTrust`，交互询问在 load 阶段按未信任处理）；用户显式 `--mcp-config` 指向别的文件时整段管理关闭；profile 不可解析时生成"不过滤"的 overlay（真正的错误由随后的激活响亮报告）。
+
 ### `switching/apply-profile.ts`
 
 **Interface**：`validateSelection` / `applySelection` / `retryPendingTools`，依赖注入到窄 interface `ApplySurface`。
@@ -194,16 +212,18 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 ### `RuntimeStateStore` / `mcps`
 
-**Interface**：按 scope 读写 `pi-profile-state.json`（`overlayNarrows` 判定 overlay 是否真有差异）；adapter 配置只读发现（`mcp-config.ts`）与事件契约（`mcp-coordination.ts`，ADR-0002 不变）。
+**Interface**：按 scope 读写 `pi-profile-state.json`（`overlayNarrows` 判定 overlay 是否真有差异）；adapter 配置发现（`mcp-config.ts`，只读全部文件来源，绝不写）；事件契约（`mcp-coordination.ts`，ADR-0002 不变）。
 
 ## 数据契约
 
 | 文件 | 用途 | 备注 |
 | --- | --- | --- |
-| `~/.pi/agent/profiles.json` | 全局 catalog | schemaVersion 1（v2 兼容读） |
+| `~/.pi/agent/profiles.json` | 全局 catalog | schemaVersion 1 |
 | `.pi/profiles.json` | 项目 catalog | 仅 Pi 报告项目已信任时读取 |
 | `~/.pi/agent/pi-profile-state.json` | 全局 runtime state | `activeProfile` + `overlay` |
 | `.pi/pi-profile-state.json` | 项目 runtime state | 同上 |
+| `<agentDir>/mcp.json` | adapter 的 Pi-global 槽位 | 由本包生成（`piProfileSwitch` 标记），未授权 server 标 `disabled`（ADR-0008） |
+| `<agentDir>/mcp.user.json` | 用户自己的 Pi-global MCP server | sidecar；首次运行时从手写的槽位文件采用，本包只在采用时写入（ADR-0008） |
 | `~/.pi/agent/resources.json`、`.pi/resources.json` | —— | 不再读取（ADR-0006 被取代） |
 
 ## 激活流程
@@ -229,11 +249,12 @@ pi [--profile review]
   ├─ 重新读取 catalog/adapter/live view
   ├─ resolve + validate（失败时不改变任何状态）
   ├─ 持久化选择到目标 profile 的 source scope（清除 overlay）
-  ├─ apply（model/tools/MCP 立即生效）
+  ├─ apply（model/tools 立即生效）
+  ├─ MCP 选择变化 → 重写 overlay → waitForIdle → ctx.reload()（ADR-0008）
   └─ skills/instructions：下一个 turn 的 prompt 直接带上
 ```
 
-不等待 idle、不 reload、不重启进程、不写任何生成文件；session file 与 session id 不变。
+MCP overlay 内容未变化时不 reload；一旦 reload，session file 与 session id 不变，进程不重启。
 
 ## Package 结构
 
@@ -243,7 +264,7 @@ pi-profile-switch/
 ├── extensions/
 │   └── pi-profile-switch/index.ts      # 命令、flag、session_start、before_agent_start、MCP 协调
 ├── src/
-│   ├── profile-catalog.ts       # v2 读取 + v1 兼容
+│   ├── profile-catalog.ts       # 只接受 schemaVersion 1；未知字段忽略
 │   ├── profile-catalog-store.ts # 写入侧
 │   ├── profile-presets.ts       # 随包预设（create 起点，零资源假设）
 │   ├── runtime-state-store.ts
@@ -253,7 +274,11 @@ pi-profile-switch/
 │   ├── skill-selection.ts       # 可见性过滤与 instructions 块
 │   ├── model-selection.ts       # 预设优先级
 │   ├── startup-selection.ts     # --profile flag 与启动选择
-│   ├── mcp-config.ts            # adapter server 名只读发现
+│   ├── mcp-config.ts            # adapter 配置来源发现（server 名 + 槽位文档）
+│   ├── mcp-overlay.ts           # 纯生成：allowed → overlay 文档（ADR-0008）
+│   ├── mcp-overlay-file.ts      # 原子写 + 内容变化检测
+│   ├── startup-mcp-scope.ts     # load/session_start/切换三处的 overlay 同步
+│   ├── adapter-presence.ts      # adapter 安装检测（门禁）
 │   ├── mcp-coordination.ts      # pi.events 契约
 │   ├── json-file.ts
 │   └── switching/
@@ -266,7 +291,8 @@ pi-profile-switch/
 │       ├── status.ts
 │       └── mcp-toggle.ts
 ├── schemas/profiles.schema.json
-├── examples/profiles.json
+├── examples/profiles.json       # 预设 catalog（read-only）
+├── examples/profiles.example.json # 完整多 profile 示例（覆盖全部字段）
 └── test/                        # 单测 + 真实 pi 子进程集成测试
 ```
 

@@ -439,26 +439,22 @@ describe("native Pi behavior with the extension loaded", () => {
 	);
 
 	it(
-		"reads a legacy catalog (schemaVersion 2, ignored extensions) without a compatibility warning",
+		"reports a catalog written by v0.1.0 (schemaVersion 2) instead of activating it",
 		{ timeout: 90_000 },
 		async () => {
 			await writeFile(
 				path.join(fixture.agentDir, "profiles.json"),
-				JSON.stringify({ schemaVersion: 2, profiles: { review: { extensions: ["pi-plan-build"] } } }),
+				JSON.stringify({ schemaVersion: 2, profiles: { review: {} } }),
 			);
 			await writeState("review");
 			const rpc = await start(["-e", EXTENSION], { model: false });
 			try {
-				// The session is up and the legacy file activated its profile…
+				await waitForNotify(rpc, "unsupported schemaVersion");
+
+				// Nothing was activated: the session keeps the plain Pi baseline.
 				await rpc.send({ type: "prompt", message: "/profile status" });
 				const status = await waitForCustomMessage(rpc, "pi-profile-switch");
-				expect(status).toContain("### profile: review (global)");
-
-				// …and nothing was reported about its shape.
-				const notices = rpc.messages
-					.filter((entry) => (entry as { method?: string }).method === "notify")
-					.map((entry) => String((entry as { message?: string }).message));
-				expect(notices.filter((message) => message.includes("schemaVersion"))).toEqual([]);
+				expect(status).toContain("no active profile");
 			} finally {
 				await rpc.close();
 			}

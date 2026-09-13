@@ -85,7 +85,7 @@ profile 不支持继承。项目同名 profile 是完整替换，不深度合并
 
 `model` 与 `instructions` 可选。未声明时不修改 Pi 当前的模型与 system prompt。
 
-`schemaVersion: 1` 的 catalog 继续可读：`extensions` 字段被警告一次并忽略，下一次写入升级为 version 2。
+`schemaVersion` 只接受 1；catalog 中的未知字段（如 v0.1.0 的 `extensions`）静默忽略、不进入解析结果，写入时被丢弃。
 
 ## 资源选择
 
@@ -125,7 +125,7 @@ MCP 集成锁定为 `pi-mcp-adapter`。它是可选依赖：未安装 adapter �
 }
 ```
 
-profile 只引用 adapter 已配置的 server 名称；命令、地址、OAuth、token 和 timeout 保留在 adapter 管理配置中。`/mcp enable|disable` 修改当前 profile 的 `mcp` 数组并保存到所属 catalog，随后重新发布运行时 allowlist；adapter 自己的 `mcp.json` 永不被 pi-profile-switch 写入。
+profile 只引用 adapter 已配置的 server 名称；命令、地址、OAuth、token 和 timeout 保留在 adapter 自己的配置里，profile 从不保存它们。adapter 尚未实现 `pi-profile:mcp-allowlist:v1`，因此运行时过滤由**生成式 disable overlay** 完成（ADR-0008）：本包按 profile 的 `mcp` 白名单生成 `<agentDir>/mcp.json`（adapter 的 Pi-global 槽位），未授权 server 标 `disabled`（不连接、不注册工具、网关调用被拒）；用户原本放在该文件的 server 由 sidecar `<agentDir>/mcp.user.json` 承载。`/mcp enable|disable` 修改当前 profile 的 `mcp` 数组并保存到所属 catalog，随后重写 overlay 并（内容变化时）reload。
 
 ### Tools
 

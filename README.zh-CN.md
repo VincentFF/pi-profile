@@ -29,30 +29,11 @@ pi --profile read-only
 pi --profile default
 ```
 
-用 `/profile create` 创建 profile，写入 `~/.pi/agent/profiles.json`（全局）或 `<项目>/.pi/profiles.json`（项目级，仅限已信任项目）。向导提供随包的 `read-only` 预设——只用 Pi 内建工具，不假设任何 skill、MCP server 或模型——也可以从空定义开始：
+用 `/profile create` 创建 profile，写入 `~/.pi/agent/profiles.json`（全局）或 `<项目>/.pi/profiles.json`（项目级，仅限已信任项目）。向导提供随包的 `read-only` 预设——只用 Pi 内建工具，不假设任何 skill、MCP server 或模型——也可以从空定义开始。
 
-```json
-{
-  "schemaVersion": 1,
-  "profiles": {
-    "read-only": {
-      "label": "Read-only",
-      "description": "Read-only session; no skills or MCP servers assumed — add your own.",
-      "tools": [
-        "read",
-        "grep",
-        "find",
-        "ls"
-      ],
-      "instructions": "Read-only session: inspect and report; never create, edit, rename, or delete files.\nIf a change is needed, describe it in your reply instead of applying it.\nDo not run commands that modify state (installs, formatters, commits, pushes, network writes).\nPrefer an available skill or MCP tool when it fits the request; otherwise use the tools you have.\nGround claims in evidence: cite file:line and separate verified facts from inferences.\nReply in English."
-    }
-  }
-}
-```
+预设只被复制一次：它不被跟踪，包升级不会改动你已经创建的 profile。Profile 只**引用**资源，从不复制资源。[`examples/profiles.example.json`](examples/profiles.example.json) 是覆盖全部字段的完整 catalog，示例中的资源名请替换成你本机已有的名字。
 
-预设只被复制一次：它不被跟踪，包升级不会改动你已经创建的 profile。Profile 只**引用**资源，从不复制资源。[`examples/profiles.json`](examples/profiles.json) 就是同一个预设构成的 catalog；字段参考见 [`schemas/profiles.schema.json`](schemas/profiles.schema.json)。
-
-`schemaVersion` 为 1。Profile 不选择 extension：extensions 在所有 profile 中原生加载，请用 `pi install` 管理。
+`schemaVersion` 为 1，也是唯一接受的值。Profile 不选择 extension：extensions 在所有 profile 中原生加载，请用 `pi install` 管理。
 
 ## Profile 控制的范围
 
@@ -61,7 +42,7 @@ pi --profile default
 | `instructions` | 每个 turn 追加到 system prompt 末尾 |
 | `model` | 会话启动的模型预设；显式 `--model`/`--thinking` 或 session 历史中记录的模型优先 |
 | `skills` | 模型在 prompt skills 列表中看到的内容；所有已安装 skill 仍保持加载，用户可用 `/skill:name` 手动调用 |
-| `mcp` | 发布给 `pi-mcp-adapter` 的运行时 server allowlist；连接参数仍由 adapter 自己管理 |
+| `mcp` | 本次会话暴露哪些 MCP server：白名单写入 adapter 自己的配置（`~/.pi/agent/mcp.json`），其余 server 一律标为 disabled。你原本放在该文件里的 server 会迁移到 `mcp.user.json`；连接参数只在你自己的配置里，从不进入 profile |
 | `tools` | 活动工具集：声明的名字/glob 成为活动集合；之后才注册的工具（MCP、扩展）在出现时补上 |
 
 未声明的字段保持 Pi 原生行为，`default` 什么都不声明。
@@ -74,7 +55,7 @@ pi --profile default
 | --- | --- |
 | `/profile` | 交互式选择 profile |
 | `/profile list` / `/profile status` | 列出 profile / 查看活动 profile 详情 |
-| `/profile use <name>` | 即时切换——同一 session，无 reload |
+| `/profile use <name>` | 原位切换——同一 session；当 MCP 选择发生变化时会自动 reload 以重新应用 |
 | `/profile create\|edit\|delete\|duplicate` | 向导式 profile 增删改（仅 TUI） |
 | `/profile customize` / `/profile reset` | 仅本次会话收窄活动 profile |
 | `/mcp enable\|disable <server>` | 在活动 profile 中开关 MCP server |
@@ -88,12 +69,11 @@ pi --profile default
 - **引用而非复制**——profile 指向你自己拥有和维护的资源。
 - **Pi 原生**——配置目录就是 Pi 自己的目录，session、扩展配置、packages、context 文件和信任行为与原生 Pi 完全一致。
 - **失败安全**——未信任的项目目录从不读取；激活失败时不应用任何设置并报出原因。
-- **无 reload**——切换在原位重新应用运行时状态；下一个 turn 的 prompt 直接带上新选择。
+- **无需手动 reload**——切换在原位重新应用运行时状态，下一个 turn 的 prompt 直接带上新选择；只有 MCP 选择变化时才会自动重建运行时（同一 session）
 
 ## 文档
 
 - [架构设计](docs/architecture/overview.md) · [ADR](docs/adr/) · [术语表](CONTEXT.md)
-- JSON Schema：[`schemas/profiles.schema.json`](schemas/profiles.schema.json)
 
 ## 许可证
 

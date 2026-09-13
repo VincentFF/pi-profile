@@ -90,6 +90,16 @@ describe("profile presets", () => {
 
 		expect(published).toEqual(presetCatalog());
 	});
+
+	it("appears verbatim in the complete example catalog", async () => {
+		const example = JSON.parse(await readFile(path.resolve("examples", "profiles.example.json"), "utf8")) as {
+			profiles: Record<string, unknown>;
+		};
+
+		for (const preset of PROFILE_PRESETS) {
+			expect(example.profiles[preset.name], preset.name).toEqual(preset.definition);
+		}
+	});
 });
 
 /** Scripted wizard UI: one queue per question kind, recording every prompt. */

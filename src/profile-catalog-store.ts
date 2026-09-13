@@ -37,7 +37,7 @@ export class ProfileCatalogStore {
 
 	/** Validated definitions: missing file → empty; malformed → CatalogError
 	 *  (catalog errors never pass silently, even on the write path).
-	 *  Unknown fields (a legacy `extensions` declaration) are dropped. */
+	 *  Unknown fields (an `extensions` key left over from v0.1.0) are dropped. */
 	async readDefinitions(): Promise<Map<string, ProfileDefinition>> {
 		const result = await readJsonFile(this.#filePath);
 		if (!result.ok) {

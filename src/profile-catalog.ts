@@ -7,11 +7,11 @@
  * - A profile references skills, MCP servers, and tools, and may declare
  *   instructions and a model preset. Extensions are not a profile resource:
  *   every installed extension loads natively in every profile.
- * - schemaVersion 1 is current. Version 2 describes the same fields — the
- *   number only marked the era in which `extensions` was still a profile
- *   resource — and reads the same; every save writes version 1.
- * - A legacy `extensions` field is ignored silently, like any other unknown
- *   field: extensions load natively and are managed with `pi install`.
+ * - schemaVersion 1 is the only accepted version: any other value fails
+ *   loudly instead of guessing at a shape.
+ * - Unknown fields (an `extensions` declaration left over from v0.1.0, an
+ *   inheritance key) are ignored silently; saving drops them, so a written
+ *   definition always matches the current shape.
  *
  * Invariants:
  * - The built-in `default` profile never exists in either file and cannot be
@@ -30,8 +30,6 @@ import path from "node:path";
 import { isRecord, readJsonFile } from "./json-file.ts";
 
 export const PROFILE_SCHEMA_VERSION = 1;
-/** The number v0.1.0 wrote for the same field shape: read, never written. */
-const LEGACY_SCHEMA_VERSION = 2;
 export const DEFAULT_PROFILE_NAME = "default";
 
 export interface ProfileModel {
@@ -91,8 +89,8 @@ function readOptionalString(value: unknown, field: string, profileName: string):
 
 /** Parses one raw profile definition; exported for the write-side store
  *  (profile-catalog-store.ts) so anything written is loadable. Unknown
- *  fields are ignored by design — a legacy `extensions` declaration is
- *  dropped silently, exactly like any other unknown key. */
+ *  fields are ignored by design — an `extensions` key left over from
+ *  v0.1.0 is dropped silently, exactly like any other unknown key. */
 export function parseProfileDefinition(name: string, raw: unknown): ProfileDefinition {
 	if (!isRecord(raw)) {
 		throw new CatalogError(`profile "${name}" must be an object`);
@@ -125,7 +123,7 @@ export function parseCatalogDocument(value: unknown, filePath: string): Map<stri
 		throw new CatalogError(`${filePath}: catalog must be an object`);
 	}
 	const version = value.schemaVersion;
-	if (version !== PROFILE_SCHEMA_VERSION && version !== LEGACY_SCHEMA_VERSION) {
+	if (version !== PROFILE_SCHEMA_VERSION) {
 		throw new CatalogError(
 			`${filePath}: unsupported schemaVersion ${JSON.stringify(version)} (expected ${PROFILE_SCHEMA_VERSION})`,
 		);
