@@ -1,277 +1,247 @@
 /**
- * ProfileResolver: a pure function from profile + registries to an immutable
- * ActivationPlan.
+ * ProfileResolver: turns one profile definition plus an optional runtime
+ * overlay into an immutable selection, resolved against Pi's LIVE resources.
  *
- * Rules:
- * - Glob references (`*`, `?`) expand against the full registry at every
- *   resolution; zero matches is fine (new matches join on the next start) and
- *   is reported in the plan's `unmatched` list so typos are visible.
- * - Literal references must exist; a missing literal fails activation.
- *   Extension references resolve through ResourceRegistry.select (ADR-0006):
- *   registry ID, installed package name/alias, loose-file stem, or an
- *   on-disk path — no pre-registration required.
- * - `alwaysOn` resources and the recursive `dependsOn` closure join every
- *   plan; cycles and missing entries fail loudly (via ResourceRegistry).
- * - Undeclared model/thinking/instructions never enter the plan, so Pi's
- *   current state stays untouched.
- * - MCP references (`mcp`) expand against the server names the launcher
- *   discovered from pi-mcp-adapter's pi-native config files: literal misses
- *   fail loudly; globs expand to zero or more matches (consistent with
- *   skills/extensions). Adapter presence is checked separately by the
- *   launcher/extension (ADR-0002).
- * - Tool globs expand against Pi's built-in tool names only: extension- and
- *   MCP-provided tool names are unknowable before spawn (extension code must
- *   not execute here), so literal tool names pass through unvalidated and
- *   glob matching for contributed tools happens when the extension applies
- *   the plan against Pi's actual registrations (tickets 05+).
+ * ADR-0007 semantics:
+ * - `skills` resolves to a visibility filter (see skill-selection.ts), not
+ *   to loaded resources: every skill stays loaded and user-invocable.
+ * - `mcp` resolves to a runtime server allowlist; a declared MCP intent that
+ *   cannot be satisfied (adapter absent, literal server unknown) fails the
+ *   activation before anything is applied.
+ * - `tools` resolves to an active tool set; literals the live registry does
+ *   not provide yet become `pendingTools` and are retried, because MCP and
+ *   extension tools register after session start.
+ * - `model` and `instructions` pass through unchanged; applying them is the
+ *   caller's job.
+ *
+ * The resolver is a pure function: same inputs, same selection, no I/O.
  */
 
-import { minimatch } from "minimatch";
-
-import type { ProfileDefinition, ProfileModel, ProfileSource, ResolvedProfile } from "./profile-catalog.ts";
-import { ResourceRegistry, type ResourceEntry } from "./resource-registry.ts";
+import { isGlob, matchesReference, suggestNames } from "./name-matching.ts";
+import type { ProfileModel, ProfileSource, ResolvedProfile } from "./profile-catalog.ts";
 import type { RuntimeOverlay } from "./runtime-state-store.ts";
-import type { SkillEntry } from "./skill-registry.ts";
 
-export class ActivationError extends Error {
+/** The live resource view a resolution runs against. */
+export interface LiveResources {
+	skills: Array<{ name: string; filePath: string }>;
+	toolNames: string[];
+	/** MCP adapter state: presence plus discovered server names. */
+	mcp: { adapterPresent: boolean; servers: string[] };
+}
+
+/** The skill references of a visibility filter: literals/globs, or `"all"`
+ *  when the profile declares none and only the overlay narrows (nothing is
+ *  hidden by omission). An empty array means "no skill is visible". */
+export type SkillRefs = string[] | "all";
+
+/** The skill visibility filter handed to the prompt builder each turn. */
+export interface SkillsFilter {
+	refs: SkillRefs;
+	/** Skill name references removed from the visible set. */
+	disabled: string[];
+}
+
+/** A literal reference no live resource provides, with near-name hints. */
+export interface UnresolvedRef {
+	reference: string;
+	suggestions: string[];
+}
+
+export interface SelectionWarnings {
+	skillsUnresolved: UnresolvedRef[];
+	skillsUnmatched: string[];
+	mcpUnmatched: string[];
+	toolsUnmatched: string[];
+}
+
+export interface ResolvedSelection {
+	name: string;
+	source: ProfileSource;
+	instructions?: string;
+	model?: ProfileModel;
+	/** Undefined means no visibility filtering (the whole loaded set). */
+	skills?: SkillsFilter;
+	/** Runtime MCP allowlist; undefined means publish nothing. */
+	mcp?: string[];
+	/** Active tool names; undefined means leave Pi's active set untouched. */
+	tools?: string[];
+	/** Tool literals the live registry does not provide yet. */
+	pendingTools: string[];
+	warnings: SelectionWarnings;
+}
+
+export class SelectionError extends Error {
 	constructor(message: string) {
 		super(message);
-		this.name = "ActivationError";
+		this.name = "SelectionError";
 	}
 }
 
-/** Pi's built-in tool names (pi 0.85.1 `allToolNames`; not exported by the
- *  SDK). The integration suite guards drift. Literal tool names pass through
- *  regardless — extension-provided tools are unknowable before spawn. */
-export const BUILTIN_TOOL_NAMES = ["read", "bash", "powershell", "edit", "write", "grep", "find", "ls"] as const;
-
-const VALID_THINKING_LEVELS = new Set(["off", "minimal", "low", "medium", "high", "xhigh", "max"]);
-
-/** Immutable, fully resolved activation set. */
-export interface ActivationPlan {
-	profile: string;
-	source: ProfileSource;
-	/** "none" exposes everything Pi can discover (the default profile). */
-	filter: "none" | "selection";
-	/** Selected skills with their resolved SKILL.md paths. Empty for default. */
-	skills: SkillEntry[];
-	/** Selected extensions incl. alwaysOn and dependency closure. Empty for default. */
-	extensions: Array<{ id: string; entry: string }>;
-	/** Expanded tool allowlist; undefined when the profile declares no tools. */
-	tools?: string[];
-	/** The raw tool references (globs included) for extension-side expansion
-	 *  against Pi's live tool registry, which includes extension-provided
-	 *  tools the pre-spawn expansion cannot know. Set iff `tools` is set. */
-	toolReferences?: string[];
-	/** Declared model; undefined leaves Pi's current model untouched. */
-	model?: ProfileModel;
-	/** Declared instructions; appended to Pi's system prompt by the extension. */
-	instructions?: string;
-	/** Expanded MCP server allowlist for pi-mcp-adapter coordination;
-	 *  undefined when the profile declares no `mcp` (no coordination). */
-	mcp?: string[];
-	/** Glob references (skills/extensions/MCP) that matched nothing this
-	 *  resolution — surfaced as warnings so zero-match typos are never silent.
-	 *  Tool globs are excluded: extension-contributed tools are unknowable
-	 *  before spawn, so a pre-spawn zero-match proves nothing. */
-	unmatched?: string[];
+function resolveSkills(
+	declared: string[] | undefined,
+	disabled: string[],
+	live: LiveResources["skills"],
+): { filter?: SkillsFilter; warning: Pick<SelectionWarnings, "skillsUnresolved" | "skillsUnmatched"> } {
+	const refs = declared ?? [];
+	const warning = { skillsUnresolved: [] as UnresolvedRef[], skillsUnmatched: [] as string[] };
+	if (declared === undefined) {
+		// The profile declares nothing; an overlay may still hide skills.
+		return { ...(disabled.length > 0 ? { filter: { refs: "all" as const, disabled } } : {}), warning };
+	}
+	for (const ref of refs) {
+		const hits = live.filter((skill) => matchesReference(ref, skill.name));
+		if (hits.length === 0) {
+			if (isGlob(ref)) warning.skillsUnmatched.push(ref);
+			else warning.skillsUnresolved.push({ reference: ref, suggestions: suggestNames(ref, live.map((s) => s.name)) });
+		}
+	}
+	return { filter: { refs, disabled }, warning };
 }
 
-export interface ResolveInput {
-	profile: ResolvedProfile;
-	/** The full SkillRegistry result (not just selected skills). */
-	skills: SkillEntry[];
-	resources: ResourceRegistry;
-	/**
-	 * Validates a declared model (exists and is authenticated) against the
-	 * user's real model/auth state. Returns an error message or undefined.
-	 * The launcher always provides this; a declared model without a validator
-	 * fails activation rather than silently skipping the check.
-	 */
-	validateModel?: (model: ProfileModel) => Promise<string | undefined>;
-	/**
-	 * Server names discovered from pi-mcp-adapter's pi-native config files
-	 * (see mcp-config.ts). Required when the profile declares `mcp`: without
-	 * the discovered names a reference cannot be validated, so activation
-	 * fails rather than passing references through unchecked.
-	 */
-	discoveredMcpServers?: string[];
-	/**
-	 * The runtime overlay (ticket 06): temporary narrowing applied on top of
-	 * the profile definition at every resolution. Overlay references must
-	 * name resources the profile actually resolves (typos fail loudly), and
-	 * `alwaysOn` extensions and their dependency chains cannot be disabled.
-	 */
-	overlay?: RuntimeOverlay;
-}
-
-function isGlob(reference: string): boolean {
-	return reference.includes("*") || reference.includes("?");
-}
-
-/** Expands one reference list against a named universe. Literal misses fail
- *  when `literalMustExist`; globs expand to zero or more matches, and a
- *  zero-match glob is reported through `onZeroMatch`. */
-function expandReferences<T>(
-	references: string[],
-	universe: readonly T[],
-	nameOf: (item: T) => string,
-	kind: string,
-	options?: { literalMustExist?: boolean; onZeroMatch?: (reference: string) => void },
-): T[] {
-	const selected = new Map<string, T>();
-	for (const reference of references) {
-		if (isGlob(reference)) {
-			let matched = 0;
-			for (const item of universe) {
-				if (minimatch(nameOf(item), reference)) {
-					selected.set(nameOf(item), item);
-					matched += 1;
-				}
-			}
-			if (matched === 0) options?.onZeroMatch?.(reference);
+function resolveMcp(
+	declared: string[] | undefined,
+	disabled: string[],
+	live: LiveResources["mcp"],
+	profileName: string,
+): { servers?: string[]; warning: Pick<SelectionWarnings, "mcpUnmatched"> } {
+	const warning = { mcpUnmatched: [] as string[] };
+	if (declared === undefined) {
+		// No declared intent: only an overlay narrowing publishes an allowlist.
+		if (disabled.length === 0 || !live.adapterPresent) return { warning };
+		return { servers: live.servers.filter((server) => !disabled.includes(server)), warning };
+	}
+	if (!live.adapterPresent) {
+		throw new SelectionError(
+			`profile "${profileName}" declares MCP servers but pi-mcp-adapter is not active in this session — ` +
+				`install the adapter or remove the "mcp" declaration`,
+		);
+	}
+	const selected: string[] = [];
+	const missing: string[] = [];
+	for (const ref of declared) {
+		const hits = live.servers.filter((server) => matchesReference(ref, server));
+		if (hits.length > 0) {
+			selected.push(...hits);
 			continue;
 		}
-		const item = universe.find((candidate) => nameOf(candidate) === reference);
-		if (item === undefined) {
-			if (options?.literalMustExist === false) {
-				// Pass-through (e.g. extension-provided tool names).
-				selected.set(reference, reference as T);
-				continue;
-			}
-			throw new ActivationError(`unknown ${kind}: "${reference}" does not match any discovered ${kind}`);
-		}
-		selected.set(reference, item);
+		if (isGlob(ref)) warning.mcpUnmatched.push(ref);
+		else missing.push(ref);
 	}
-	return [...selected.values()];
+	if (missing.length > 0) {
+		throw new SelectionError(
+			`profile "${profileName}": unknown MCP server ${missing.map((name) => JSON.stringify(name)).join(", ")} — ` +
+				`adapter discovered: [${live.servers.join(", ")}]`,
+		);
+	}
+	const servers = [...new Set(selected)].filter((server) => !disabled.includes(server));
+	return { servers, warning };
 }
 
-/** The built-in default profile: everything Pi can discover, no filtering. */
-export function defaultPlan(): ActivationPlan {
-	return { profile: "default", source: "builtin", filter: "none", skills: [], extensions: [] };
+function resolveTools(
+	refs: string[] | undefined,
+	live: LiveResources["toolNames"],
+): {
+	tools?: string[];
+	pendingTools: string[];
+	warning: Pick<SelectionWarnings, "toolsUnmatched">;
+} {
+	const warning = { toolsUnmatched: [] as string[] };
+	if (refs === undefined) return { pendingTools: [], warning };
+	const selected: string[] = [];
+	const pending: string[] = [];
+	for (const ref of refs) {
+		const hits = live.filter((name) => matchesReference(ref, name));
+		if (hits.length > 0) {
+			selected.push(...hits);
+			continue;
+		}
+		if (isGlob(ref)) warning.toolsUnmatched.push(ref);
+		else pending.push(ref);
+	}
+	return { tools: [...new Set([...selected, ...pending])], pendingTools: [...new Set(pending)], warning };
 }
 
-export async function resolveProfile(input: ResolveInput): Promise<ActivationPlan> {
-	const { profile, skills, resources, overlay } = input;
-	const definition: ProfileDefinition = profile.definition;
-	const unmatched: string[] = [];
+/** Resolves one profile (plus overlay) against the live resources. Throws
+ *  SelectionError when the profile's declared MCP intent cannot be
+ *  satisfied; the caller applies nothing in that case.
+ *
+ *  `suppressTools` drops the profile's tool selection entirely, so a
+ *  CLI-declared `--tools`/`--exclude-tools` keeps owning the active set
+ *  (the preference table in docs/product/prd.md). */
+export function resolveSelection(input: {
+	profile: ResolvedProfile;
+	overlay?: RuntimeOverlay;
+	live: LiveResources;
+	suppressTools?: boolean;
+}): ResolvedSelection {
+	const { profile, overlay, live } = input;
+	const definition = profile.definition;
 
-	let mcp: string[] | undefined;
-	if (definition.mcp !== undefined && definition.mcp.length > 0) {
-		if (input.discoveredMcpServers === undefined) {
-			throw new ActivationError(
-				`profile "${profile.name}" declares MCP servers but no adapter server discovery is available`,
-			);
-		}
-		mcp = expandReferences(definition.mcp, input.discoveredMcpServers, (name) => name, "MCP server", {
-			onZeroMatch: (reference) => unmatched.push(`mcp:${reference}`),
-		});
-	}
+	const skills = resolveSkills(definition.skills, overlay?.disabledSkills ?? [], live.skills);
+	const mcp = resolveMcp(definition.mcp, overlay?.disabledMcp ?? [], live.mcp, profile.name);
+	const tools = input.suppressTools === true
+		? { pendingTools: [], warning: { toolsUnmatched: [] } }
+		: resolveTools(overlay?.tools ?? definition.tools, live.toolNames);
 
-	let selectedSkills = expandReferences(definition.skills ?? [], skills, (skill) => skill.name, "skill", {
-		onZeroMatch: (reference) => unmatched.push(`skill:${reference}`),
-	});
-
-	// Extension references resolve through the registry's merged view
-	// (explicit entries over implicit discovery, ADR-0006). Direct path
-	// references (origin "path") are ad-hoc: they bypass the dependency
-	// closure and join the plan afterwards, deduped by entry path.
-	const selection = await resources.select(definition.extensions ?? []);
-	for (const reference of selection.unmatched) unmatched.push(`extension:${reference}`);
-	const pathEntries = selection.entries.filter((entry) => entry.origin === "path");
-	const selectedIds = selection.entries
-		.filter((entry) => entry.origin !== "path")
-		.map((entry) => entry.id)
-		.concat(resources.alwaysOnIds());
-	const closure = await resources.closure(
-		[...new Set(selectedIds)],
-		selection.entries.filter((entry) => entry.origin !== "path"),
-	);
-	const closurePaths = new Set(closure.map((entry) => entry.entry));
-	let planExtensions: ResourceEntry[] = closure.concat(pathEntries.filter((entry) => !closurePaths.has(entry.entry)));
-
-	// --- overlay narrowing (ticket 06) ---
-	// Overlay references must name resources the profile actually resolves
-	// (typos fail loudly), and alwaysOn extensions plus their dependency
-	// chains can never be disabled — safety gates survive experimentation.
-	let toolReferences = definition.tools;
-	if (overlay !== undefined) {
-		if (overlay.disabledSkills !== undefined && overlay.disabledSkills.length > 0) {
-			const active = new Set(selectedSkills.map((skill) => skill.name));
-			for (const name of overlay.disabledSkills) {
-				if (!active.has(name)) {
-					throw new ActivationError(`profile "${profile.name}": overlay disables unknown skill "${name}"`);
-				}
-			}
-			const disabled = new Set(overlay.disabledSkills);
-			selectedSkills = selectedSkills.filter((skill) => !disabled.has(skill.name));
-		}
-		if (overlay.disabledExtensions !== undefined && overlay.disabledExtensions.length > 0) {
-			const protectedIds = new Set(await resources.closure(resources.alwaysOnIds()).then((entries) => entries.map((entry) => entry.id)));
-			const closureIds = new Set(planExtensions.map((entry) => entry.id));
-			for (const id of overlay.disabledExtensions) {
-				if (protectedIds.has(id)) {
-					throw new ActivationError(
-						`profile "${profile.name}": overlay cannot disable "${id}" — it is alwaysOn or in an alwaysOn dependency chain`,
-					);
-				}
-				if (!closureIds.has(id)) {
-					throw new ActivationError(`profile "${profile.name}": overlay disables unknown extension "${id}"`);
-				}
-			}
-			const disabled = new Set(overlay.disabledExtensions);
-			planExtensions = planExtensions.filter((entry) => !disabled.has(entry.id));
-		}
-		if (overlay.disabledMcp !== undefined && overlay.disabledMcp.length > 0) {
-			const active = new Set(mcp ?? []);
-			for (const name of overlay.disabledMcp) {
-				if (!active.has(name)) {
-					throw new ActivationError(`profile "${profile.name}": overlay disables unknown MCP server "${name}"`);
-				}
-			}
-			const disabled = new Set(overlay.disabledMcp);
-			mcp = (mcp ?? []).filter((name) => !disabled.has(name));
-		}
-		if (overlay.tools !== undefined) {
-			toolReferences = overlay.tools;
-		}
-	}
-
-	let tools: string[] | undefined;
-	if (toolReferences !== undefined) {
-		tools = expandReferences(toolReferences, BUILTIN_TOOL_NAMES, (name) => name, "tool", {
-			literalMustExist: false,
-		});
-	}
-
-	let model: ProfileModel | undefined;
-	if (definition.model !== undefined) {
-		const declared = definition.model;
-		if (declared.thinkingLevel !== undefined && !VALID_THINKING_LEVELS.has(declared.thinkingLevel)) {
-			throw new ActivationError(
-				`profile "${profile.name}": invalid thinkingLevel ${JSON.stringify(declared.thinkingLevel)}`,
-			);
-		}
-		if (input.validateModel === undefined) {
-			throw new ActivationError(`profile "${profile.name}" declares a model but no model validator is available`);
-		}
-		const error = await input.validateModel(declared);
-		if (error !== undefined) {
-			throw new ActivationError(`profile "${profile.name}": model ${declared.provider}/${declared.id}: ${error}`);
-		}
-		model = declared;
-	}
-
-	return {
-		profile: profile.name,
+	const selection: ResolvedSelection = {
+		name: profile.name,
 		source: profile.source,
-		filter: "selection",
-		skills: selectedSkills,
-		extensions: planExtensions.map((entry) => ({ id: entry.id, entry: entry.entry })),
-		...(tools !== undefined && toolReferences !== undefined ? { tools, toolReferences: [...toolReferences] } : {}),
-		...(model !== undefined ? { model } : {}),
-		...(definition.instructions !== undefined ? { instructions: definition.instructions } : {}),
-		...(mcp !== undefined ? { mcp } : {}),
-		...(unmatched.length > 0 ? { unmatched } : {}),
+		pendingTools: tools.pendingTools,
+		warnings: {
+			...skills.warning,
+			...mcp.warning,
+			...tools.warning,
+		},
 	};
+	if (definition.instructions !== undefined && definition.instructions.length > 0) {
+		selection.instructions = definition.instructions;
+	}
+	if (definition.model !== undefined) {
+		selection.model = definition.model;
+	}
+	if (skills.filter !== undefined) {
+		selection.skills = skills.filter;
+	}
+	if (mcp.servers !== undefined) {
+		selection.mcp = mcp.servers;
+	}
+	if (tools.tools !== undefined) {
+		selection.tools = tools.tools;
+	}
+	return selection;
+}
+
+/** User-facing warning lines for one resolved selection. */
+export function formatSelectionWarnings(selection: ResolvedSelection): string[] {
+	const lines: string[] = [];
+	for (const unresolved of selection.warnings.skillsUnresolved) {
+		const hint =
+			unresolved.suggestions.length > 0
+				? ` — did you mean: ${unresolved.suggestions.map((name) => JSON.stringify(name)).join(", ")}?`
+				: "";
+		lines.push(
+			`profile "${selection.name}": skill ${JSON.stringify(unresolved.reference)} is not loaded in this session${hint}`,
+		);
+	}
+	if (selection.warnings.skillsUnmatched.length > 0) {
+		lines.push(
+			`profile "${selection.name}": skill glob(s) ${selection.warnings.skillsUnmatched.map((ref) => JSON.stringify(ref)).join(", ")} matched nothing`,
+		);
+	}
+	if (selection.warnings.mcpUnmatched.length > 0) {
+		lines.push(
+			`profile "${selection.name}": MCP glob(s) ${selection.warnings.mcpUnmatched.map((ref) => JSON.stringify(ref)).join(", ")} matched nothing`,
+		);
+	}
+	if (selection.warnings.toolsUnmatched.length > 0) {
+		lines.push(
+			`profile "${selection.name}": tool glob(s) ${selection.warnings.toolsUnmatched.map((ref) => JSON.stringify(ref)).join(", ")} matched nothing`,
+		);
+	}
+	if (selection.pendingTools.length > 0) {
+		lines.push(
+			`profile "${selection.name}": tool(s) ${selection.pendingTools.map((name) => JSON.stringify(name)).join(", ")} are not registered yet — applied when they appear`,
+		);
+	}
+	return lines;
 }

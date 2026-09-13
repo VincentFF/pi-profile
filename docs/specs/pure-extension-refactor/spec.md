@@ -1,6 +1,6 @@
 # pi-profile 纯 extension 重构方案
 
-Status: ready-for-agent
+Status: done
 
 ## Problem Statement
 
@@ -125,7 +125,7 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 **启动（`session_start`，reason 为 `startup`/`new`/`resume`/`fork`）**
 
-1. 读 runtime state 与 catalogs；项目文件仅当 `ctx.isProjectTrusted()` 时读取。
+1. 读 runtime state 与 catalogs；项目文件仅当 `ctx.isProjectTrusted()` 时读取。stored overlay 不参与启动激活：overlay 只影响写入它的那个 runtime，`/profile customize` 之后重启不会继承。
 2. 解析 profile（`--profile` flag 优先于保存的 state，`--profile` 不写 state）。
 3. 校验：model 可解析且已认证；声明 `mcp` 时 adapter 存在且 server 已发现。
 4. 校验失败：不应用该 profile 的任何设置，保持原生状态，输出可行动错误（候选列表 + did-you-mean）。
@@ -165,6 +165,7 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 | 情形 | 行为 |
 | --- | --- |
 | 未知 `--profile` 值 | 列出可用 profile（含项目 catalog）后不应用任何 profile |
+| 保存的 profile 已不存在 | 回退 `default` 并警告一次（恢复是便利，不是承诺）；显式 `--profile` 值仍硬失败 |
 | 未注册 `--profile`（未安装本扩展） | Pi 原生 unknown option 错误 |
 | model 未知或未认证 | 激活失败，不应用任何 profile 设置 |
 | 声明 `mcp` 而 adapter 缺失或 server 未发现 | 激活失败，不应用任何 profile 设置 |
@@ -190,12 +191,12 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 | `src/switching/apply-plan.ts` | 重写为 `apply-profile.ts` | 运行时应用；删除 `LaunchPlanFile` 与 launch plan 文件读写 |
 | `src/switching/switch-profile.ts` | 重写 | 校验 → 持久化 → 应用；无快照、无 reload、无回滚 |
 | `src/switching/customize.ts` | 保留 | overlay 去 `disabledExtensions` |
-| `src/switching/list-profiles.ts`、`status.ts`、`profile-crud.ts`、`profile-wizard.ts`、`mcp-toggle.ts` | 保留 | status 去 extension/trust/filter 字段，增 unresolved/pending 报告 |
+| `src/switching/list-profiles.ts`、`status.ts`、`profile-crud.ts`、`profile-wizard.ts`、`mcp-toggle.ts` | 保留 | status 去 extension/trust/filter 字段，增 unresolved/pending 与 filter outcome 报告 |
 | `src/switching/resource-crud.ts`、`resource-wizard.ts` | 删除 | `/profile resource` 命令族移除 |
-| `src/switching/tool-references.ts` | 保留 | 作为 tool 解析核心，增加 pending 语义 |
-| `src/tui/profile-selector.ts`、`profile-editor.ts` | 保留 | 字段更新为 skills/mcp/tools/model/instructions |
-| `src/tui/resource-editor.ts` | 删除 | 无 resource registry |
+| `src/switching/tool-references.ts` | 删除 | tool 展开已内置于 resolver；旧的 droppedLiterals 语义与 pending 冲突 |
+| 选择器与编辑向导 | 保留 | 选择器位于 `extensions/pi-profile/index.ts`，向导位于 `src/switching/profile-wizard.ts`；字段更新为 skills/mcp/tools/model/instructions |
 | `src/skill-selection.ts` | 新增 | 段落重建与替换、失败守卫、一次性 warning |
+| `src/name-matching.ts` | 新增 | 字面量/glob 匹配与 did-you-mean 建议的共享实现（resolver 与 skill-selection 共用） |
 | `src/model-selection.ts` | 新增 | 显式选择检测与预设应用 |
 | `src/startup-selection.ts` | 新增 | `--profile` flag 注册与读取、`parseArgs` 显式声明检测 |
 | `extensions/pi-profile/index.ts` | 重写 | 注册 `/profile` 命令族与 `--profile` flag、`session_start` 应用、`before_agent_start` 过滤与 instructions、MCP 发布 |
@@ -212,7 +213,7 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 | `.pi/pi-profile-state.json` | 项目 runtime state | 同上 |
 | `~/.pi/agent/resources.json`、`.pi/resources.json` | —— | 不再读取；存在时启动警告一次 |
 
-`pi-profile-state.json` 的 `activeProfile` 决定 plain `pi` 启动时应用的 profile；`--profile <name>` 只作用于本次启动。
+`pi-profile-state.json` 的 `activeProfile` 决定 plain `pi` 启动时应用的 profile；`--profile <name>` 只作用于本次启动。`overlay` 只属于写入它的 runtime：启动不应用，`/profile use` 清除，`/profile reset` 删除。
 
 ## 通用规则
 
@@ -334,3 +335,14 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 - Pi 版本基线为 0.85.1；上述 API 依据均在该版本验证。
 - skills 过滤依赖 Pi 的 prompt 段落格式。Pi 升级改变格式时，过滤退化为不过滤并报告 warning，集成测试同时失败以暴露漂移。
 - 本方案使 `pi` 与 `pi-profile` 不再有入口差异：安装一次，所有 Pi 启动都受活动 profile 影响，`pi --profile default` 提供原生基线。
+
+## Comments
+
+2026-09-13 — implemented in the working tree of `feat/pi-extension` (P0–P6); verification: `npm run check` clean, `npm test` 188/188 passing, including 10 real-`pi --mode rpc` integration tests.
+
+Two-axis code review (Standards / Spec) findings and dispositions:
+
+- Standards: deleted dead `MissingMcpAdapterError`/`isAdapterExtension`, dead `tool-references.ts`; renamed `switch-profile.ts`/`SwitchDeps`/`SwitchError`/`SwitchResult` to activation vocabulary and the resolver's error to `SelectionError`; extracted `name-matching.ts` and `stateDirFor`; removed a dead pending-tools loop; fixed the no-op usage branch, the stringly-typed replacement parse, and the duplicated test fake.
+- Spec: implemented the bare `/profile` picker (with list fallback and cancel), the leftover `resources.json` startup warning, `--tools`/`--exclude-tools` precedence (resolver `suppressTools`), the filter-outcome report in `/profile status` plus a `no-read-tool` warning, and the stale saved profile fallback documented in the error table.
+
+Not covered by automation: the TUI manual checklist in `docs/acceptance.md` (steps 3–9) and the `-r` recorded-model precedence path (unit-tested via `readSessionChoices`/`decidePreset`, not exercised end-to-end).

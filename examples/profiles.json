@@ -1,5 +1,5 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
   "profiles": {
     "review": {
       "label": "Code review",
@@ -7,9 +7,6 @@
       "skills": [
         "code-review",
         "diagnosing-bugs"
-      ],
-      "extensions": [
-        "pi-mcp-adapter"
       ],
       "mcp": [
         "github"
@@ -26,9 +23,6 @@
       "label": "Implementation",
       "skills": [
         "tdd"
-      ],
-      "extensions": [
-        "pi-mcp-adapter"
       ],
       "mcp": [
         "github",

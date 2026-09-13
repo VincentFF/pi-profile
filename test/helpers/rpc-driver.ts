@@ -132,8 +132,7 @@ export class RpcDriver {
 		await new Promise((resolve) => setTimeout(resolve, 300));
 	}
 
-	/** Resolves once the spawned process has fully exited (in RPC launcher
-	 *  tests: launcher exit implies the pi child is already dead). */
+	/** Resolves once the spawned process has fully exited. */
 	async waitForExit(): Promise<void> {
 		if (this.child.exitCode !== null || this.child.signalCode !== null) return;
 		await new Promise((resolve) => this.child.once("exit", resolve));

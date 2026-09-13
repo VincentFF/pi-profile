@@ -1,11 +1,13 @@
 /**
- * ProfileCatalogStore: the WRITE side of a profile catalog file
- * (ticket 09), kept separate from the read-only ProfileCatalog.
+ * ProfileCatalogStore: the WRITE side of a profile catalog file, kept
+ * separate from the read-only ProfileCatalog.
  *
  * Invariants:
- * - Whole-file overwrites (pretty-printed, schemaVersion envelope);
- *   wizard saves never block on concurrent edits — re-read at write time,
- *   same-name conflicts resolve last-write-wins.
+ * - Whole-file overwrites (pretty-printed, `schemaVersion 2` envelope).
+ *   A version 1 file is read with its `extensions` fields dropped and is
+ *   rewritten as version 2 on the next save; wizard saves never block on
+ *   concurrent edits — re-read at write time, same-name conflicts resolve
+ *   last-write-wins.
  * - Definitions are complete and self-contained: no inheritance fields
  *   (`extends`, merge, array append) exist or are accepted.
  * - Definitions are re-parsed through the catalog's own
@@ -21,6 +23,7 @@ import { isRecord, readJsonFile } from "./json-file.ts";
 import {
 	CatalogError,
 	DEFAULT_PROFILE_NAME,
+	parseCatalogDocument,
 	parseProfileDefinition,
 	PROFILE_SCHEMA_VERSION,
 	type ProfileDefinition,
@@ -34,7 +37,8 @@ export class ProfileCatalogStore {
 	}
 
 	/** Validated definitions: missing file → empty; malformed → CatalogError
-	 *  (catalog errors never pass silently, even on the write path). */
+	 *  (catalog errors never pass silently, even on the write path).
+	 *  Version 1 files load with `extensions` dropped. */
 	async readDefinitions(): Promise<Map<string, ProfileDefinition>> {
 		const result = await readJsonFile(this.#filePath);
 		if (!result.ok) {
@@ -44,24 +48,7 @@ export class ProfileCatalogStore {
 		if (!isRecord(result.value)) {
 			throw new CatalogError(`${this.#filePath}: catalog must be an object`);
 		}
-		if (result.value.schemaVersion !== PROFILE_SCHEMA_VERSION) {
-			throw new CatalogError(
-				`${this.#filePath}: unsupported schemaVersion ${JSON.stringify(result.value.schemaVersion)} (expected ${PROFILE_SCHEMA_VERSION})`,
-			);
-		}
-		if (!isRecord(result.value.profiles)) {
-			throw new CatalogError(`${this.#filePath}: "profiles" must be an object mapping names to definitions`);
-		}
-		const definitions = new Map<string, ProfileDefinition>();
-		for (const [name, raw] of Object.entries(result.value.profiles)) {
-			if (name === DEFAULT_PROFILE_NAME) {
-				throw new CatalogError(
-					`${this.#filePath}: "${DEFAULT_PROFILE_NAME}" is built in and must not be defined in the catalog`,
-				);
-			}
-			definitions.set(name, parseProfileDefinition(name, raw));
-		}
-		return definitions;
+		return parseCatalogDocument(result.value, this.#filePath).profiles;
 	}
 
 	/** Overwrites the file with the given definitions (last write wins). */

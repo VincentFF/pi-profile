@@ -6,73 +6,91 @@ import { formatProfileList, listProfiles } from "../src/switching/list-profiles.
 import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
-let savedHome: string | undefined;
 
 beforeEach(async () => {
 	fixture = await createPiFixture();
-	savedHome = process.env.HOME;
-	process.env.HOME = fixture.root;
+	await writeFile(
+		path.join(fixture.agentDir, "profiles.json"),
+		JSON.stringify({
+			schemaVersion: 2,
+			profiles: {
+				review: { label: "Review", skills: ["code-review"] },
+				implement: { skills: [] },
+			},
+		}),
+	);
 });
 
 afterEach(async () => {
-	process.env.HOME = savedHome;
 	await rm(fixture.root, { recursive: true, force: true });
 });
 
-const input = () => ({ realAgentDir: fixture.agentDir, cwd: fixture.cwd });
-
-async function writeGlobal(profiles: Record<string, unknown>): Promise<void> {
-	await writeFile(path.join(fixture.agentDir, "profiles.json"), JSON.stringify({ schemaVersion: 1, profiles }));
-}
-
-async function writeProject(profiles: Record<string, unknown>): Promise<void> {
-	await writeFile(path.join(fixture.cwd, ".pi", "profiles.json"), JSON.stringify({ schemaVersion: 1, profiles }));
-}
-
-async function trustProject(): Promise<void> {
-	await writeFile(path.join(fixture.agentDir, "trust.json"), JSON.stringify({ [fixture.cwd]: true }));
-}
-
 describe("listProfiles", () => {
-	it("lists the built-in default plus global profiles with their sources", async () => {
-		await writeGlobal({ review: { label: "Code review" }, impl: { description: "Implementation" } });
+	it("lists the built-in default first, then global profiles", async () => {
+		const { entries } = await listProfiles({
+			realAgentDir: fixture.agentDir,
+			cwd: fixture.cwd,
+			projectTrusted: false,
+		});
 
-		const entries = await listProfiles(input());
-
-		expect(entries.map((entry) => `${entry.name}:${entry.source}`)).toContain("default:builtin");
-		expect(entries.find((entry) => entry.name === "review")?.label).toBe("Code review");
+		expect(entries.map((entry) => `${entry.name}:${entry.source}`)).toEqual([
+			"default:builtin",
+			"review:global",
+			"implement:global",
+		]);
+		expect(entries[1]?.label).toBe("Review");
 	});
 
-	it("shows project profiles only when trusted, with the winning source", async () => {
-		await writeGlobal({ review: {}, shared: { label: "global shared" } });
-		await writeProject({ proj: {}, shared: { label: "project shared" } });
+	it("shows project overrides only in a trusted project and marks the shadow", async () => {
+		await writeFile(
+			path.join(fixture.cwd, ".pi", "profiles.json"),
+			JSON.stringify({ schemaVersion: 2, profiles: { review: { skills: ["project-skill"] }, local: {} } }),
+		);
 
-		// Untrusted: only the global shared definition is visible.
-		expect((await listProfiles(input())).map((entry) => entry.name).sort()).toEqual([
-			"default",
-			"review",
-			"shared",
-		]);
+		const untrusted = await listProfiles({
+			realAgentDir: fixture.agentDir,
+			cwd: fixture.cwd,
+			projectTrusted: false,
+		});
+		expect(untrusted.entries.map((entry) => entry.name)).toEqual(["default", "review", "implement"]);
 
-		await trustProject();
-		const entries = await listProfiles(input());
-		const shared = entries.find((entry) => entry.name === "shared");
-		expect(shared?.source).toBe("project");
-		expect(shared?.shadowsGlobal).toBe(true);
-		expect(shared?.label).toBe("project shared");
+		const trusted = await listProfiles({
+			realAgentDir: fixture.agentDir,
+			cwd: fixture.cwd,
+			projectTrusted: true,
+		});
+		const review = trusted.entries.find((entry) => entry.name === "review");
+		expect(review?.source).toBe("project");
+		expect(review?.shadowsGlobal).toBe(true);
+		expect(trusted.entries.some((entry) => entry.name === "local")).toBe(true);
+	});
+
+	it("carries catalog compatibility warnings", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "profiles.json"),
+			JSON.stringify({ schemaVersion: 1, profiles: { review: { extensions: ["x"] } } }),
+		);
+
+		const { warnings } = await listProfiles({
+			realAgentDir: fixture.agentDir,
+			cwd: fixture.cwd,
+			projectTrusted: false,
+		});
+
+		expect(warnings.join("\n")).toMatch(/schemaVersion 1/);
 	});
 });
 
 describe("formatProfileList", () => {
-	it("marks the active profile and shadowing", () => {
+	it("marks the active profile and shows source, shadow, and label", () => {
 		const text = formatProfileList(
 			[
 				{ name: "default", source: "builtin", shadowsGlobal: false },
-				{ name: "shared", source: "project", label: "project shared", shadowsGlobal: true },
+				{ name: "review", source: "project", shadowsGlobal: true, label: "Review" },
 			],
-			"shared",
+			"review",
 		);
 
-		expect(text).toContain("shared [project] (shadows global) — project shared ← active");
+		expect(text).toBe("default [builtin]\nreview [project] (shadows global) — Review ← active");
 	});
 });

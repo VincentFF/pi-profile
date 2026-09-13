@@ -4,38 +4,39 @@
  *
  * Constructed with the directory holding the state file: the real agent dir
  * for global state, the project's `.pi` dir for project state (project
- * state is only touched when the trust check passed). The launcher only
- * reads — the initial CLI selection is transient by design; `/profile use`
- * (ticket 05) writes both the selection and the rollback anchor.
+ * state is only touched when Pi reports the project trusted).
  *
- * `activeProfile` is the saved selection restored on launch;
- * `lastVerifiedProfile` is the rollback anchor: the last profile whose
- * activation completed successfully. They differ only between a failed
- * activation and its rollback.
+ * `activeProfile` is the saved selection applied on the next start;
+ * `overlay` is the temporary narrowing of the active profile, written by
+ * `/profile customize` and deleted by `/profile reset`.
  *
  * A missing or malformed state file is not an error on read — it simply
  * means "fall back to the default profile". Unexpected I/O errors
- * propagate. Writes replace the file wholesale (both fields are always
- * written together by the switch path).
+ * propagate. A state file written by an older pi-profile is read with its
+ * retired fields (`lastVerifiedProfile`, `overlay.disabledExtensions`)
+ * ignored; the next write drops them.
  */
 
 import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 
 import { isRecord, readJsonFile } from "./json-file.ts";
+import type { ProfileSource } from "./profile-catalog.ts";
+
+/** The state directory for one profile's source scope: the project's `.pi`
+ *  dir for project profiles, the agent dir otherwise (built-in `default` is
+ *  treated as global). */
+export function stateDirFor(source: ProfileSource, dirs: { agentDir: string; cwd: string }): string {
+	return source === "project" ? path.join(dirs.cwd, ".pi") : dirs.agentDir;
+}
 
 export interface RuntimeState {
 	activeProfile?: string;
-	lastVerifiedProfile?: string;
-	/** The runtime overlay: temporary narrowing of the active profile
-	 *  (ticket 06). Never written to catalogs, never applied at launch —
-	 *  only in-session switches/reloads read it. */
 	overlay?: RuntimeOverlay;
 }
 
 export interface RuntimeOverlay {
 	disabledSkills?: string[];
-	disabledExtensions?: string[];
 	disabledMcp?: string[];
 	/** Replaces the profile's tool references when set. */
 	tools?: string[];
@@ -44,7 +45,7 @@ export interface RuntimeOverlay {
 function parseOverlay(value: unknown): RuntimeOverlay | undefined {
 	if (!isRecord(value)) return undefined;
 	const overlay: RuntimeOverlay = {};
-	for (const key of ["disabledSkills", "disabledExtensions", "disabledMcp", "tools"] as const) {
+	for (const key of ["disabledSkills", "disabledMcp", "tools"] as const) {
 		const list = value[key];
 		if (Array.isArray(list) && list.every((entry) => typeof entry === "string")) {
 			overlay[key] = list;
@@ -69,9 +70,6 @@ export class RuntimeStateStore {
 		if (typeof result.value.activeProfile === "string") {
 			state.activeProfile = result.value.activeProfile;
 		}
-		if (typeof result.value.lastVerifiedProfile === "string") {
-			state.lastVerifiedProfile = result.value.lastVerifiedProfile;
-		}
 		const overlay = parseOverlay(result.value.overlay);
 		if (overlay !== undefined) {
 			state.overlay = overlay;
@@ -81,22 +79,21 @@ export class RuntimeStateStore {
 
 	async write(state: RuntimeState): Promise<void> {
 		await mkdir(path.dirname(this.#statePath), { recursive: true });
-		await writeFile(this.#statePath, `${JSON.stringify(state, null, 2)}\n`);
+		const document: RuntimeState = {};
+		if (state.activeProfile !== undefined) document.activeProfile = state.activeProfile;
+		if (state.overlay !== undefined) document.overlay = state.overlay;
+		await writeFile(this.#statePath, `${JSON.stringify(document, null, 2)}\n`);
 	}
 
 	/** Read-modify-write merge. A field set to `undefined` is deleted; absent
 	 *  fields keep their stored value. Used by the switch/customize paths so
-	 *  one concern (selection, anchor, overlay) never clobbers another. */
+	 *  one concern (selection, overlay) never clobbers another. */
 	async update(patch: Partial<RuntimeState>): Promise<RuntimeState> {
 		const current = await this.read();
 		const next: RuntimeState = { ...current };
 		if ("activeProfile" in patch) {
 			if (patch.activeProfile === undefined) delete next.activeProfile;
 			else next.activeProfile = patch.activeProfile;
-		}
-		if ("lastVerifiedProfile" in patch) {
-			if (patch.lastVerifiedProfile === undefined) delete next.lastVerifiedProfile;
-			else next.lastVerifiedProfile = patch.lastVerifiedProfile;
 		}
 		if ("overlay" in patch) {
 			if (patch.overlay === undefined) delete next.overlay;

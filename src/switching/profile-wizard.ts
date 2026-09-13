@@ -67,8 +67,7 @@ async function captureDefinition(
 	else if (existing?.description !== undefined) definition.description = existing.description;
 
 	const listFields = [
-		["skills", "skills (comma-separated names or globs, empty = none)"],
-		["extensions", "extensions (resource ids, empty = none)"],
+		["skills", "skills (comma-separated names or globs, empty = all visible)"],
 		["mcp", "mcp servers (names or globs, empty = none)"],
 		["tools", "tools (names or globs, empty = pi default set)"],
 	] as const;

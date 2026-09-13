@@ -1,148 +1,128 @@
-import { readFile, rm } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { defaultPlan } from "../src/profile-resolver.ts";
-import { generateRuntimeDir } from "../src/settings-generator.ts";
-import { customizeOverlay, parseCustomizeArgs, resetOverlay } from "../src/switching/customize.ts";
-import type { SwitchDeps } from "../src/switching/switch-profile.ts";
-import { addGlobalSkill, createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
+import { RuntimeStateStore } from "../src/runtime-state-store.ts";
+import { CUSTOMIZE_USAGE, customizeOverlay, parseCustomizeArgs, resetOverlay } from "../src/switching/customize.ts";
+import { ActivationError, type ActivationDeps } from "../src/switching/activate-profile.ts";
+import { fakeApplySurface, liveResources } from "./helpers/fake-apply.ts";
+import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
-let savedHome: string | undefined;
-let runtimeDir: string;
 
 beforeEach(async () => {
 	fixture = await createPiFixture();
-	savedHome = process.env.HOME;
-	process.env.HOME = fixture.root;
-	runtimeDir = (await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir })).runtimeDir;
+	await writeFile(
+		path.join(fixture.agentDir, "profiles.json"),
+		JSON.stringify({
+			schemaVersion: 2,
+			profiles: {
+				review: { skills: ["git-commit", "code-review"], tools: ["read"], mcp: ["atlassian"] },
+				broken: { mcp: ["ghost-server"] },
+			},
+		}),
+	);
 });
 
 afterEach(async () => {
-	process.env.HOME = savedHome;
 	await rm(fixture.root, { recursive: true, force: true });
 });
 
-const deps = (): SwitchDeps => ({
-	runtimeDir,
-	realAgentDir: fixture.agentDir,
-	cwd: fixture.cwd,
-	waitForIdle: async () => {},
-	reload: async () => {},
-	assertStale: () => {
-		throw new Error("stale");
-	},
-});
-
-async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
-	await import("node:fs/promises").then((fs) =>
-		fs.writeFile(path.join(fixture.agentDir, "profiles.json"), JSON.stringify({ schemaVersion: 1, profiles })),
-	);
+function deps(): ActivationDeps {
+	const { surface } = fakeApplySurface();
+	return {
+		agentDir: fixture.agentDir,
+		cwd: fixture.cwd,
+		projectTrusted: false,
+		live: liveResources(),
+		surface,
+		presetInputs: {
+			explicit: { model: false, thinking: false, tools: false },
+			session: { hasRecordedModel: false, hasRecordedThinking: false },
+			force: false,
+		},
+	};
 }
 
-async function activate(name: string): Promise<void> {
-	// Simulate a launched named profile: rewrite the runtime for it.
-	const { switchProfile } = await import("../src/switching/switch-profile.ts");
-	await switchProfile(name, deps(), { clearOverlay: true });
-}
-
-async function readState(): Promise<Record<string, unknown>> {
-	return JSON.parse(await readFile(path.join(fixture.agentDir, "pi-profile-state.json"), "utf8"));
-}
-
-async function readSettings(): Promise<Record<string, unknown>> {
-	return JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
-}
+const target = { profile: { name: "review", source: "global" as const } };
 
 describe("parseCustomizeArgs", () => {
-	it("parses disable/enable/tools mutations", () => {
-		expect(parseCustomizeArgs("disable skill noisy")({})).toEqual({ disabledSkills: ["noisy"] });
-		expect(parseCustomizeArgs("enable skill noisy")({ disabledSkills: ["noisy"] })).toEqual({});
+	it("disables a skill", () => {
+		expect(parseCustomizeArgs("disable skill git-commit")({})).toEqual({ disabledSkills: ["git-commit"] });
+	});
+
+	it("disables an mcp server", () => {
+		expect(parseCustomizeArgs("disable mcp atlassian")({})).toEqual({ disabledMcp: ["atlassian"] });
+	});
+
+	it("re-enables a reference", () => {
+		expect(parseCustomizeArgs("enable skill git-commit")({ disabledSkills: ["git-commit"] })).toEqual({});
+	});
+
+	it("replaces tool references and clears them", () => {
 		expect(parseCustomizeArgs("tools read grep")({})).toEqual({ tools: ["read", "grep"] });
 		expect(parseCustomizeArgs("tools")({ tools: ["read"] })).toEqual({});
 	});
 
-	it("rejects malformed invocations", () => {
-		expect(() => parseCustomizeArgs("disable")).toThrow(/usage/);
-		expect(() => parseCustomizeArgs("frobnicate skill x")).toThrow(/usage/);
+	it("rejects an unknown kind or malformed action", () => {
+		expect(() => parseCustomizeArgs("disable extension x")).toThrow(ActivationError);
+		expect(() => parseCustomizeArgs("disable skill")).toThrow(CUSTOMIZE_USAGE);
 	});
 });
 
 describe("customizeOverlay / resetOverlay", () => {
-	it("applies the overlay through re-resolution and persists it to state, never the catalog", async () => {
-		await addGlobalSkill(fixture, "alpha-skill");
-		await addGlobalSkill(fixture, "beta-skill");
-		await writeCatalog({ review: { skills: ["alpha-skill", "beta-skill"] } });
-		await activate("review");
+	it("applies the narrowed selection and persists the overlay", async () => {
+		const result = await customizeOverlay({ ...deps(), ...target }, (overlay) => ({
+			...overlay,
+			disabledSkills: ["git-commit"],
+		}));
 
-		await customizeOverlay(deps(), parseCustomizeArgs("disable skill beta-skill"));
-
-		const settings = await readSettings();
-		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md")]);
-		expect((await readState()).overlay).toEqual({ disabledSkills: ["beta-skill"] });
-		// The catalog file is untouched.
-		const catalog = JSON.parse(await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8"));
-		expect(catalog.profiles.review.skills).toEqual(["alpha-skill", "beta-skill"]);
+		expect(result.selection.skills).toEqual({
+			refs: ["git-commit", "code-review"],
+			disabled: ["git-commit"],
+		});
+		expect(await new RuntimeStateStore(fixture.agentDir).read()).toEqual({
+			activeProfile: "review",
+			overlay: { disabledSkills: ["git-commit"] },
+		});
 	});
 
-	it("rejects disabling a resource the profile does not resolve, writing nothing", async () => {
-		await addGlobalSkill(fixture, "alpha-skill");
-		await writeCatalog({ review: { skills: ["alpha-skill"] } });
-		await activate("review");
-		const before = await readSettings();
+	it("builds the mutation on top of the stored overlay", async () => {
+		const store = new RuntimeStateStore(fixture.agentDir);
+		await store.write({ activeProfile: "review", overlay: { disabledSkills: ["git-commit"] } });
 
-		await expect(customizeOverlay(deps(), parseCustomizeArgs("disable skill ghost"))).rejects.toThrow(
-			/overlay disables unknown skill "ghost"/,
-		);
+		await customizeOverlay({ ...deps(), ...target }, parseCustomizeArgs("disable mcp atlassian"));
 
-		expect(await readSettings()).toEqual(before);
-		const { existsSync } = await import("node:fs");
-		expect(existsSync(path.join(fixture.agentDir, "pi-profile-state.json"))).toBe(false);
+		expect(await store.read()).toEqual({
+			activeProfile: "review",
+			overlay: { disabledSkills: ["git-commit"], disabledMcp: ["atlassian"] },
+		});
 	});
 
-	it("reset discards the overlay and reactivates the profile exactly as declared", async () => {
-		await addGlobalSkill(fixture, "alpha-skill");
-		await addGlobalSkill(fixture, "beta-skill");
-		await writeCatalog({ review: { skills: ["alpha-skill", "beta-skill"] } });
-		await activate("review");
-		await customizeOverlay(deps(), parseCustomizeArgs("disable skill beta-skill"));
+	it("reactivates the declared profile and drops the overlay on reset", async () => {
+		const store = new RuntimeStateStore(fixture.agentDir);
+		await store.write({ activeProfile: "review", overlay: { disabledMcp: ["atlassian"] } });
 
-		await resetOverlay(deps());
+		const result = await resetOverlay({ ...deps(), ...target });
 
-		const settings = await readSettings();
-		expect(settings.skills).toEqual([
-			path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"),
-			path.join(fixture.agentDir, "skills", "beta-skill", "SKILL.md"),
-		]);
-		expect((await readState()).overlay).toBeUndefined();
+		expect(result.selection.skills).toEqual({ refs: ["git-commit", "code-review"], disabled: [] });
+		expect(result.selection.mcp).toEqual(["atlassian"]);
+		expect(await store.read()).toEqual({ activeProfile: "review" });
 	});
 
-	it("a plain reload re-applies the stored overlay so runtime and state never diverge", async () => {
-		await addGlobalSkill(fixture, "alpha-skill");
-		await addGlobalSkill(fixture, "beta-skill");
-		await writeCatalog({ review: { skills: ["alpha-skill", "beta-skill"] } });
-		await activate("review");
-		await customizeOverlay(deps(), parseCustomizeArgs("disable skill beta-skill"));
+	it("leaves the stored overlay untouched when the activation fails", async () => {
+		const store = new RuntimeStateStore(fixture.agentDir);
+		await store.write({ activeProfile: "broken", overlay: { disabledSkills: ["git-commit"] } });
 
-		const { switchProfile } = await import("../src/switching/switch-profile.ts");
-		await switchProfile(undefined, deps(), { reloadCurrent: true });
-
-		const settings = await readSettings();
-		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md")]);
-		expect((await readState()).overlay).toEqual({ disabledSkills: ["beta-skill"] });
-	});
-
-	it("narrows the default profile via a synthetic everything-minus-disabled selection", async () => {
-		await addGlobalSkill(fixture, "alpha-skill");
-		await addGlobalSkill(fixture, "beta-skill");
-		await writeCatalog({});
-		// The launch profile is default (the beforeEach generated it).
-
-		await customizeOverlay(deps(), parseCustomizeArgs("disable skill beta-skill"));
-
-		const settings = await readSettings();
-		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md")]);
-		expect(settings.defaultProjectTrust).toBe("never");
+		await expect(
+			customizeOverlay(
+				{ ...deps(), profile: { name: "broken", source: "global" } },
+				parseCustomizeArgs("disable skill git-commit"),
+			),
+		).rejects.toThrow(/unknown MCP server "ghost-server"/);
+		expect(await store.read()).toEqual({
+			activeProfile: "broken",
+			overlay: { disabledSkills: ["git-commit"] },
+		});
 	});
 });

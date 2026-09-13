@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "pi-profile profile catalog",
-  "description": "Named profile definitions (global ~/.pi/agent/profiles.json or project .pi/profiles.json). Definitions are complete and self-contained: there is no inheritance field, and resource references are names/globs, never copies. The built-in \"default\" profile must not be defined here.",
+  "description": "Named profile definitions (global ~/.pi/agent/profiles.json or project .pi/profiles.json). Definitions are complete and self-contained: there is no inheritance field, and references are names/globs, never copies. Extensions are not a profile resource (ADR-0007): every installed extension loads natively. The built-in \"default\" profile must not be defined here.",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -10,7 +10,7 @@
   "additionalProperties": false,
   "properties": {
     "schemaVersion": {
-      "const": 1
+      "enum": [1, 2]
     },
     "profiles": {
       "type": "object",
@@ -41,14 +41,14 @@
           "items": {
             "type": "string"
           },
-          "description": "Skill names or globs (e.g. \"review\", \"internal-*\") referencing discovered skills."
+          "description": "Skill names or globs. Controls what the model sees in the system prompt's skills section; every loaded skill stays callable by the user through /skill:name."
         },
         "extensions": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "Resource-registry IDs or globs. alwaysOn entries and their dependency closure join every profile."
+          "description": "Deprecated (schemaVersion 1). Extensions are always loaded natively (ADR-0007); the field is ignored with a warning."
         },
         "mcp": {
           "type": "array",
@@ -62,7 +62,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Tool names or globs expanded against Pi's live registry (including extension tools)."
+          "description": "Tool names or globs expanded against Pi's live registry (including extension and MCP tools). Names that are not registered yet are retried each turn."
         },
         "model": {
           "type": "object",
@@ -81,7 +81,8 @@
             "thinkingLevel": {
               "type": "string"
             }
-          }
+          },
+          "description": "Session-start model preset. An explicit --model/--thinking flag or a model recorded in the session history wins; /profile use applies the preset."
         },
         "instructions": {
           "type": "string",

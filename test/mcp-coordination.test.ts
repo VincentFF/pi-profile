@@ -1,6 +1,6 @@
 import { describe, expect, it } from "vitest";
 
-import { isAdapterExtension, MCP_ALLOWLIST_EVENT, probeAdapterPresence } from "../src/mcp-coordination.ts";
+import { MCP_ALLOWLIST_EVENT, probeAdapterPresence } from "../src/mcp-coordination.ts";
 import { fakeEventBus, installFakeAdapter } from "./helpers/fake-event-bus.ts";
 
 describe("probeAdapterPresence", () => {
@@ -13,20 +13,6 @@ describe("probeAdapterPresence", () => {
 		installFakeAdapter(bus);
 
 		expect(probeAdapterPresence(bus)).toBe(true);
-	});
-});
-
-describe("isAdapterExtension", () => {
-	it("matches an npm package install path", () => {
-		expect(isAdapterExtension({ entry: "/x/npm/node_modules/pi-mcp-adapter/index.ts" })).toBe(true);
-	});
-
-	it("matches a local directory named after the adapter", () => {
-		expect(isAdapterExtension({ entry: "/home/u/exts/pi-mcp-adapter/index.ts" })).toBe(true);
-	});
-
-	it("rejects unrelated extensions", () => {
-		expect(isAdapterExtension({ entry: "/home/u/exts/my-tools/index.ts" })).toBe(false);
 	});
 });
 

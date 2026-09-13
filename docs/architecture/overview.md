@@ -2,262 +2,263 @@
 
 ## 范围
 
-本文定义 `pi-profile` 的内部设计：总体结构、模块接口、数据契约、激活流程与包结构。产品目标、用户可见语义与验收标准见 `docs/product/prd.md`；关键决策的动机见 `docs/adr/`。
+本文定义 `pi-profile` 的内部设计：总体结构、模块接口、数据契约、激活与切换流程、包结构。产品目标与用户可见语义见 `docs/product/prd.md`；关键决策的动机见 `docs/adr/`。
 
-宿主架构：子进程 + 生成式 settings（ADR-0005，取代 ADR-0001 的 SDK 宿主方案）。
+宿主架构：纯 Pi extension（ADR-0007，取代 ADR-0001/ADR-0005 的 launcher + 生成式 settings）。
 
 ## 总体架构
 
 ```text
-                         ┌─────────────────────────────┐
-                         │       pi-profile CLI         │
-                         │  positional profile + 全量   │
-                         │  Pi 参数透传（拦截 --approve）│
-                         └──────────────┬──────────────┘
-                                        │
-        ┌───────────────────────────────┼───────────────────────────────┐
-        │ ProfileCatalog │ ResourceRegistry │ SkillRegistry │ RuntimeStateStore
-        │ ProfileResolver（含 trust 守门） │ SettingsGenerator            │
-        └───────────────────────────────┼───────────────────────────────┘
-                                        │ 生成 per-launch agentDir
-                                        │ settings.json + symlinks + env + flags
-                                        ▼
-                         ┌─────────────────────────────┐
-                         │   spawn 真实 pi 子进程        │
-                         │   PI_CODING_AGENT_DIR=<生成>  │
-                         │   -e <pi-profile extension>  │
-                         └──────────────┬──────────────┘
-                                        │
-┌───────────────────────────────────────▼───────────────────────────────────────┐
-│                              pi-profile extension（在 pi 内）                  │
-│ /profile 命令族 · CRUD 向导 · 状态 · instructions 注入 · tools/model 切换      │
-│ 切换 = 重新 resolve → 重写生成的 settings.json → ctx.reload()（pi 原生）       │
-│ MCP 协调：经 pi.events 与 pi-mcp-adapter 通信                                  │
-└────────────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────┐
+│                          普通 pi 进程                               │
+│                                                                    │
+│  已安装的 extensions（全部原生加载，不做隔离）                        │
+│  ┌──────────────────────────────────────────────────────────────┐  │
+│  │  pi-profile extension                                        │  │
+│  │  session_start   → 解析 profile，应用 model/tools/MCP          │  │
+│  │  before_agent_start → 重建 skills 段落 + 追加 instructions     │  │
+│  │  /profile 命令族、/mcp enable|disable                         │  │
+│  │  pi.events ↔ pi-mcp-adapter（内存 allowlist）                 │  │
+│  └──────────────────────────────────────────────────────────────┘  │
+│                                                                    │
+│  Pi 原生：agentDir、sessions、packages、trust、context files        │
+└────────────────────────────────────────────────────────────────────┘
 ```
 
-`pi-profile` 的外部 interface 是 CLI、`/profile` 命令、catalog schema 与 resource registry schema。profile 解析、glob 展开、依赖闭包、trust 守门、settings 生成、MCP 协调和状态持久化都在内部完成；资源过滤本身由 Pi 原生的 settings 机制执行（见 ADR-0005 的验证证据）。
+`pi-profile` 的外部 interface 是 `/profile` 命令族、`--profile` CLI flag、catalog schema 与 state 文件。解析、glob 展开、引用校验、可见性过滤、MCP 协调与状态持久化都在内部完成。`PI_CODING_AGENT_DIR`、`PI_CODING_AGENT_SESSION_DIR`、生成文件与 symlink 全部不再使用。
 
-## 过滤模型
+## 受控与不受控
 
-profile 只管理四类资源（skills、extensions、MCP servers、tools）；其余资源类别（prompt templates、themes、context files、Pi settings 本体）原样穿过，保持 Pi 原生行为。
+| 资源 | 机制 |
+| --- | --- |
+| skills | prompt 可见性过滤：`before_agent_start` 用 Pi 导出的 `formatSkillsForPrompt` 重建段落并替换 |
+| mcp | `pi.events` 向 `pi-mcp-adapter` 发布运行时 allowlist（内存，不写配置文件） |
+| tools | `pi.setActiveTools` 对 live registry 展开后的活动集合；未注册字面量 pending 重试 |
+| model / thinkingLevel | `pi.setModel` / `pi.setThinkingLevel`，遵循显式选择优先 |
+| instructions | 与 skills 过滤合并到同一个 `before_agent_start` 返回值 |
+| extensions | 不控制：所有已安装 extension 在每个 profile 中原生加载 |
+| sessions / agentDir 文件 / packages / trust / prompts / themes | 原生行为，pi-profile 不触碰 |
 
-| 作用域 | 机制 | 形态 |
-| --- | --- | --- |
-| agentDir 级（`~/.pi/agent/skills`、`extensions`） | 发现根随 `PI_CODING_AGENT_DIR` 移走，天然不发现；settings 数组写入选中项绝对路径 | 白名单（附加路径） |
-| `~/.agents/skills`（HOME 级，无法抑制） | settings `skills` 数组写 `-绝对路径` / `!glob` 排除未选中项 | 补集排除 |
-| 项目级（`.pi/*`、项目 ancestor `.agents/skills`） | 生成 settings 置 `defaultProjectTrust: "never"` 且不链接 `trust.json`（stored trust 优先于 never）；launcher 自读真实 `trust.json`，仅已信任时把选中项绝对路径写入 settings 数组（附加用户级路径不经 Pi trust 检查）；项目 `packages` 被剥除（会装进全局 npm 根） | 白名单（附加路径）+ trust 守门 |
-| packages（全局与项目） | settings `packages` 数组对象形式按类别写 allowlist glob | 白名单 |
-| tools | 生成 `--tools` flag（全量 tool 严格 allowlist，含 extension tools） | 白名单 |
-| MCP servers | extension 经 `pi.events` 向 adapter 发布运行时 allowlist | 白名单（内存） |
+## 运行时接缝（Pi 0.85.1 验证）
 
-`default` profile 不生成任何过滤：settings 为用户全局 settings 的逐字拷贝，不置 `defaultProjectTrust`，项目信任行为与原生 Pi 完全一致。
+| 能力 | API |
+| --- | --- |
+| 全量已加载 skills | `ctx.getSystemPromptOptions().skills`，与 Pi 构建 prompt 时传给 `buildSystemPrompt` 的数组同源 |
+| skills 段落格式化 | 公开导出 `formatSkillsForPrompt(skills, fileReadTool)`；Pi 在默认与自定义 prompt 两个分支都逐字追加其返回值 |
+| prompt 替换 | `before_agent_start` 返回 `{ systemPrompt }`，只作用于当前 turn，多个扩展按加载顺序链式处理 |
+| `/skill:` 命令来源 | `resourceLoader.getSkills().skills`，与 prompt 无关；可见性过滤不影响用户手动调用 |
+| 段落存在判据 | `["read","bash"].find(tool => options.selectedTools.includes(tool))`；两者都不在时 Pi 不产出段落 |
+| 工具注册表 | `pi.getAllTools()`（内置 + 扩展 + MCP）与 `pi.setActiveTools(names)` |
+| 模型 | `ctx.modelRegistry.find()` / `hasConfiguredAuth()` / `pi.setModel()` / `pi.setThinkingLevel()` |
+| 启动 profile 选择 | `pi.registerFlag("profile", { type: "string" })` + `pi.getFlag`；Pi 无同名 flag，未知 flag 由 `parseArgs` 收进 `unknownFlags` 再匹配已注册扩展 flag |
+| 显式 CLI 声明检测 | 包公开导出 `parseArgs`；扩展对 `process.argv.slice(2)` 重新解析 |
+| 项目信任 | `ctx.isProjectTrusted()` |
+| MCP 协调 | `pi-profile:mcp-allowlist:v1` 发布通道 + `pi-mcp-adapter:runtime-snapshot:v1` 存在性探测（ADR-0002） |
 
-## 模块与接口
+Pi 的 package `exports` 不暴露 `buildSystemPrompt`，扩展无法自行重建整个 prompt，因此 skills 过滤走"同源格式化 + 段落替换"。
 
-### `pi-profile CLI`（`bin/pi-profile.ts` + `src/launcher/`）
+## skills 可见性过滤
 
-**Interface**：解析 `pi-profile [profile] [-- <pi args>...]`；其余一切原样透传给 spawn 的 pi。
+```
+selected   = 解析 profile.skills 与 overlay.disabledSkills 得到的可见集合
+all        = ctx.getSystemPromptOptions().skills
+fileReadTool = ["read","bash"].find(tool => options.selectedTools.includes(tool))
+original   = formatSkillsForPrompt(all, fileReadTool)          // 与 Pi 的输出逐字一致
+filtered   = formatSkillsForPrompt(visibleSkills(all, filter), fileReadTool)
 
-**Rules**：
+若 fileReadTool 不存在、original 为空、或 systemPrompt 不含 original：
+    不替换；一次性 warning
+否则：
+    systemPrompt = systemPrompt.replace(original, filtered)
+```
 
-- 仅消费两段输入：首个不以 `-` 开头的位置参数（profile 名）与其后的第一个 `--` 分隔符本身。`--` 之后的内容原样成为 pi 的 argv。
-- `--approve` / `--no-approve` 对命名 profile 不透传：改写为 launcher 的 trust 输入，防止 Pi 侧自动发现未过滤的项目资源。`default` profile 无过滤，按原生语义原样透传（ticket 01）。
-- 位置参数只作用于本次启动（不写 runtime state）；无位置参数时读取保存的活动 profile，不存在则用 `default`。
-- 未知 profile 在 spawn 前失败退出。
+性质：
 
-### `ProfileCatalog` / `ProfileCatalogStore`
+- prompt 每轮从 Pi 的基础 prompt 重建，不累积历史；profile 切换后下一轮自动生效。
+- `default` profile 不做过滤；overlay 仍可收窄。
+- `SkillsFilter.refs` 为 `"all"` 表示"声明为空、仅 overlay 收窄"；`[]` 表示"什么都不显示"。
+- 未选中的 skill 仍加载、仍在 `/skill:` 菜单、仍可被用户调用；模型看不到它的 name、description、location。
+- `disableModelInvocation` 的 skill 由 `formatSkillsForPrompt` 自身过滤，与 Pi 行为一致。
+- 段落替换失败时本轮退化为原生 prompt 并报告 warning，不阻塞对话。
 
-**Interface**：ProfileCatalog 只读（列出、解析 winning 定义）；写入经 ProfileCatalogStore + `switching/profile-crud.ts`（创建、编辑、删除、复制 global 与 project `Profile`）。
-
-**Rules**（不变）：
-
-- `default` 不存在于文件中，不能删除。
-- 项目同名 profile 完整替换全局 profile；删除项目覆盖后立即暴露全局同名。
-- 删除活动 profile 前必须先完成替代 profile 选择。
-- `/mcp enable` 与 `/mcp disable` 修改当前 profile 的 `mcp` 数组，不修改 MCP 连接配置。
-
-### `ResourceRegistry`
-
-**Interface**：extension 的可引用视图（ADR-0006）——隐式发现层（已安装包的 `pi.extensions` 入口、标准目录散装文件）合并显式 `resources.json` 覆盖层；`select()` 把 profile 引用（registry ID、包名/别名、散装 stem、磁盘路径、glob）解析为条目并返回依赖闭包。
-
-**Rules**（不变）：ID 稳定唯一；环形依赖、缺失入口、缺失依赖使 profile 无法激活；`alwaysOn` 总是进入 ActivationPlan；不负责排序。
-
-**Rules**（新增）：显式条目覆盖同 ID 隐式条目且可省略 `entry` 继承；悬空 override（无隐式匹配且未给 `entry`）延迟到引用时失败，alwaysOn 者加入每个闭包 fail-closed；散装/包 ID 碰撞由散装胜出并记录 warning（包经 source 别名仍可选）；未知字面量错误必须可行动（候选列表 + did-you-mean + 注册示例）；零匹配 glob 进入 `unmatched` 警告而非静默。
-
-### `ExtensionDiscovery`
-
-**Interface**：只读发现可引用的隐式 extension——已配置 user 包的 `package.json#pi.extensions` 入口（存在才计入）与 `<agentDir>/extensions`、已信任项目 `.pi/extensions` 的散装 `.ts`/`.js` 文件。从不执行扩展代码，从不安装包。
-
-### `SkillRegistry`
-
-**Interface**：输出当前全量可引用 skill 集：skill name、最终 `SKILL.md`、source 与 source scope。
-
-**Implementation**：以只读方式调用 Pi SDK 的 `DefaultResourceLoader`（指向真实 agentDir 与 cwd）获得 Pi 原生发现结果与优先级，不自行重实现目录扫描。每次启动或 reload 重新解析。
-
-### `ProfileResolver`
-
-**Interface**：输入 profile、registry、skills、可选 MCP server registry、overlay 和 trust 状态，输出不可变 `ActivationPlan`。
-
-**Rules**：
-
-- 一个 plan 对应一个 profile 和一个 overlay；展开四类 glob，应用 overlay，合并 `alwaysOn` 与依赖闭包。
-- extension 引用经 `ResourceRegistry.select()` 解析（发现优先，ADR-0006）；路径引用产生 ad-hoc 条目，绕过依赖闭包。
-- overlay 可以调整当前 profile 声明的资源引用，但不能关闭 `alwaysOn` extension 或其依赖链（传递闭包）。
-- 未声明的 model、thinking 或 instructions 不进入 plan（保持 Pi 当前状态）。
-- 零匹配的 skill/extension/MCP glob 进入 plan 的 `unmatched` 列表（警告面，不阻塞激活）。
-- **Trust 守门**：launcher（`project-trust.ts`）按 Pi 的判定序镜像 trust 布尔量：一次性 `--approve` 输入 → 无任何 trust-requiring 项目资源则信任（含 pi-profile 自己的 catalog/state 文件，Pi 的原生清单不认识它们）→ 真实 `trust.json` 最近祖先条目 → `defaultProjectTrust: always`；项目 catalog、registry、资源仅在已信任时进入 plan。pi-profile 因此成为项目资源的唯一信任守门人——命名 profile 的生成 settings 置 `defaultProjectTrust: "never"` 且不链接 `trust.json`（已存储的 trust 决定在 Pi 侧优先于 never），保证 Pi 侧永不自动发现项目资源。已知偏离：不咨询 extension 的 `project_trust` 事件（那需要在 launcher 里执行扩展代码）。
-
-### `SettingsGenerator`
-
-**Interface**：输入 ActivationPlan、全量发现结果与用户全局 settings，输出一个 per-launch 运行目录：生成的 `settings.json`、symlink 组、环境变量与生成 flags。
-
-**Implementation**：
-
-- 运行目录位于 pi-profile 私有位置（`~/.pi/agent/pi-profile/runtime/launch-*/`），每次启动新建。清理由 launcher 启动时完成（`src/launcher/runtime-cleanup.ts`）：spawn 后往目录写入子进程 `pid` 文件；启动时删除 pid 已死的 launch-* 目录，无 pid 文件的目录按 mtime 超过 10 分钟的竞态守卫删除，pid 存活的保留。不做退出时删除——任何退出方式之后 pid 必死，下次启动的清扫必然收敛；全部清理动作 best-effort，不阻塞启动。
-- 生成 `settings.json`：用户全局 settings 内容 + 过滤模型的数组改写（见上表）；非 `default` profile 追加 `defaultProjectTrust: "never"`；已信任项目的 `.pi/settings.json` 内容按 Pi 的合并规则（项目覆盖全局、嵌套按键合并）合并进来，以保持非受管行为原生。
-- symlinks：`auth.json`、`models.json`、`models-store.json`、`mcp.json`、`npm/`、`git/`、`bin/` 指向真实 agentDir 的对应项（git/bin 分别是包安装根与 Pi 托管二进制，避免在运行目录里重复安装；`mcp.json` 是 pi-mcp-adapter 的全局配置，其路径派生自 `PI_CODING_AGENT_DIR`，pi-profile 只链接从不改写）。`trust.json` 只在 `default` profile 下链接：Pi 侧已存储的 trust 决定优先于生成 settings 的 `defaultProjectTrust: "never"`，若链接会使命名 profile 的项目自动发现复活——launcher 自读真实 trust.json，是项目资源的唯一信任守门人。
-- 环境变量：`PI_CODING_AGENT_DIR=<运行目录>`、`PI_CODING_AGENT_SESSION_DIR=<真实 sessions 目录>`。
-- 生成 flags：`--tools <选中清单>`（非 `default` 且声明 tools 时）、`--model <provider/id[:thinking]>`（声明 model 时）。
-- 已知限制：`pi install` / `pi config` 在会话内写生成的 settings，退出后丢失（持久改动走 `/profile edit` 或原生 `pi`）。
-
-### `RuntimeStateStore`
-
-**Interface**：按 source scope 读写 `pi-profile-state.json`（activeProfile、overlay、lastVerifiedProfile）。项目定义写项目 state；全局定义与 `default` 写全局 state。（不变）
-
-### `pi-profile extension`（`extensions/pi-profile/index.ts`，经 `-e` 加载）
-
-**Interface**：注册 `/profile` 命令族（list/use/status/customize/reset/create/edit/delete/resource/reload）、profile selector、CRUD 向导与状态展示。
-
-**Rules**：
-
-- **切换**：`/profile use <name>` 校验 → 等待 agent idle（`ctx.waitForIdle()`）→ 内存快照当前 runtime 文件 → 重新 resolve → 重写生成的 `settings.json` 与 launch plan（标记 `persistSelection` 与 `switchedFrom`）→ `ctx.reload()`（Pi 原生 reload 重读磁盘并重建 runtime，保留 session）→ 验证 reload 真的执行（旧 ctx 失效探针；interactive 模式的 reload 拒绝不会 reject）→ 失败时恢复快照并再次 reload，runtime 绝不半切换。state（`activeProfile` + `lastVerifiedProfile` 回滚锚）由 reload 后的新 extension 实例在 `session_start` 里按来源 scope 写入——只有验证成功的激活才落锚。下一个 agent turn 收到一次性变更摘要。
-- **reload**：`/profile reload` 重新发现与 resolve 后走同一路径，共享 skill 的修改随之传播。
-- **失败回滚**：reload 前保留上一份已验证 settings 快照；reload 失败时写回快照并再次 reload。
-- **instructions**：在 `before_agent_start` 中把 profile instructions 追加到 Pi 已构建的 system prompt 末尾（初始与切换路径统一走 extension，不用 flag）。
-- **tools/model/thinking**：初始由生成 flags 生效；session_start（含 reload）后由 extension 把原始 tool 引用对 Pi 实际注册表（含扩展工具）重新展开并 `pi.setActiveTools`、可选 `pi.setModel` 与 thinking。
-- **MCP 协调**：经 `pi.events` 与 `pi-mcp-adapter` 通信：激活时发布当前 profile 的运行时 server allowlist（仅内存，不触碰 adapter 的 `.pi/mcp.json`）；`/mcp enable|disable` 直接写当前 profile 所属 catalog 的 `mcp` 数组（profile-scoped 持久存储——adapter 无此 API），随后走标准 rewrite+reload 使变更即时生效。adapter 未安装且 profile 声明 `mcp` 时激活失败；未声明 `mcp` 时不注册协调。
-- CRUD 只在 TUI mode 提供：extension 经 `ctx.mode`（tui/rpc/json/print）判定，非 TUI 下 CRUD/向导以带当前模式名的错误拒绝；切换/overlay/list/status 非 CRUD，RPC 下仍可用；`/mcp enable|disable` 写 catalog 但属开关命令，RPC 下同样可用（ticket 11 明确）RPC 结构化状态：`/profile list|status` 经 `pi.sendMessage` 发出 `customType: "pi-profile"` 的自定义消息，`details` 携带结构化对象（list → profiles 数组；status → StatusReport）。
-
-### `McpServerRegistry`
-
-（不变）adapter 发现的 server 名称与状态；pi-profile 只引用名称。
-
-## 数据契约
-
-### `profiles.json` / `resources.json` / `pi-profile-state.json`
-
-核心字段：profile 的 `skills`/`extensions`/`mcp`/`tools`（glob）、可选 `model`（`provider`/`id`/`thinkingLevel`）与 `instructions`；resource 的 `kind`/`dependsOn`/`alwaysOn` 与可选 `entry`（ADR-0006：覆盖已发现 extension 时省略以继承入口）；state 的 `activeProfile`/`overlay`/`lastVerifiedProfile`。`resources.json` 整体可选：隐式发现（包 + 散装文件）不需要任何注册。
-
-### 生成的 `settings.json`（pi-profile 私有运行时产物，非用户配置）
+## profile 语义
 
 ```json
 {
-  "defaultProjectTrust": "never",
-  "skills": [
-    "/home/user/.pi/agent/skills/git-commit",
-    "-/home/user/.agents/skills/secret-*"
-  ],
-  "extensions": [
-    "/opt/pi-resources/review-guard/index.ts"
-  ],
-  "packages": [
-    { "source": "npm:pi-skills", "skills": ["code-review"], "extensions": [] }
-  ]
+  "schemaVersion": 2,
+  "profiles": {
+    "review": {
+      "label": "Code review",
+      "description": "Read-only review workflow",
+      "instructions": "Review only; never edit tracked files.",
+      "model": { "provider": "anthropic", "id": "claude-sonnet-4-5", "thinkingLevel": "high" },
+      "skills": ["git-commit", "matt/*"],
+      "mcp": ["github-ro"],
+      "tools": ["read", "grep", "find", "ls"]
+    }
+  }
 }
 ```
 
-由 SettingsGenerator 每次启动/切换/reload 重新生成；用户全局 settings 中未被 profile 接管的键原样保留。它不是 interface 的稳定面：schema 随 Pi 版本演进，集成测试负责发现漂移。
+| 字段 | 解析方式 |
+| --- | --- |
+| `instructions` | 每个 turn 追加；未声明时不追加 |
+| `model` | 对 `ctx.modelRegistry` 解析；`thinkingLevel` 由 `setThinkingLevel` 自动 clamp |
+| `skills` | 每个 turn 对 live skill 名称解析（支持 glob） |
+| `mcp` | 激活时对 adapter 探测结果解析 |
+| `tools` | 对 `pi.getAllTools()` 名称解析；未注册字面量 pending |
+
+`RuntimeOverlay` 字段：`disabledSkills`、`disabledMcp`、`tools`（替换 profile 的 tools）。
+
+`default` profile 不声明任何字段：不过滤、不改 tools、不改 model、不注入 instructions、不发布 MCP allowlist。
+
+### 引用解析规则
+
+| 引用 | 字面量未解析 | glob 零匹配 | 候选来源 |
+| --- | --- | --- | --- |
+| skill name | warning（候选 + did-you-mean），不阻塞激活 | `unmatched` 警告 | live skills |
+| mcp server name | 激活失败（adapter 缺失或 server 未发现） | `unmatched` 警告 | adapter 探测 |
+| tool name | 进入 pending，重试到全部解析或会话结束 | `unmatched` 警告 | `pi.getAllTools()` |
+
+skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resources_discover` 在 `session_start` 之后才贡献 skill，启动时硬失败会产生假阴性；可见性缺失不会破坏 runtime。
+
+### 显式声明优先（model / thinking / tools）
+
+| 优先级 | 来源 |
+| --- | --- |
+| 1 | CLI `--model` / `--thinking` / `--tools` / `--exclude-tools`（`parseArgs` 检测 `process.argv`） |
+| 2 | session 历史中记录的 model/thinking 变更 |
+| 3 | profile 声明 |
+| 4 | Pi settings 默认值 |
+
+`/profile use` 是用户对 profile 的显式选择，应用 profile 声明并覆盖 1–2。
+
+## 模块与接口
+
+### `extensions/pi-profile/index.ts`
+
+**Interface**：注册 `--profile` flag、`/profile` 命令族、`/mcp enable|disable`、`session_start` 与 `before_agent_start` handler。
+
+**Rules**：
+
+- `session_start`：解析启动 profile（flag → 项目 state（已信任）→ 全局 state → `default`）→ 构建 live view → 解析 + 校验 + 应用；失败时不应用任何设置并报出可行动错误。
+- `before_agent_start`：重试 pending tools；重建 skills 段落；追加 instructions；无可变更时返回 undefined。
+- 启动选择（`--profile`）不写 state；stored overlay 不在启动时应用。
+- CRUD 向导仅 TUI（`ctx.mode === "tui"`）；list/status 经 `pi.sendMessage` 发送 `customType: "pi-profile"` 的结构化 `details`。
+
+### `ProfileCatalog` / `ProfileCatalogStore`
+
+**Interface**：只读列出/解析 winning 定义；写入侧提供 create/edit/delete/duplicate。
+
+**Rules**：`default` 不存在于文件中且不可删除；项目同名完整替换全局；读取 `schemaVersion: 1` 时忽略 `extensions` 并警告一次；`extensions` 与未知字段不进入解析结果（无继承）。
+
+### `ProfileResolver`
+
+**Interface**：纯函数——输入 profile、可选 overlay、`LiveResources`，输出 `ResolvedSelection`；声明 MCP 无法满足时抛 `ActivationError`。
+
+### `SkillSelection`
+
+**Interface**：`visibleSkills` / `visibleSkillNames` / `applySkillsFilter` / `formatInstructionsBlock`。
+
+### `ModelSelection`
+
+**Interface**：`readSessionChoices` / `decidePreset`。
+
+### `StartupSelection`
+
+**Interface**：`registerProfileFlag` / `readProfileFlag` / `detectExplicitDeclarations` / `resolveStartupProfile`。
+
+### `switching/apply-profile.ts`
+
+**Interface**：`validateSelection` / `applySelection` / `retryPendingTools`，依赖注入到窄 interface `ApplySurface`。
+
+### `switching/switch-profile.ts` / `customize.ts`
+
+**Interface**：`activateProfile`（解析 → 校验 → 可选持久化 → 应用）；`customizeOverlay` / `resetOverlay`。
+
+### `RuntimeStateStore` / `mcps`
+
+**Interface**：按 scope 读写 `pi-profile-state.json`；adapter 配置只读发现（`mcp-config.ts`）与事件契约（`mcp-coordination.ts`，ADR-0002 不变）。
+
+## 数据契约
+
+| 文件 | 用途 | 备注 |
+| --- | --- | --- |
+| `~/.pi/agent/profiles.json` | 全局 catalog | schemaVersion 2（v1 兼容读） |
+| `.pi/profiles.json` | 项目 catalog | 仅 Pi 报告项目已信任时读取 |
+| `~/.pi/agent/pi-profile-state.json` | 全局 runtime state | `activeProfile` + `overlay` |
+| `.pi/pi-profile-state.json` | 项目 runtime state | 同上 |
+| `~/.pi/agent/resources.json`、`.pi/resources.json` | —— | 不再读取（ADR-0006 被取代） |
 
 ## 激活流程
 
-### 启动（CLI）
+### 启动（`session_start`）
 
 ```text
-pi-profile review -- --mode rpc
+pi [--profile review]
   │
-  ├─ 解析位置参数与透传段（拦截 --approve）
-  ├─ ProfileCatalog 解析 review 的最终来源（unknown → 退出）
-  ├─ resolver 读 trust.json，判定项目 trust
-  ├─ SkillRegistry（只读 SDK discovery）+ ResourceRegistry + adapter server 名
-  ├─ ProfileResolver 生成 ActivationPlan（glob、闭包、alwaysOn、overlay）
-  ├─ 校验：模型认证、入口存在、依赖闭包、MCP server 存在
-  ├─ SettingsGenerator 写出运行目录（settings.json + symlinks + env + flags）
-  ├─ spawn pi：-e <extension>、生成 flags、用户参数原样透传
-  └─ extension 在 session_start 时经 pi.events 发布 MCP allowlist
+  ├─ 解析启动 profile（flag → 项目 state → 全局 state → default）
+  ├─ 构建 live view：options.skills + pi.getAllTools() + adapter 探测
+  ├─ resolve（glob 展开、overlay、warnings）
+  ├─ validate（model 存在且已认证；MCP intent 可满足）
+  ├─ apply（setModel/setThinkingLevel → setActiveTools → 发布 MCP allowlist）
+  └─ 失败：不应用任何设置，notify 可行动错误
 ```
 
-### 会话内切换（extension）
+### 会话内切换（`/profile use`）
 
 ```text
 /profile use implement
   │
-  ├─ 校验与 resolve（同启动路径）
-  ├─ 按来源 scope 保存 runtime state
-  ├─ 等待 agent idle
-  ├─ 快照当前生成的 settings.json
-  ├─ 重写 settings.json → ctx.reload()
-  │    ├─ Pi 重读 settings，重建 resources（旧 extensions shutdown，新的加载）
-  │    ├─ extension 重新执行：发布 MCP allowlist、设置 tools/model/thinking
-  │    └─ session 保留（sessionId 与历史不变）
-  ├─ 成功：记录 lastVerifiedProfile，下一 turn 发送变更摘要
-  └─ 失败：写回快照并再次 reload，报告错误
+  ├─ 重新读取 catalog/adapter/live view
+  ├─ resolve + validate（失败时不改变任何状态）
+  ├─ 持久化选择到目标 profile 的 source scope（清除 overlay）
+  ├─ apply（model/tools/MCP 立即生效）
+  └─ skills/instructions：下一个 turn 的 prompt 直接带上
 ```
+
+不等待 idle、不 reload、不重启进程、不写任何生成文件；session file 与 session id 不变。
 
 ## Package 结构
 
 ```text
 pi-profile/
-├── package.json
-├── README.md
-├── bin/
-│   └── pi-profile.ts             # 位置参数解析、profile 解析、spawn
+├── package.json                 # pi.extensions 入口；无 bin
 ├── extensions/
-│   └── pi-profile/
-│       └── index.ts              # /profile 命令族、TUI、instructions、MCP 协调
+│   └── pi-profile/index.ts      # 命令、flag、session_start、before_agent_start、MCP 协调
 ├── src/
-│   ├── launcher/
-│   │   ├── args.ts               # 位置参数 + 透传段解析（含 --approve 拦截）
-│   │   ├── spawn.ts              # 子进程 spawn、pid 活性文件、信号与退出码转发
-│   │   └── runtime-cleanup.ts    # 启动时按 pid 活性清扫陈旧 runtime 目录
-│   ├── profile-catalog.ts
-│   ├── resource-registry.ts      # 隐式发现 + 显式覆盖的合并视图与 select()
-│   ├── extension-discovery.ts    # 只读隐式发现：包 pi.extensions + 散装文件
-│   ├── skill-registry.ts         # 只读 SDK discovery
-│   ├── profile-resolver.ts
-│   ├── settings-generator.ts     # plan → settings.json + symlinks + env + flags
+│   ├── profile-catalog.ts       # v2 读取 + v1 兼容
+│   ├── profile-catalog-store.ts # 写入侧
 │   ├── runtime-state-store.ts
-│   ├── resource-registry-store.ts  # resources.json 写入侧（last-write-wins）
-│   ├── profile-catalog-store.ts  # profiles.json 写入侧（自包含定义，无继承）
-│   ├── mcp-config.ts             # adapter pi-native 配置的 server 名只读发现
-│   ├── mcp-coordination.ts       # pi.events 协调契约（allowlist 频道 + 探测）
-│   ├── switching/                # 会话内切换 / overlay / 可观测面
-│   │   ├── switch-profile.ts     # 切换编排（快照→重写→reload→回滚）
-│   │   ├── apply-plan.ts         # session_start 应用（tools/model/mcp/状态/摘要）
-│   │   ├── customize.ts          # runtime overlay customize/reset
-│   │   ├── list-profiles.ts      # /profile list（信任门控的 catalog 列表）
-│   │   ├── status.ts             # /profile status 报告（plan + overlay + MCP 三态 + 冲突）
-│   │   ├── resource-crud.ts      # /profile resource list/create/edit/delete（引用防护）
-│   │   ├── resource-wizard.ts    # resource create/edit 向导（UI 注入，可测）
-│   │   ├── profile-crud.ts       # /profile create|edit|delete|duplicate（active 删除需替换）
-│   │   ├── profile-wizard.ts     # profile create/edit/duplicate 向导
-│   │   └── mcp-toggle.ts         # /mcp enable|disable（编辑 owning catalog 的 mcp 数组 + reload）
-│   └── tui/
-│       ├── profile-selector.ts
-│       ├── profile-editor.ts
-│       └── resource-editor.ts
-├── schemas/
-│   ├── profiles.schema.json
-│   └── resources.schema.json
-├── test/
-│   ├── helpers/pi-fixture.ts     # fixture 布局约定（ticket 01 建立）
-│   ├── profile-resolver.test.ts
-│   ├── settings-generator.test.ts
-│   ├── skill-registry.test.ts
-│   └── launcher.integration.test.ts  # 真实 pi 子进程 + RPC 内省
-└── examples/
-    ├── profiles.json
-    └── resources.json
+│   ├── profile-resolver.ts      # 纯函数选择解析
+│   ├── skill-selection.ts       # 可见性过滤与 instructions 块
+│   ├── model-selection.ts       # 预设优先级
+│   ├── startup-selection.ts     # --profile flag 与启动选择
+│   ├── mcp-config.ts            # adapter server 名只读发现
+│   ├── mcp-coordination.ts      # pi.events 契约
+│   ├── json-file.ts
+│   └── switching/
+│       ├── apply-profile.ts     # 窄 surface 上的运行时应用
+│       ├── switch-profile.ts    # 激活编排
+│       ├── customize.ts         # overlay
+│       ├── profile-crud.ts      # catalog CRUD
+│       ├── profile-wizard.ts    # TUI 向导
+│       ├── list-profiles.ts
+│       ├── status.ts
+│       ├── mcp-toggle.ts
+│       └── tool-references.ts
+├── schemas/profiles.schema.json
+├── examples/profiles.json
+└── test/                        # 单测 + 真实 pi 子进程集成测试
 ```
 
-`package.json` 同时声明 Pi extension 和 `pi-profile` binary。extension 提供对话内 runtime 交互；binary 负责初始 profile 解析、生成运行目录并 spawn Pi。发布形态：Node 拒绝对 node_modules 下的 `.ts` 做 type-stripping，所以 bin 入口是 `bin/pi-profile.js`——一个 jiti（Pi 加载扩展所用的同一 loader）包装器，加载共享的 TS 图；开发态仍直接运行 `bin/pi-profile.ts`。`files` 字段发布 bin/extensions/src/schemas/examples/README。
+## 兼容性保证
+
+| 保证 | 验证方式 |
+| --- | --- |
+| 不设置 `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` | 集成测试断言子进程环境中无 override |
+| session 落在 `<agentDir>/sessions/--<cwd>--/` | 集成测试对比 `get_state` 的 sessionFile |
+| 第三方扩展的 agentDir 配置可读 | probe 扩展读取 fixture 配置文件并断言内容 |
+| 全局 `<agentDir>/AGENTS.md` 进入 system prompt | probe 扩展断言 prompt 含 fixture 内容 |
+| 所有已安装 extension 在任意 profile 下加载 | 扩展不控制 extension 集合 |
+| `default` profile 逐字原生 | 不过滤、不 setActiveTools、不发布 allowlist |

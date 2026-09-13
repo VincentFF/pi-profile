@@ -1,421 +1,225 @@
-import { mkdir, rm, writeFile } from "node:fs/promises";
-import path from "node:path";
-import { afterEach, beforeEach, describe, expect, it } from "vitest";
+import { describe, expect, it } from "vitest";
 
 import type { ResolvedProfile } from "../src/profile-catalog.ts";
-import { ActivationError, resolveProfile } from "../src/profile-resolver.ts";
-import { ResourceRegistry } from "../src/resource-registry.ts";
-import type { SkillEntry } from "../src/skill-registry.ts";
-import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
+import { suggestNames } from "../src/name-matching.ts";
+import {
+	SelectionError,
+	formatSelectionWarnings,
+	resolveSelection,
+	type LiveResources,
+} from "../src/profile-resolver.ts";
+import type { RuntimeOverlay } from "../src/runtime-state-store.ts";
 
-let fixture: PiFixture;
-
-beforeEach(async () => {
-	fixture = await createPiFixture();
-});
-
-afterEach(async () => {
-	await rm(fixture.root, { recursive: true, force: true });
-});
-
-function skill(name: string): SkillEntry {
+function live(overrides: Partial<LiveResources> = {}): LiveResources {
 	return {
-		name,
-		filePath: path.join(fixture.agentDir, "skills", name, "SKILL.md"),
-		source: "auto",
-		scope: "user",
-		origin: "top-level",
+		skills: [
+			{ name: "git-commit", filePath: "/skills/git-commit/SKILL.md" },
+			{ name: "code-review", filePath: "/skills/code-review/SKILL.md" },
+		],
+		toolNames: ["read", "bash", "grep"],
+		mcp: { adapterPresent: true, servers: ["atlassian", "github"] },
+		...overrides,
 	};
 }
 
-function profile(name: string, definition: ResolvedProfile["definition"]): ResolvedProfile {
+function profile(definition: ResolvedProfile["definition"], name = "review"): ResolvedProfile {
 	return { name, source: "global", definition };
 }
 
-async function registryWith(entries: Record<string, { dependsOn?: string[]; alwaysOn?: boolean }>): Promise<ResourceRegistry> {
-	const extensionsDir = path.join(fixture.agentDir, "extensions");
-	await mkdir(extensionsDir, { recursive: true });
-	const resources: Record<string, unknown> = {};
-	for (const [id, extra] of Object.entries(entries)) {
-		const entry = path.join(extensionsDir, `${id}.ts`);
-		await writeFile(entry, "export default function () {}\n");
-		resources[id] = { kind: "extension", entry, ...extra };
-	}
-	await writeFile(
-		path.join(fixture.agentDir, "resources.json"),
-		JSON.stringify({ schemaVersion: 1, resources }),
-	);
-	return ResourceRegistry.load(fixture.agentDir);
-}
+describe("resolveSelection: skills", () => {
+	it("produces no filter when the profile declares no skills", () => {
+		const selection = resolveSelection({ profile: profile({ tools: ["read"] }), live: live() });
 
-describe("resolveProfile", () => {
-	it("expands literal and glob skill references against the registry, deduped", async () => {
-		const skills = [skill("code-review"), skill("git-commit"), skill("research-web"), skill("research-docs")];
+		expect(selection.skills).toBeUndefined();
+	});
 
-		const plan = await resolveProfile({
-			profile: profile("review", { skills: ["code-review", "research-*", "git-commit"] }),
-			skills,
-			resources: await registryWith({}),
+	it("keeps the declared references as a live filter (literals and globs)", () => {
+		const selection = resolveSelection({
+			profile: profile({ skills: ["git-commit", "code-*"] }),
+			live: live(),
 		});
 
-		expect(plan.skills.map((entry) => entry.name).sort()).toEqual([
-			"code-review",
-			"git-commit",
-			"research-docs",
-			"research-web",
+		expect(selection.skills).toEqual({ refs: ["git-commit", "code-*"], disabled: [] });
+		expect(selection.warnings.skillsUnresolved).toEqual([]);
+		expect(selection.warnings.skillsUnmatched).toEqual([]);
+	});
+
+	it("treats an explicitly empty skills list as 'nothing visible'", () => {
+		const selection = resolveSelection({ profile: profile({ skills: [] }), live: live() });
+
+		expect(selection.skills).toEqual({ refs: [], disabled: [] });
+	});
+
+	it("warns with did-you-mean for a literal that matches no loaded skill", () => {
+		const selection = resolveSelection({ profile: profile({ skills: ["git-comit"] }), live: live() });
+
+		expect(selection.warnings.skillsUnresolved).toEqual([
+			{ reference: "git-comit", suggestions: ["git-commit"] },
 		]);
+		const lines = formatSelectionWarnings(selection);
+		expect(lines.join("\n")).toMatch(/did you mean: "git-commit"/);
 	});
 
-	it("fails activation when a literal skill name does not exist", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { skills: ["no-such-skill"] }),
-				skills: [skill("code-review")],
-				resources: await registryWith({}),
-			}),
-		).rejects.toThrow(/no-such-skill/);
+	it("collects zero-match globs as unmatched without blocking", () => {
+		const selection = resolveSelection({ profile: profile({ skills: ["zzz-*"] }), live: live() });
+
+		expect(selection.warnings.skillsUnmatched).toEqual(["zzz-*"]);
+		expect(selection.skills).toEqual({ refs: ["zzz-*"], disabled: [] });
 	});
 
-	it("treats a glob with no current matches as empty, not an error", async () => {
-		const plan = await resolveProfile({
-			profile: profile("review", { skills: ["future-*"] }),
-			skills: [skill("code-review")],
-			resources: await registryWith({}),
-		});
+	it("hides overlay-disabled skills from an undeclared profile too", () => {
+		const overlay: RuntimeOverlay = { disabledSkills: ["code-review"] };
 
-		expect(plan.skills).toEqual([]);
-	});
+		const selection = resolveSelection({ profile: profile({}), overlay, live: live() });
 
-	it("joins the dependsOn closure and alwaysOn resources into the extension plan", async () => {
-		const resources = await registryWith({
-			"review-guard": { dependsOn: ["audit-log"] },
-			"audit-log": {},
-			"security-gate": { alwaysOn: true },
-			unrelated: {},
-		});
-
-		const plan = await resolveProfile({
-			profile: profile("review", { extensions: ["review-guard"] }),
-			skills: [],
-			resources,
-		});
-
-		expect(plan.extensions.map((entry) => entry.id).sort()).toEqual(["audit-log", "review-guard", "security-gate"]);
-	});
-
-	it("expands extension globs against registry IDs", async () => {
-		const resources = await registryWith({ "github-pr": {}, "github-ci": {}, other: {} });
-
-		const plan = await resolveProfile({
-			profile: profile("review", { extensions: ["github-*"] }),
-			skills: [],
-			resources,
-		});
-
-		expect(plan.extensions.map((entry) => entry.id).sort()).toEqual(["github-ci", "github-pr"]);
-	});
-
-	it("fails activation when a literal extension ID is not registered", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { extensions: ["ghost"] }),
-				skills: [],
-				resources: await registryWith({}),
-			}),
-		).rejects.toThrow(/ghost/);
-	});
-
-	it("propagates dependency closure failures (cycles, missing entries)", async () => {
-		const resources = await registryWith({ a: { dependsOn: ["b"] }, b: { dependsOn: ["a"] } });
-
-		await expect(
-			resolveProfile({ profile: profile("review", { extensions: ["a"] }), skills: [], resources }),
-		).rejects.toThrow(/cycle/i);
-	});
-
-	it("passes literal tool names through and expands tool globs against Pi's built-in tools", async () => {
-		const plan = await resolveProfile({
-			profile: profile("review", { tools: ["read", "search_issues", "gre*"] }),
-			skills: [],
-			resources: await registryWith({}),
-		});
-
-		expect(plan.tools).toEqual(["read", "search_issues", "grep"]);
-	});
-
-	it("keeps the raw tool references for extension-side expansion", async () => {
-		const plan = await resolveProfile({
-			profile: profile("review", { tools: ["read", "mcp__*"] }),
-			skills: [],
-			resources: await registryWith({}),
-		});
-
-		expect(plan.toolReferences).toEqual(["read", "mcp__*"]);
-	});
-
-	it("leaves tools, model, and instructions out of the plan when undeclared", async () => {
-		const plan = await resolveProfile({
-			profile: profile("review", { skills: ["code-review"] }),
-			skills: [skill("code-review")],
-			resources: await registryWith({}),
-		});
-
-		expect(plan.tools).toBeUndefined();
-		expect(plan.model).toBeUndefined();
-		expect(plan.instructions).toBeUndefined();
-	});
-
-	it("carries a declared model after successful validation", async () => {
-		const plan = await resolveProfile({
-			profile: profile("review", { model: { provider: "openai", id: "gpt-5.4", thinkingLevel: "high" } }),
-			skills: [],
-			resources: await registryWith({}),
-			validateModel: async () => undefined,
-		});
-
-		expect(plan.model).toEqual({ provider: "openai", id: "gpt-5.4", thinkingLevel: "high" });
-	});
-
-	it("fails activation when the declared model is missing or unauthenticated", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { model: { provider: "openai", id: "gpt-5.4" } }),
-				skills: [],
-				resources: await registryWith({}),
-				validateModel: async () => "No API key found for \"openai\"",
-			}),
-		).rejects.toThrow(/No API key found/);
-	});
-
-	it("fails activation on an invalid thinking level", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { model: { provider: "openai", id: "gpt-5.4", thinkingLevel: "extreme" } }),
-				skills: [],
-				resources: await registryWith({}),
-				validateModel: async () => undefined,
-			}),
-		).rejects.toThrow(/thinkingLevel/);
-	});
-
-	it("expands mcp references against the discovered adapter server names", async () => {
-		const plan = await resolveProfile({
-			profile: profile("review", { mcp: ["github", "internal-*"] }),
-			skills: [],
-			resources: await registryWith({}),
-			discoveredMcpServers: ["github", "internal-docs", "internal-ci", "other"],
-		});
-
-		expect(plan.mcp).toEqual(["github", "internal-docs", "internal-ci"]);
-	});
-
-	it("fails activation on a literal mcp reference the adapter never discovered", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { mcp: ["github-ro"] }),
-				skills: [],
-				resources: await registryWith({}),
-				discoveredMcpServers: ["github"],
-			}),
-		).rejects.toThrow(/unknown MCP server: "github-ro"/);
-	});
-
-	it("fails activation when mcp is declared without adapter server discovery", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { mcp: ["github"] }),
-				skills: [],
-				resources: await registryWith({}),
-			}),
-		).rejects.toThrow(/no adapter server discovery/);
-	});
-
-	it("carries declared instructions into the plan", async () => {
-		const plan = await resolveProfile({
-			profile: profile("review", { instructions: "Be picky." }),
-			skills: [],
-			resources: await registryWith({}),
-		});
-
-		expect(plan.instructions).toBe("Be picky.");
+		expect(selection.skills).toEqual({ refs: "all", disabled: ["code-review"] });
 	});
 });
 
-describe("overlay application (ticket 06)", () => {
-	it("narrows resolved skills by disabledSkills", async () => {
-		const plan = await resolveProfile({
-			profile: profile("review", { skills: ["code-review", "debug"] }),
-			skills: [skill("code-review"), skill("debug")],
-			resources: await registryWith({}),
-			overlay: { disabledSkills: ["debug"] },
+describe("resolveSelection: mcp", () => {
+	it("resolves declared literal and glob server names", () => {
+		const selection = resolveSelection({
+			profile: profile({ mcp: ["atlassian", "git*"] }),
+			live: live(),
 		});
 
-		expect(plan.skills.map((entry) => entry.name)).toEqual(["code-review"]);
+		expect(selection.mcp).toEqual(["atlassian", "github"]);
 	});
 
-	it("rejects disabling a skill the profile does not resolve", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { skills: ["code-review"] }),
-				skills: [skill("code-review")],
-				resources: await registryWith({}),
-				overlay: { disabledSkills: ["ghost-skill"] },
+	it("fails the activation when the adapter is not active", () => {
+		expect(() =>
+			resolveSelection({
+				profile: profile({ mcp: ["atlassian"] }),
+				live: live({ mcp: { adapterPresent: false, servers: [] } }),
 			}),
-		).rejects.toThrow(/overlay disables unknown skill "ghost-skill"/);
+		).toThrow(SelectionError);
 	});
 
-	it("narrows extensions post-closure while the alwaysOn gate and its chain survive", async () => {
-		// helper is linter's dependency; the overlay removes it anyway
-		// (experimentation), while the alwaysOn gate and its own dependency
-		// stay protected.
-		const resources = await registryWith({
-			helper: {},
-			linter: { dependsOn: ["helper"] },
-			"security-gate": { alwaysOn: true, dependsOn: ["gate-support"] },
-			"gate-support": {},
+	it("fails the activation for a literal server the adapter does not know", () => {
+		expect(() =>
+			resolveSelection({ profile: profile({ mcp: ["ghost"] }), live: live() }),
+		).toThrow(/unknown MCP server "ghost" — adapter discovered: \[atlassian, github\]/);
+	});
+
+	it("publishes no allowlist when mcp is undeclared and no overlay narrows it", () => {
+		const selection = resolveSelection({ profile: profile({}), live: live() });
+
+		expect(selection.mcp).toBeUndefined();
+	});
+
+	it("publishes discovered-minus-disabled when only the overlay narrows", () => {
+		const selection = resolveSelection({
+			profile: profile({}),
+			overlay: { disabledMcp: ["atlassian"] },
+			live: live(),
 		});
 
-		const plan = await resolveProfile({
-			profile: profile("review", { extensions: ["linter"] }),
-			skills: [],
-			resources,
-			overlay: { disabledExtensions: ["helper"] },
+		expect(selection.mcp).toEqual(["github"]);
+	});
+
+	it("applies the overlay narrowing to declared servers as well", () => {
+		const selection = resolveSelection({
+			profile: profile({ mcp: ["atlassian", "github"] }),
+			overlay: { disabledMcp: ["atlassian"] },
+			live: live(),
 		});
 
-		expect(plan.extensions.map((entry) => entry.id).sort()).toEqual(["gate-support", "linter", "security-gate"]);
+		expect(selection.mcp).toEqual(["github"]);
 	});
 
-	it("rejects disabling an alwaysOn extension", async () => {
-		const resources = await registryWith({ "security-gate": { alwaysOn: true } });
+	it("records zero-match mcp globs as unmatched", () => {
+		const selection = resolveSelection({ profile: profile({ mcp: ["zzz-*"] }), live: live() });
 
-		await expect(
-			resolveProfile({
-				profile: profile("review", { extensions: [] }),
-				skills: [],
-				resources,
-				overlay: { disabledExtensions: ["security-gate"] },
-			}),
-		).rejects.toThrow(/cannot disable "security-gate"/);
-	});
-
-	it("rejects disabling a resource in an alwaysOn dependency chain", async () => {
-		const resources = await registryWith({
-			"security-gate": { alwaysOn: true, dependsOn: ["gate-support"] },
-			"gate-support": {},
-		});
-
-		await expect(
-			resolveProfile({
-				profile: profile("review", { extensions: [] }),
-				skills: [],
-				resources,
-				overlay: { disabledExtensions: ["gate-support"] },
-			}),
-		).rejects.toThrow(/cannot disable "gate-support"/);
-	});
-
-	it("narrows mcp servers and replaces tool references", async () => {
-		const plan = await resolveProfile({
-			profile: profile("review", { mcp: ["github", "linear"], tools: ["read", "bash"] }),
-			skills: [],
-			resources: await registryWith({}),
-			discoveredMcpServers: ["github", "linear"],
-			overlay: { disabledMcp: ["linear"], tools: ["read"] },
-		});
-
-		expect(plan.mcp).toEqual(["github"]);
-		expect(plan.tools).toEqual(["read"]);
-		expect(plan.toolReferences).toEqual(["read"]);
-	});
-
-	it("rejects disabling an MCP server the profile does not resolve", async () => {
-		await expect(
-			resolveProfile({
-				profile: profile("review", { mcp: ["github"] }),
-				skills: [],
-				resources: await registryWith({}),
-				discoveredMcpServers: ["github"],
-				overlay: { disabledMcp: ["ghost-server"] },
-			}),
-		).rejects.toThrow(/overlay disables unknown MCP server "ghost-server"/);
+		expect(selection.mcp).toEqual([]);
+		expect(selection.warnings.mcpUnmatched).toEqual(["zzz-*"]);
 	});
 });
 
-describe("discovery-first extension references (ADR-0006)", () => {
-	async function registryWithPackage(name: string): Promise<{ registry: ResourceRegistry; entry: string }> {
-		const root = path.join(fixture.agentDir, "npm", "node_modules", name);
-		await mkdir(root, { recursive: true });
-		const entry = path.join(root, "index.ts");
-		await writeFile(entry, "export default function () {}\n");
-		const registry = await ResourceRegistry.load(fixture.agentDir, {
-			implicit: { packages: [{ name, source: `npm:${name}`, root, entries: [entry] }], local: [], warnings: [] },
-		});
-		return { registry, entry };
-	}
+describe("resolveSelection: tools", () => {
+	it("resolves literals and globs against the live registry", () => {
+		const selection = resolveSelection({ profile: profile({ tools: ["read", "gr*"] }), live: live() });
 
-	it("a profile references an installed package by name, no registration", async () => {
-		const { registry, entry } = await registryWithPackage("pi-mcp-adapter");
-
-		const plan = await resolveProfile({
-			profile: profile("review", { extensions: ["pi-mcp-adapter"] }),
-			skills: [],
-			resources: registry,
-		});
-
-		expect(plan.extensions).toEqual([{ id: "pi-mcp-adapter", entry }]);
+		expect(selection.tools).toEqual(["read", "grep"]);
+		expect(selection.pendingTools).toEqual([]);
 	});
 
-	it("a profile references an extension by absolute path", async () => {
-		const dir = path.join(fixture.agentDir, "extensions");
-		await mkdir(dir, { recursive: true });
-		const file = path.join(dir, "one-off.ts");
-		await writeFile(file, "export default function () {}\n");
+	it("keeps an unknown literal pending and retries it instead of dropping it", () => {
+		const selection = resolveSelection({ profile: profile({ tools: ["read", "mcp_tool"] }), live: live() });
 
-		const plan = await resolveProfile({
-			profile: profile("review", { extensions: [file] }),
-			skills: [],
-			resources: await registryWith({}),
-		});
-
-		expect(plan.extensions).toEqual([{ id: file, entry: file }]);
+		expect(selection.tools).toEqual(["read", "mcp_tool"]);
+		expect(selection.pendingTools).toEqual(["mcp_tool"]);
+		expect(formatSelectionWarnings(selection).join("\n")).toMatch(/not registered yet/);
 	});
 
-	it("unknown extension literals fail with actionable guidance", async () => {
-		const { registry } = await registryWithPackage("pi-mcp-adapter");
+	it("records zero-match tool globs as unmatched", () => {
+		const selection = resolveSelection({ profile: profile({ tools: ["zzz*"] }), live: live() });
 
-		const error = await resolveProfile({
-			profile: profile("review", { extensions: ["mcp-adapter"] }),
-			skills: [],
-			resources: registry,
-		}).catch((caught: unknown) => caught);
-
-		expect((error as Error).message).toContain('did you mean "pi-mcp-adapter"');
-		expect((error as Error).message).toContain("resources.json");
+		expect(selection.warnings.toolsUnmatched).toEqual(["zzz*"]);
 	});
 
-	it("zero-match globs land in plan.unmatched instead of failing silently", async () => {
-		const plan = await resolveProfile({
-			profile: profile("review", { skills: ["future-*"], extensions: ["ghost-*"] }),
-			skills: [skill("code-review")],
-			resources: await registryWith({}),
+	it("lets the overlay replace the profile's tool references", () => {
+		const selection = resolveSelection({
+			profile: profile({ tools: ["read"] }),
+			overlay: { tools: ["read", "bash"] },
+			live: live(),
 		});
 
-		expect(plan.skills).toEqual([]);
-		expect(plan.extensions).toEqual([]);
-		expect(plan.unmatched).toEqual(["skill:future-*", "extension:ghost-*"]);
+		expect(selection.tools).toEqual(["read", "bash"]);
 	});
 
-	it("overlays disable package-selected extensions by their resolved ID", async () => {
-		const { registry, entry } = await registryWithPackage("pi-mcp-adapter");
+	it("leaves Pi's active tool set untouched when tools are undeclared", () => {
+		const selection = resolveSelection({ profile: profile({}), live: live() });
 
-		const plan = await resolveProfile({
-			profile: profile("review", { extensions: ["pi-mcp-adapter"] }),
-			skills: [],
-			resources: registry,
-			overlay: { disabledExtensions: ["pi-mcp-adapter"] },
+		expect(selection.tools).toBeUndefined();
+	});
+
+	it("drops the tool selection entirely when the CLI declares tools", () => {
+		const selection = resolveSelection({
+			profile: profile({ tools: ["read", "gr*"] }),
+			live: live(),
+			suppressTools: true,
 		});
 
-		expect(plan.extensions).toEqual([]);
-		expect(entry).toContain("pi-mcp-adapter");
+		expect(selection.tools).toBeUndefined();
+		expect(selection.pendingTools).toEqual([]);
+		expect(selection.warnings.toolsUnmatched).toEqual([]);
+	});
+});
+
+describe("resolveSelection: model and instructions", () => {
+	it("passes a declared model and instructions through unchanged", () => {
+		const selection = resolveSelection({
+			profile: profile({
+				model: { provider: "openai", id: "gpt-5.4", thinkingLevel: "high" },
+				instructions: "Review only.",
+			}),
+			live: live(),
+		});
+
+		expect(selection.model).toEqual({ provider: "openai", id: "gpt-5.4", thinkingLevel: "high" });
+		expect(selection.instructions).toBe("Review only.");
+	});
+
+	it("omits an empty instructions string", () => {
+		const selection = resolveSelection({ profile: profile({ instructions: "" }), live: live() });
+
+		expect(selection.instructions).toBeUndefined();
+	});
+});
+
+describe("suggestNames", () => {
+	it("keeps prefix matches and caps the list at three", () => {
+		const suggestions = suggestNames("code", ["code-review", "code-audit", "code-format", "unrelated"]);
+
+		expect(suggestions).toHaveLength(3);
+		expect(new Set(suggestions)).toEqual(new Set(["code-review", "code-audit", "code-format"]));
+	});
+
+	it("finds a near-miss by edit distance", () => {
+		expect(suggestNames("git-comit", ["git-commit", "totally-different"])).toContain("git-commit");
+	});
+
+	it("returns nothing for a clearly unrelated reference", () => {
+		expect(suggestNames("zzzzz", ["git-commit", "code-review"])).toEqual([]);
 	});
 });

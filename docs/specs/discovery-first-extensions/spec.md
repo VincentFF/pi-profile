@@ -1,5 +1,7 @@
 # Discovery-first extension references spec
 
+**Superseded by [ADR-0007](../../adr/0007-pure-extension-runtime.md).** Extensions are no longer a profile resource: every installed extension loads natively, so extension references, `resources.json`, `ResourceRegistry`, dependency closures, and `alwaysOn` do not exist. Kept for history.
+
 Status: done
 
 ## Problem Statement

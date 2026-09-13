@@ -3,18 +3,15 @@
  * discover from its pi-native config files, without ever managing them.
  *
  * pi-profile never stores MCP connection parameters or credentials
- * (ADR-0002); this module reads only the `mcpServers` key names so the
- * launcher can validate a profile's `mcp` references before spawn.
+ * (ADR-0002); this module reads only the `mcpServers` key names so an
+ * activation can validate a profile's `mcp` references before applying it.
  *
  * Discovery scope (documented limitation): the pi-native files only — the
  * global `<agentDir>/mcp.json` and, when trusted, the project's
  * `.pi/mcp.json`. Servers defined solely in the adapter's editor-specific
  * legacy locations (~/.claude/mcp.json et al.) are invisible here; profiles
- * referencing them fail launch validation. The pi-native files are the
- * adapter's documented default, and no in-session re-validation exists (the
- * adapter's status snapshots arrive too late and only post-init), so the
- * launch check is the only name validation — keep configs in the pi-native
- * files.
+ * referencing them fail activation validation. The pi-native files are the
+ * adapter's documented default, so keep configs there.
  *
  * Malformed config files fail loudly — a broken mcp.json must not silently
  * read as "no servers" and reject every reference.

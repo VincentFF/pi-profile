@@ -1,7 +1,7 @@
 {
   "name": "pi-profile",
   "version": "0.1.0",
-  "description": "Named profiles for Pi: reference skills, extensions, MCP servers, and tools per workflow, switched without restarting.",
+  "description": "Named profiles for Pi: prompt, model, skills, MCP servers, and tools per workflow, switched in place.",
   "type": "module",
   "keywords": [
     "pi-package",
@@ -11,9 +11,6 @@
     "pi"
   ],
   "license": "MIT",
-  "bin": {
-    "pi-profile": "./bin/pi-profile.js"
-  },
   "pi": {
     "extensions": [
       "./extensions"
@@ -35,11 +32,9 @@
     "vitest": "^3.0.0"
   },
   "dependencies": {
-    "jiti": "^2.7.0",
     "minimatch": "^10.2.6"
   },
   "files": [
-    "bin",
     "extensions",
     "src",
     "schemas",

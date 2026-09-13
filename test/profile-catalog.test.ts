@@ -15,17 +15,17 @@ afterEach(async () => {
 	await rm(fixture.root, { recursive: true, force: true });
 });
 
-async function writeCatalog(content: unknown): Promise<void> {
+async function writeGlobal(content: unknown): Promise<void> {
 	await writeFile(
 		path.join(fixture.agentDir, "profiles.json"),
 		typeof content === "string" ? content : JSON.stringify(content),
 	);
 }
 
-async function writeProjectCatalog(profiles: Record<string, unknown>): Promise<void> {
+async function writeProject(content: unknown): Promise<void> {
 	await writeFile(
 		path.join(fixture.cwd, ".pi", "profiles.json"),
-		JSON.stringify({ schemaVersion: 1, profiles }),
+		typeof content === "string" ? content : JSON.stringify(content),
 	);
 }
 
@@ -33,7 +33,7 @@ const reviewProfile = {
 	label: "Review",
 	description: "Code review workflow",
 	skills: ["code-review", "git-commit"],
-	extensions: ["review-guard"],
+	mcp: ["atlassian"],
 	tools: ["read", "grep"],
 	model: { provider: "openai", id: "gpt-5.4", thinkingLevel: "high" },
 	instructions: "Be picky.",
@@ -41,12 +41,16 @@ const reviewProfile = {
 
 describe("ProfileCatalog (global catalog)", () => {
 	it("resolves a named global profile with its definition and global source", async () => {
-		await writeCatalog({ schemaVersion: 1, profiles: { review: reviewProfile } });
+		await writeGlobal({ schemaVersion: 2, profiles: { review: reviewProfile } });
 
 		const catalog = await ProfileCatalog.load(fixture.agentDir);
-		const resolved = catalog.resolve("review");
 
-		expect(resolved).toEqual({ name: "review", source: "global", definition: reviewProfile });
+		expect(catalog.resolve("review")).toEqual({
+			name: "review",
+			source: "global",
+			definition: reviewProfile,
+		});
+		expect(catalog.warnings).toEqual([]);
 	});
 
 	it("resolves the built-in default profile even without a catalog file", async () => {
@@ -62,8 +66,8 @@ describe("ProfileCatalog (global catalog)", () => {
 		expect(catalog.list().map((profile) => profile.name)).toEqual(["default"]);
 	});
 
-	it("lists the built-in default first, then named profiles in file order", async () => {
-		await writeCatalog({ schemaVersion: 1, profiles: { review: reviewProfile, implement: { skills: [] } } });
+	it("lists the built-in default first, then profiles in file order", async () => {
+		await writeGlobal({ schemaVersion: 2, profiles: { review: reviewProfile, implement: { skills: [] } } });
 
 		const catalog = await ProfileCatalog.load(fixture.agentDir);
 
@@ -74,106 +78,99 @@ describe("ProfileCatalog (global catalog)", () => {
 		]);
 	});
 
-	it("fails loudly on invalid JSON", async () => {
-		await writeCatalog("{ not json");
+	it("rejects a catalog that redefines the built-in default", async () => {
+		await writeGlobal({ schemaVersion: 2, profiles: { default: {} } });
 
-		await expect(ProfileCatalog.load(fixture.agentDir)).rejects.toThrow(CatalogError);
+		await expect(ProfileCatalog.load(fixture.agentDir)).rejects.toBeInstanceOf(CatalogError);
+	});
+
+	it("fails loudly on malformed JSON", async () => {
+		await writeGlobal("{ not json");
+
+		await expect(ProfileCatalog.load(fixture.agentDir)).rejects.toThrow(/invalid JSON/);
 	});
 
 	it("fails loudly on an unsupported schemaVersion", async () => {
-		await writeCatalog({ schemaVersion: 99, profiles: {} });
+		await writeGlobal({ schemaVersion: 99, profiles: {} });
 
-		await expect(ProfileCatalog.load(fixture.agentDir)).rejects.toThrow(/schemaVersion/);
+		await expect(ProfileCatalog.load(fixture.agentDir)).rejects.toThrow(/unsupported schemaVersion/);
 	});
 
-	it("fails loudly when the catalog file redefines the built-in default profile", async () => {
-		await writeCatalog({ schemaVersion: 1, profiles: { default: { skills: [] } } });
+	it("fails loudly on a malformed profile field", async () => {
+		await writeGlobal({ schemaVersion: 2, profiles: { review: { skills: "git-commit" } } });
 
-		await expect(ProfileCatalog.load(fixture.agentDir)).rejects.toThrow(/default/);
+		await expect(ProfileCatalog.load(fixture.agentDir)).rejects.toThrow(/"skills" must be an array of strings/);
 	});
+});
 
-	it("fails loudly when a profile field has the wrong shape", async () => {
-		await writeCatalog({ schemaVersion: 1, profiles: { review: { skills: "code-review" } } });
-
-		await expect(ProfileCatalog.load(fixture.agentDir)).rejects.toThrow(/review/);
-	});
-
-	it("defaults optional fields to absent rather than empty", async () => {
-		await writeCatalog({ schemaVersion: 1, profiles: { review: { label: "Review" } } });
+describe("ProfileCatalog version 1 compatibility", () => {
+	it("reads a version 1 catalog as version 2 with a warning", async () => {
+		await writeGlobal({
+			schemaVersion: 1,
+			profiles: { review: { skills: ["git-commit"], mcp: ["atlassian"] } },
+		});
 
 		const catalog = await ProfileCatalog.load(fixture.agentDir);
-		const resolved = catalog.resolve("review");
 
-		expect(resolved?.definition.skills).toBeUndefined();
-		expect(resolved?.definition.model).toBeUndefined();
-		expect(resolved?.definition.instructions).toBeUndefined();
+		expect(catalog.resolve("review")?.definition).toEqual({ skills: ["git-commit"], mcp: ["atlassian"] });
+		expect(catalog.warnings.join("\n")).toMatch(/schemaVersion 1 is read as version 2/);
 	});
 
-	describe("project catalog (trusted projects only)", () => {
-		it("resolves project-only profiles with project source", async () => {
-			await writeCatalog({ schemaVersion: 1, profiles: { review: reviewProfile } });
-			await writeProjectCatalog({ implement: { skills: ["project-skill"] } });
-
-			const catalog = await ProfileCatalog.load(fixture.agentDir, { projectDir: fixture.cwd });
-
-			expect(catalog.resolve("implement")).toEqual({
-				name: "implement",
-				source: "project",
-				definition: { skills: ["project-skill"] },
-			});
+	it("ignores a profile's extensions field and warns per profile", async () => {
+		await writeGlobal({
+			schemaVersion: 2,
+			profiles: { review: { skills: ["git-commit"], extensions: ["pi-plan-build"] } },
 		});
 
-		it("a same-name project profile fully replaces the global definition", async () => {
-			await writeCatalog({ schemaVersion: 1, profiles: { review: reviewProfile } });
-			await writeProjectCatalog({ review: { description: "Project override" } });
+		const catalog = await ProfileCatalog.load(fixture.agentDir);
 
-			const catalog = await ProfileCatalog.load(fixture.agentDir, { projectDir: fixture.cwd });
-			const resolved = catalog.resolve("review");
+		expect(catalog.resolve("review")?.definition).toEqual({ skills: ["git-commit"] });
+		expect(catalog.warnings.join("\n")).toMatch(/profile "review" declares "extensions"/);
+		expect(catalog.warnings.join("\n")).toMatch(/pi install/);
+	});
 
-			// Full replacement: no global fields survive, no merge.
-			expect(resolved).toEqual({
-				name: "review",
-				source: "project",
-				definition: { description: "Project override" },
-			});
+	it("ignores inheritance-like fields entirely (no profile inheritance)", async () => {
+		await writeGlobal({
+			schemaVersion: 2,
+			profiles: { review: { skills: ["git-commit"], extends: "base", skillsAppend: ["x"] } },
 		});
 
-		it("removing the project override immediately reveals the global definition", async () => {
-			await writeCatalog({ schemaVersion: 1, profiles: { review: reviewProfile } });
-			await writeProjectCatalog({ review: { description: "Project override" } });
-			const withOverride = await ProfileCatalog.load(fixture.agentDir, { projectDir: fixture.cwd });
-			expect(withOverride.resolve("review")?.source).toBe("project");
+		const catalog = await ProfileCatalog.load(fixture.agentDir);
 
-			await writeProjectCatalog({});
-			const afterRemoval = await ProfileCatalog.load(fixture.agentDir, { projectDir: fixture.cwd });
+		expect(catalog.resolve("review")?.definition).toEqual({ skills: ["git-commit"] });
+	});
+});
 
-			expect(afterRemoval.resolve("review")).toEqual({
-				name: "review",
-				source: "global",
-				definition: reviewProfile,
-			});
+describe("ProfileCatalog (project catalog)", () => {
+	it("replaces a same-name global profile with the project definition and reports the shadow", async () => {
+		await writeGlobal({ schemaVersion: 2, profiles: { review: reviewProfile, implement: {} } });
+		await writeProject({ schemaVersion: 2, profiles: { review: { skills: ["project-only"] } } });
+
+		const catalog = await ProfileCatalog.load(fixture.agentDir, { projectDir: fixture.cwd });
+
+		expect(catalog.resolve("review")).toEqual({
+			name: "review",
+			source: "project",
+			definition: { skills: ["project-only"] },
 		});
+		expect(catalog.shadowsGlobal("review")).toBe(true);
+		expect(catalog.shadowsGlobal("implement")).toBe(false);
+	});
 
-		it("without a project dir, project catalogs are not read at all", async () => {
-			await writeProjectCatalog({ implement: { skills: [] } });
+	it("reveals the global definition as soon as the project entry is gone", async () => {
+		await writeGlobal({ schemaVersion: 2, profiles: { review: reviewProfile } });
 
-			const catalog = await ProfileCatalog.load(fixture.agentDir);
+		const withProject = await ProfileCatalog.load(fixture.agentDir, { projectDir: fixture.cwd });
 
-			expect(catalog.resolve("implement")).toBeUndefined();
-		});
+		expect(withProject.resolve("review")?.source).toBe("global");
+		expect(withProject.shadowsGlobal("review")).toBe(false);
+	});
 
-		it("lists each profile once with its effective source", async () => {
-			await writeCatalog({ schemaVersion: 1, profiles: { review: reviewProfile, shared: { skills: [] } } });
-			await writeProjectCatalog({ shared: { tools: ["read"] }, implement: {} });
+	it("does not read the project catalog when no projectDir is given (untrusted project)", async () => {
+		await writeProject({ schemaVersion: 2, profiles: { review: reviewProfile } });
 
-			const catalog = await ProfileCatalog.load(fixture.agentDir, { projectDir: fixture.cwd });
+		const catalog = await ProfileCatalog.load(fixture.agentDir);
 
-			expect(catalog.list().map((profile) => `${profile.name}:${profile.source}`)).toEqual([
-				"default:builtin",
-				"review:global",
-				"shared:project",
-				"implement:project",
-			]);
-		});
+		expect(catalog.resolve("review")).toBeUndefined();
 	});
 });

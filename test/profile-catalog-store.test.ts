@@ -1,10 +1,11 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { CatalogError, ProfileCatalog } from "../src/profile-catalog.ts";
+import { CatalogError } from "../src/profile-catalog.ts";
 import { ProfileCatalogStore } from "../src/profile-catalog-store.ts";
 import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
+import { readFile, writeFile } from "node:fs/promises";
 
 let fixture: PiFixture;
 
@@ -16,71 +17,88 @@ afterEach(async () => {
 	await rm(fixture.root, { recursive: true, force: true });
 });
 
-const store = () => new ProfileCatalogStore(path.join(fixture.agentDir, "profiles.json"));
+function store(): ProfileCatalogStore {
+	return new ProfileCatalogStore(path.join(fixture.agentDir, "profiles.json"));
+}
+
+async function readFileJson(): Promise<Record<string, unknown>> {
+	return JSON.parse(await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8")) as Record<string, unknown>;
+}
 
 describe("ProfileCatalogStore", () => {
-	it("upserts a self-contained definition into a missing file, loadable by ProfileCatalog", async () => {
+	it("treats a missing catalog file as empty", async () => {
+		expect(await store().readDefinitions()).toEqual(new Map());
+	});
+
+	it("writes schemaVersion 2 and only declared fields", async () => {
 		await store().upsert("review", {
-			label: "Code review",
-			skills: ["review*"],
-			extensions: ["linter"],
-			model: { provider: "deepseek", id: "deepseek-v4-pro", thinkingLevel: "high" },
-			instructions: "Be terse.",
+			skills: ["git-commit"],
+			model: { provider: "openai", id: "gpt-5.4" },
 		});
 
-		const raw = JSON.parse(await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8"));
-		expect(raw.profiles.review).toEqual({
-			label: "Code review",
-			skills: ["review*"],
-			extensions: ["linter"],
-			model: { provider: "deepseek", id: "deepseek-v4-pro", thinkingLevel: "high" },
-			instructions: "Be terse.",
+		const document = await readFileJson();
+		expect(document.schemaVersion).toBe(2);
+		expect(document.profiles).toEqual({
+			review: { skills: ["git-commit"], model: { provider: "openai", id: "gpt-5.4" } },
 		});
-		const catalog = await ProfileCatalog.load(fixture.agentDir);
-		expect(catalog.resolve("review")?.definition.label).toBe("Code review");
 	});
 
-	it("writes back only declared fields — unknown keys do not survive a save", async () => {
-		await store().upsert("review", { label: "ok" });
-		await store().upsert("review", { skills: ["a"] });
-
-		const catalog = await ProfileCatalog.load(fixture.agentDir);
-		expect(catalog.resolve("review")?.definition).toEqual({ skills: ["a"] });
-	});
-
-	it("rejects the built-in name and malformed definitions loudly", async () => {
-		await expect(store().upsert("default", {})).rejects.toThrow(CatalogError);
-		await expect(store().upsert("review", { skills: "oops" as never })).rejects.toThrow(CatalogError);
-		await expect(store().upsert(" ", {})).rejects.toThrow(CatalogError);
-	});
-
-	it("drops inheritance fields — the editor has no inheritance concept", async () => {
-		// Unknown keys (extends, merge, ...) are not part of the definition
-		// model: they cannot survive a save, so no profile can inherit.
-		await store().upsert("review", { label: "x", extends: "base" } as never);
-
-		const catalog = await ProfileCatalog.load(fixture.agentDir);
-		expect(catalog.resolve("review")?.definition).toEqual({ label: "x" });
-	});
-
-	it("remove deletes the profile and is loud about unknown names", async () => {
-		await store().upsert("review", {});
-		await store().remove("review");
-
-		expect((await ProfileCatalog.load(fixture.agentDir)).resolve("review")).toBeUndefined();
-		await expect(store().remove("review")).rejects.toThrow(CatalogError);
-	});
-
-	it("saves never block on external concurrent edits (re-read at write time)", async () => {
-		await store().upsert("review", { label: "mine" });
+	it("drops unrelated fields so written definitions stay self-contained", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "profiles.json"),
-			JSON.stringify({ schemaVersion: 1, profiles: { external: { description: "theirs" } } }),
+			JSON.stringify({
+				schemaVersion: 2,
+				profiles: { review: { skills: ["git-commit"], extensions: ["x"], extends: "base" } },
+			}),
 		);
 
-		await store().upsert("review", { label: "updated" });
-		const catalog = await ProfileCatalog.load(fixture.agentDir);
-		expect(catalog.resolve("review")?.definition.label).toBe("updated");
-		expect(catalog.resolve("external")).toBeDefined();
+		await store().upsert("review", { skills: ["git-commit", "code-review"] });
+
+		const document = await readFileJson();
+		expect(document.profiles).toEqual({ review: { skills: ["git-commit", "code-review"] } });
+	});
+
+	it("reads a version 1 file and upgrades it to version 2 on write", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "profiles.json"),
+			JSON.stringify({
+				schemaVersion: 1,
+				profiles: { review: { skills: ["git-commit"], extensions: ["pi-plan-build"] } },
+			}),
+		);
+
+		const definitions = await store().readDefinitions();
+		expect(definitions.get("review")).toEqual({ skills: ["git-commit"] });
+
+		await store().upsert("implement", { tools: ["read"] });
+
+		const document = await readFileJson();
+		expect(document.schemaVersion).toBe(2);
+		expect(document.profiles).toEqual({
+			implement: { tools: ["read"] },
+			review: { skills: ["git-commit"] },
+		});
+	});
+
+	it("refuses to write the built-in default profile", async () => {
+		await expect(store().upsert("default", {})).rejects.toBeInstanceOf(CatalogError);
+	});
+
+	it("errors when removing an unknown profile", async () => {
+		await expect(store().remove("ghost")).rejects.toThrow(/not found/);
+	});
+
+	it("removes an existing profile", async () => {
+		await store().upsert("review", { skills: ["git-commit"] });
+
+		await store().remove("review");
+
+		expect(await store().readDefinitions()).toEqual(new Map());
+	});
+
+	it("fails loudly on a malformed existing file", async () => {
+		await writeFile(path.join(fixture.agentDir, "profiles.json"), "{ not json");
+
+		await expect(store().readDefinitions()).rejects.toThrow(/invalid JSON/);
 	});
 });

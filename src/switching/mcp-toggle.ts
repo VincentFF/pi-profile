@@ -4,9 +4,9 @@
  * The profile's `mcp` array in its OWNING catalog is the profile-scoped
  * state store (ticket 04 established that pi-mcp-adapter@2.33.0 has no
  * allowlist/profile-state API — ADR-0002's assumed store does not exist;
- * pi-profile owns the contract). Runtime effect flows through the standard
- * rewrite-settings-and-reload path: the post-reload session_start
- * republishes the allowlist over the coordination channel.
+ * pi-profile owns the contract). The runtime effect is the caller's
+ * re-activation of the active profile, which republishes the allowlist over
+ * the coordination channel.
  *
  * Invariants:
  * - Enable accepts only adapter-discovered names (fail fast on typos);
@@ -20,30 +20,34 @@
  */
 
 import { discoverAdapterServerNames } from "../mcp-config.ts";
-import { CatalogError, DEFAULT_PROFILE_NAME, type ProfileDefinition } from "../profile-catalog.ts";
-import { readTrustInputs as readTrust } from "../launcher/initial-profile.ts";
+import { CatalogError, DEFAULT_PROFILE_NAME, type ProfileDefinition, type ProfileSource } from "../profile-catalog.ts";
 import { catalogStore, readCatalogScope, type CatalogScope } from "./profile-crud.ts";
 
 export async function setMcpServerEnabled(
-	input: { realAgentDir: string; cwd: string; profile: { name: string; source: string } },
+	input: {
+		realAgentDir: string;
+		cwd: string;
+		projectTrusted: boolean;
+		profile: { name: string; source: ProfileSource };
+	},
 	server: string,
 	enabled: boolean,
 ): Promise<{ mcp: string[]; changed: boolean }> {
-	if (input.profile.name === DEFAULT_PROFILE_NAME || input.profile.source === "builtin") {
+	const { name, source } = input.profile;
+	if (name === DEFAULT_PROFILE_NAME || source === "builtin") {
 		throw new CatalogError(
 			`the built-in default profile has no catalog entry — create a named profile (/profile create) to toggle MCP servers`,
 		);
 	}
-	const scope = input.profile.source as CatalogScope;
-	if (scope !== "global" && scope !== "project") {
-		throw new CatalogError(`profile "${input.profile.name}" has no writable owning catalog (source: ${input.profile.source})`);
+	if (source !== "global" && source !== "project") {
+		throw new CatalogError(`profile "${name}" has no writable owning catalog (source: ${source})`);
 	}
+	const scope: CatalogScope = source;
 
-	const { projectTrusted } = await readTrust({ agentDir: input.realAgentDir, cwd: input.cwd });
-	if (scope === "project" && !projectTrusted) {
+	if (scope === "project" && !input.projectTrusted) {
 		throw new CatalogError(`project catalog is unavailable: ${input.cwd} is not trusted`);
 	}
-	const discovered = await discoverAdapterServerNames(input.realAgentDir, projectTrusted ? input.cwd : undefined);
+	const discovered = await discoverAdapterServerNames(input.realAgentDir, input.projectTrusted ? input.cwd : undefined);
 	if (enabled && !discovered.includes(server)) {
 		throw new CatalogError(
 			`unknown MCP server "${server}" — adapter discovered: [${discovered.join(", ") || "(none)"}]`,

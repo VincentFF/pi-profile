@@ -1,108 +1,109 @@
-import { readFile, rm, writeFile } from "node:fs/promises";
+import { rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import { ProfileCatalog } from "../src/profile-catalog.ts";
+import { CatalogError } from "../src/profile-catalog.ts";
 import { setMcpServerEnabled } from "../src/switching/mcp-toggle.ts";
 import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
 let fixture: PiFixture;
-let savedHome: string | undefined;
 
 beforeEach(async () => {
 	fixture = await createPiFixture();
-	savedHome = process.env.HOME;
-	process.env.HOME = fixture.root;
-});
-
-afterEach(async () => {
-	process.env.HOME = savedHome;
-	await rm(fixture.root, { recursive: true, force: true });
-});
-
-const input = (profile: { name: string; source: string }) => ({
-	realAgentDir: fixture.agentDir,
-	cwd: fixture.cwd,
-	profile,
-});
-
-async function seed(): Promise<void> {
 	await writeFile(
 		path.join(fixture.agentDir, "profiles.json"),
 		JSON.stringify({
-			schemaVersion: 1,
-			profiles: { review: { mcp: ["github"] }, impl: { mcp: ["linear"] } },
+			schemaVersion: 2,
+			profiles: { review: { mcp: ["atlassian"] }, empty: {} },
 		}),
 	);
 	await writeFile(
 		path.join(fixture.agentDir, "mcp.json"),
-		JSON.stringify({ mcpServers: { github: {}, linear: {}, slack: {} } }),
+		JSON.stringify({ mcpServers: { atlassian: {}, github: {} } }),
 	);
-}
+});
 
-const activeMcp = async (name: string) =>
-	(await ProfileCatalog.load(fixture.agentDir)).resolve(name)?.definition.mcp;
+afterEach(async () => {
+	await rm(fixture.root, { recursive: true, force: true });
+});
+
+const globalInput = (name = "review") => ({
+	realAgentDir: fixture.agentDir,
+	cwd: fixture.cwd,
+	projectTrusted: true,
+	profile: { name, source: "global" as const },
+});
 
 describe("setMcpServerEnabled", () => {
-	it("enable appends a discovered server to the active profile only", async () => {
-		await seed();
-		const result = await setMcpServerEnabled(input({ name: "review", source: "global" }), "linear", true);
+	it("adds a discovered server to the profile's mcp array", async () => {
+		const result = await setMcpServerEnabled(globalInput(), "github", true);
 
-		expect(result.mcp).toEqual(["github", "linear"]);
-		expect(await activeMcp("review")).toEqual(["github", "linear"]);
-		// Other profiles untouched.
-		expect(await activeMcp("impl")).toEqual(["linear"]);
+		expect(result).toEqual({ mcp: ["atlassian", "github"], changed: true });
 	});
 
-	it("enable fails fast on names the adapter has not discovered", async () => {
-		await seed();
-		await expect(setMcpServerEnabled(input({ name: "review", source: "global" }), "ghost", true)).rejects.toThrow(
-			/unknown MCP server "ghost"/,
-		);
-		expect(await activeMcp("review")).toEqual(["github"]);
+	it("removes a server and drops the key when the array becomes empty", async () => {
+		const result = await setMcpServerEnabled(globalInput(), "atlassian", false);
+
+		expect(result).toEqual({ mcp: [], changed: true });
+		const document = JSON.parse(
+			await (await import("node:fs/promises")).readFile(path.join(fixture.agentDir, "profiles.json"), "utf8"),
+		) as { profiles: Record<string, unknown> };
+		expect(document.profiles.empty).toEqual({});
+		expect(document.profiles.review).toEqual({});
 	});
 
-	it("disable removes present and stale (no longer discovered) names alike", async () => {
-		await seed();
-		// "stale" is in the profile but not in mcp.json — disable must clean it.
+	it("reports no change when the server is already in the requested state", async () => {
+		expect(await setMcpServerEnabled(globalInput(), "atlassian", true)).toEqual({
+			mcp: ["atlassian"],
+			changed: false,
+		});
+	});
+
+	it("rejects enabling a server the adapter does not discover", async () => {
+		await expect(setMcpServerEnabled(globalInput(), "ghost", true)).rejects.toThrow(/unknown MCP server "ghost"/);
+	});
+
+	it("allows disabling a name the adapter no longer discovers", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "profiles.json"),
-			JSON.stringify({ schemaVersion: 1, profiles: { review: { mcp: ["github", "stale"] }, impl: {} } }),
+			JSON.stringify({ schemaVersion: 2, profiles: { review: { mcp: ["removed"] } } }),
 		);
 
-		const result = await setMcpServerEnabled(input({ name: "review", source: "global" }), "stale", false);
-
-		expect(result.mcp).toEqual(["github"]);
-		expect(await activeMcp("review")).toEqual(["github"]);
+		expect(await setMcpServerEnabled(globalInput(), "removed", false)).toEqual({ mcp: [], changed: true });
 	});
 
-	it("drops the mcp key entirely when the last server is disabled", async () => {
-		await seed();
-		await setMcpServerEnabled(input({ name: "impl", source: "global" }), "linear", false);
-
-		expect(await activeMcp("impl")).toBeUndefined();
+	it("refuses the built-in default profile", async () => {
+		await expect(
+			setMcpServerEnabled(
+				{ ...globalInput("default"), profile: { name: "default", source: "builtin" } },
+				"github",
+				true,
+			),
+		).rejects.toBeInstanceOf(CatalogError);
 	});
 
-	it("is a no-op when the requested state already holds", async () => {
-		await seed();
-		const before = await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8");
-		const result = await setMcpServerEnabled(input({ name: "review", source: "global" }), "github", true);
-
-		expect(result.mcp).toEqual(["github"]);
-		expect(await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8")).toBe(before);
+	it("refuses a project profile when the project is not trusted", async () => {
+		await expect(
+			setMcpServerEnabled(
+				{ ...globalInput(), projectTrusted: false, profile: { name: "review", source: "project" } },
+				"github",
+				true,
+			),
+		).rejects.toThrow(/not trusted/);
 	});
 
-	it("refuses the built-in default profile with a clear message", async () => {
-		await seed();
-		await expect(setMcpServerEnabled(input({ name: "default", source: "builtin" }), "github", false)).rejects.toThrow(
-			/built-in default profile has no catalog entry/,
+	it("never touches the adapter's own configuration", async () => {
+		const before = await (await import("node:fs/promises")).readFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			"utf8",
 		);
-	});
 
-	it("never touches the adapter's own mcp.json configuration", async () => {
-		await seed();
-		const before = await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8");
-		await setMcpServerEnabled(input({ name: "review", source: "global" }), "linear", true);
-		expect(await readFile(path.join(fixture.agentDir, "mcp.json"), "utf8")).toBe(before);
+		await setMcpServerEnabled(globalInput(), "github", true);
+
+		const after = await (await import("node:fs/promises")).readFile(
+			path.join(fixture.agentDir, "mcp.json"),
+			"utf8",
+		);
+		expect(after).toBe(before);
 	});
 });

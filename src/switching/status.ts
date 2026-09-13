@@ -1,139 +1,74 @@
 /**
- * StatusReport: the `/profile status` observability surface (ticket 07).
+ * StatusReport: the `/profile status` observability surface.
  *
- * Pure report builder: combines the ACTIVE launch plan (what the runtime
- * was resolved to), the stored overlay, fresh MCP adapter discovery, and
- * Pi's actual command registrations (the winner evidence for same-name
- * conflicts). Markdown formatting is the only presentation; the extension
- * ships it via `pi.sendMessage`.
- *
- * Conflict semantics: Pi's load order is first-wins by scope/file order,
- * so the registered command IS the winner. A conflict is reported when the
- * plan resolved a skill whose command name is registered from a DIFFERENT
- * path (shadowed) or is absent (failed to load) — never blocked, always
- * visible.
+ * Pure report builder: combines the ACTIVE selection (what the runtime was
+ * resolved to), the stored overlay, and fresh MCP discovery. Markdown
+ * formatting is the only presentation; the extension ships it via
+ * `pi.sendMessage`.
  */
 
+import type { ProfileSource } from "../profile-catalog.ts";
+import type { ResolvedSelection, UnresolvedRef } from "../profile-resolver.ts";
 import type { RuntimeOverlay } from "../runtime-state-store.ts";
-import type { LaunchPlanFile } from "./apply-plan.ts";
-
-export interface StatusConflict {
-	/** Command name as registered (e.g. `skill:review`). */
-	name: string;
-	/** The path the active plan resolved. */
-	expectedPath: string;
-	/** The path Pi actually registered (the winner), or "not loaded". */
-	winnerPath: string;
-}
+import { visibleSkillNames, type SkillsFilterOutcome } from "../skill-selection.ts";
 
 export interface StatusReport {
 	profile: string;
-	source: string;
+	source: ProfileSource;
 	overlay?: RuntimeOverlay;
-	skills: Array<{ name: string; filePath: string }>;
-	extensions: Array<{ id: string; entry: string }>;
-	tools?: string[];
-	mcp: { enabled: string[]; disabled: string[]; missing: string[] };
-	/** Glob delta versus the previous activation (prefixed names). */
-	delta?: { added: string[]; removed: string[] };
-	/** Glob references that matched nothing at resolution (ADR-0006). */
-	unmatched?: string[];
-	conflicts: StatusConflict[];
-}
-
-interface RegisteredCommand {
-	name: string;
-	sourceInfo?: { path: string };
-}
-
-interface RegisteredTool {
-	name: string;
-	sourceInfo?: { path: string; source: string };
-}
-
-function currentNames(plan: LaunchPlanFile): string[] {
-	const names = [
-		...(plan.resolved?.skills ?? []).map((skill) => `skill:${skill.name}`),
-		...(plan.resolved?.extensions ?? []).map((entry) => `extension:${entry.id}`),
-		...(plan.tools ?? []).map((tool) => `tool:${tool}`),
-		...(plan.mcp ?? []).map((server) => `mcp:${server}`),
-	];
-	return names.sort();
+	/** The skills the model can see (all loaded skills when unfiltered). */
+	skills: {
+		filtered: boolean;
+		visible: Array<{ name: string; filePath: string }>;
+		loaded: number;
+		/** The last prompt-filter result; `no-filter` when the profile
+		 *  selects nothing. */
+		filterOutcome: SkillsFilterOutcome;
+	};
+	tools?: { active: string[]; pending: string[] };
+	mcp: { enabled: string[]; discovered: string[]; missing: string[] };
+	unresolved: { skills: UnresolvedRef[]; unmatched: string[] };
 }
 
 export function buildStatusReport(input: {
-	plan: LaunchPlanFile;
-	overlay?: RuntimeOverlay;
+	selection: ResolvedSelection;
+	allSkills: Array<{ name: string; filePath: string }>;
 	discoveredMcpServers: string[];
-	commands: RegisteredCommand[];
-	tools: RegisteredTool[];
+	filterOutcome?: SkillsFilterOutcome;
 }): StatusReport {
-	const { plan } = input;
+	const { selection } = input;
+	const visibleNames = visibleSkillNames(input.allSkills, selection.skills);
+	const visible =
+		visibleNames === undefined
+			? input.allSkills
+			: input.allSkills.filter((skill) => visibleNames.includes(skill.name));
 
-	const enabled = plan.mcp ?? [];
+	const enabled = selection.mcp ?? [];
 	const discovered = new Set(input.discoveredMcpServers);
-	const mcp = {
-		enabled,
-		disabled: input.discoveredMcpServers.filter((name) => !enabled.includes(name)),
-		missing: enabled.filter((name) => !discovered.has(name)),
-	};
-
-	let delta: StatusReport["delta"];
-	if (plan.previousResolved !== undefined) {
-		const before = new Set(
-			[
-				...plan.previousResolved.skills.map((name) => `skill:${name}`),
-				...plan.previousResolved.extensions.map((id) => `extension:${id}`),
-				...(plan.previousResolved.tools ?? []).map((name) => `tool:${name}`),
-				...(plan.previousResolved.mcp ?? []).map((name) => `mcp:${name}`),
-			].sort(),
-		);
-		const after = new Set(currentNames(plan));
-		const added = [...after].filter((name) => !before.has(name));
-		const removed = [...before].filter((name) => !after.has(name));
-		if (added.length > 0 || removed.length > 0) {
-			delta = { added, removed };
-		}
-	}
-
-	const conflicts: StatusConflict[] = [];
-	for (const skill of plan.resolved?.skills ?? []) {
-		const command = input.commands.find((entry) => entry.name === `skill:${skill.name}`);
-		const winnerPath = command?.sourceInfo?.path;
-		if (winnerPath === undefined) {
-			conflicts.push({ name: `skill:${skill.name}`, expectedPath: skill.filePath, winnerPath: "not loaded" });
-		} else if (winnerPath !== skill.filePath) {
-			conflicts.push({ name: `skill:${skill.name}`, expectedPath: skill.filePath, winnerPath });
-		}
-	}
-
-	// Tool conflicts: a plan tool whose registered winner is neither a pi
-	// builtin nor a tool from one of the plan's selected extensions was
-	// shadowed by (or shadows) an unexpected source.
-	const extensionDirs = (plan.resolved?.extensions ?? []).map((entry) =>
-		entry.entry.endsWith(".ts") ? entry.entry.slice(0, entry.entry.lastIndexOf("/")) : entry.entry,
-	);
-	for (const toolName of plan.tools ?? []) {
-		const winner = input.tools.find((entry) => entry.name === toolName);
-		const info = winner?.sourceInfo;
-		if (info === undefined) continue; // unknown names are dropped by pi.setActiveTools
-		const expected = info.source === "builtin" || extensionDirs.some((dir) => info.path.startsWith(dir));
-		if (!expected) {
-			conflicts.push({ name: `tool:${toolName}`, expectedPath: "builtin or selected extension", winnerPath: info.path });
-		}
-	}
+	const unmatched = [
+		...selection.warnings.skillsUnmatched,
+		...selection.warnings.mcpUnmatched,
+		...selection.warnings.toolsUnmatched,
+	];
 
 	return {
-		profile: plan.profile,
-		source: plan.source,
-		overlay: input.overlay,
-		skills: plan.resolved?.skills ?? [],
-		extensions: plan.resolved?.extensions ?? [],
-		...(plan.tools !== undefined ? { tools: plan.tools } : {}),
-		mcp,
-		...(delta !== undefined ? { delta } : {}),
-		...(plan.unmatched !== undefined && plan.unmatched.length > 0 ? { unmatched: plan.unmatched } : {}),
-		conflicts,
+		profile: selection.name,
+		source: selection.source,
+		skills: {
+			filtered: selection.skills !== undefined,
+			visible,
+			loaded: input.allSkills.length,
+			filterOutcome: input.filterOutcome ?? (selection.skills === undefined ? "no-filter" : "filtered"),
+		},
+		...(selection.tools !== undefined
+			? { tools: { active: selection.tools, pending: selection.pendingTools } }
+			: {}),
+		mcp: {
+			enabled,
+			discovered: input.discoveredMcpServers,
+			missing: enabled.filter((name) => !discovered.has(name)),
+		},
+		unresolved: { skills: selection.warnings.skillsUnresolved, unmatched },
 	};
 }
 
@@ -143,40 +78,36 @@ export function formatStatusMarkdown(report: StatusReport): string {
 	if (report.overlay !== undefined) {
 		const parts = [
 			...(report.overlay.disabledSkills ?? []).map((name) => `-skill:${name}`),
-			...(report.overlay.disabledExtensions ?? []).map((id) => `-extension:${id}`),
 			...(report.overlay.disabledMcp ?? []).map((name) => `-mcp:${name}`),
 			...(report.overlay.tools !== undefined ? [`tools=[${report.overlay.tools.join(", ")}]`] : []),
 		];
 		lines.push(`overlay: ${parts.length > 0 ? parts.join(" ") : "(empty)"}`);
 	}
-	if (report.skills.length > 0) {
-		lines.push("skills:");
-		for (const skill of report.skills) {
-			lines.push(`  ${skill.name} → ${skill.filePath}`);
-		}
+	const skillScope = report.skills.filtered
+		? `${report.skills.visible.length} of ${report.skills.loaded} loaded`
+		: `all ${report.skills.loaded} loaded`;
+	lines.push(`skills: ${skillScope}`);
+	if (report.skills.filtered && report.skills.filterOutcome !== "filtered") {
+		lines.push(`skills filter: not applied (${report.skills.filterOutcome})`);
 	}
-	if (report.extensions.length > 0) {
-		lines.push("extensions:");
-		for (const extension of report.extensions) {
-			lines.push(`  ${extension.id} → ${extension.entry}`);
-		}
+	for (const skill of report.skills.visible) {
+		lines.push(`  ${skill.name} → ${skill.filePath}`);
 	}
 	if (report.tools !== undefined) {
-		lines.push(`tools: [${report.tools.join(", ")}]`);
+		lines.push(`tools: [${report.tools.active.join(", ")}]`);
+		if (report.tools.pending.length > 0) {
+			lines.push(`tools pending (not registered yet): [${report.tools.pending.join(", ")}]`);
+		}
 	}
 	lines.push(
-		`mcp: enabled=[${report.mcp.enabled.join(", ")}] disabled=[${report.mcp.disabled.join(", ")}] missing=[${report.mcp.missing.join(", ")}]`,
+		`mcp: enabled=[${report.mcp.enabled.join(", ")}] discovered=[${report.mcp.discovered.join(", ")}] missing=[${report.mcp.missing.join(", ")}]`,
 	);
-	if (report.delta !== undefined) {
-		lines.push(`delta: +[${report.delta.added.join(", ")}] -[${report.delta.removed.join(", ")}]`);
+	for (const unresolved of report.unresolved.skills) {
+		const hint = unresolved.suggestions.length > 0 ? ` — did you mean: ${unresolved.suggestions.join(", ")}?` : "";
+		lines.push(`unresolved skill: ${unresolved.reference}${hint}`);
 	}
-	if (report.unmatched !== undefined) {
-		lines.push(`unmatched (zero-match globs this resolution): [${report.unmatched.join(", ")}]`);
-	}
-	for (const conflict of report.conflicts) {
-		lines.push(
-			`conflict: ${conflict.name} — plan resolved ${conflict.expectedPath}, Pi registered ${conflict.winnerPath} (Pi first-wins load order)`,
-		);
+	if (report.unresolved.unmatched.length > 0) {
+		lines.push(`zero-match globs: [${report.unresolved.unmatched.join(", ")}]`);
 	}
 	return lines.join("\n");
 }

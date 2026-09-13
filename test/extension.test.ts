@@ -1,552 +1,428 @@
-import { mkdtemp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import {
+	createSyntheticSourceInfo,
+	formatSkillsForPrompt,
+	type BuildSystemPromptOptions,
+	type ExtensionAPI,
+	type ExtensionCommandContext,
+	type ExtensionContext,
+	type Skill,
+} from "@earendil-works/pi-coding-agent";
 import path from "node:path";
+import { rm, writeFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import piProfileExtension from "../extensions/pi-profile/index.ts";
-import { MCP_ALLOWLIST_EVENT } from "../src/mcp-coordination.ts";
-import { ResourceRegistry } from "../src/resource-registry.ts";
-import { runResourceWizard } from "../src/switching/resource-wizard.ts";
-import { fakeEventBus, installFakeAdapter, type FakeEventBus } from "./helpers/fake-event-bus.ts";
+import { RuntimeStateStore } from "../src/runtime-state-store.ts";
+import { fakeApplySurface } from "./helpers/fake-apply.ts";
+import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
 
-let root: string;
-let savedAgentDir: string | undefined;
+/** A minimal in-memory Pi whose handlers and commands tests can invoke. */
+interface FakePi {
+	api: ExtensionAPI;
+	handlers: Map<string, Array<(event: unknown, ctx: unknown) => Promise<unknown>>>;
+	commands: Map<string, { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }>;
+	flagValues: Map<string, string | boolean>;
+	activeTools: string[];
+	messages: Array<{ customType?: string; content?: string; details?: unknown }>;
+	events: { emitted: Array<{ channel: string; data: unknown }>; emit(channel: string, data: unknown): void };
+	notifications: Array<{ message: string; level: string }>;
+}
+
+function fakePi(toolNames: string[]): FakePi {
+	const handlers = new Map<string, Array<(event: unknown, ctx: unknown) => Promise<unknown>>>();
+	const commands = new Map<string, { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }>();
+	const flagValues = new Map<string, string | boolean>();
+	const messages: FakePi["messages"] = [];
+	const notifications: FakePi["notifications"] = [];
+	const emitted: Array<{ channel: string; data: unknown }> = [];
+	const fake: FakePi = {
+		handlers,
+		commands,
+		flagValues,
+		activeTools: [],
+		messages,
+		notifications,
+		events: {
+			emitted,
+			emit: (channel: string, data: unknown) => {
+				emitted.push({ channel, data });
+			},
+		},
+	} as unknown as FakePi;
+	const api = {
+		on: (event: string, handler: (event: unknown, ctx: unknown) => Promise<unknown>) => {
+			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
+		},
+		registerCommand: (name: string, options: { handler: (args: string, ctx: ExtensionCommandContext) => Promise<void> }) => {
+			commands.set(name, options);
+		},
+		registerFlag: (name: string, options: { type: string; default?: unknown }) => {
+			if (options.default !== undefined) flagValues.set(name, options.default as string | boolean);
+		},
+		getFlag: (name: string) => flagValues.get(name),
+		getAllTools: () => toolNames.map((name) => ({ name })),
+		setActiveTools: (names: string[]) => {
+			fake.activeTools = names;
+		},
+		setModel: async () => true,
+		setThinkingLevel: () => {},
+		getCommands: () => [],
+		sendMessage: (message: { customType?: string; content?: string; details?: unknown }) => {
+			messages.push(message);
+		},
+		events: fake.events,
+	};
+	fake.api = api as unknown as ExtensionAPI;
+	return fake;
+}
+
+function skill(name: string): Skill {
+	const filePath = `/skills/${name}/SKILL.md`;
+	return {
+		name,
+		description: `Skill ${name}`,
+		filePath,
+		baseDir: path.dirname(filePath),
+		sourceInfo: createSyntheticSourceInfo(filePath, { source: "test" }),
+		disableModelInvocation: false,
+	};
+}
+
+function promptOptions(skills: Skill[]): BuildSystemPromptOptions {
+	return { cwd: "/project", selectedTools: ["read", "bash", "edit", "write"], skills };
+}
+
+interface FakeContextOptions {
+	cwd: string;
+	trusted?: boolean;
+	skills?: Skill[];
+	toolNames?: string[];
+	mode?: string;
+	hasUI?: boolean;
+	/** Answer returned by `ctx.ui.select` (undefined = cancelled). */
+	selectAnswer?: string;
+}
+
+function fakeContext(fake: FakePi, options: FakeContextOptions): ExtensionContext & ExtensionCommandContext {
+	const { surface } = fakeApplySurface({ toolNames: options.toolNames ?? ["read", "grep"] });
+	const context = {
+		cwd: options.cwd,
+		mode: options.mode ?? "tui",
+		hasUI: options.hasUI ?? true,
+		ui: {
+			notify: (message: string, level: string) => {
+				fake.notifications.push({ message, level });
+			},
+			select: async () => options.selectAnswer,
+			input: async () => undefined,
+		},
+		modelRegistry: surface.modelRegistry,
+		sessionManager: { getEntries: () => [] },
+		isProjectTrusted: () => options.trusted ?? false,
+		getSystemPromptOptions: () => promptOptions(options.skills ?? []),
+		waitForIdle: async () => {},
+	};
+	return context as unknown as ExtensionContext & ExtensionCommandContext;
+}
+
+async function emit(
+	fake: FakePi,
+	event: string,
+	payload: unknown,
+	ctx: ExtensionContext,
+): Promise<unknown[]> {
+	const results: unknown[] = [];
+	for (const handler of fake.handlers.get(event) ?? []) {
+		results.push(await handler(payload, ctx));
+	}
+	return results;
+}
+
+/** Runs fn with a controlled process.argv (the extension reads CLI
+ *  declarations from it at load time). */
+async function withArgv(argv: string[], fn: () => Promise<void>): Promise<void> {
+	const original = process.argv;
+	process.argv = ["node", "pi", ...argv];
+	try {
+		await fn();
+	} finally {
+		process.argv = original;
+	}
+}
+
+let fixture: PiFixture;
+let originalAgentDir: string | undefined;
 
 beforeEach(async () => {
-	root = await mkdtemp(path.join(tmpdir(), "pi-profile-ext-"));
-	savedAgentDir = process.env.PI_CODING_AGENT_DIR;
-	process.env.PI_CODING_AGENT_DIR = root;
+	fixture = await createPiFixture();
+	originalAgentDir = process.env.PI_CODING_AGENT_DIR;
+	process.env.PI_CODING_AGENT_DIR = fixture.agentDir;
+	await writeFile(
+		path.join(fixture.agentDir, "profiles.json"),
+		JSON.stringify({
+			schemaVersion: 2,
+			profiles: {
+				review: { skills: ["alpha"], tools: ["read"], instructions: "Review only." },
+				plain: {},
+			},
+		}),
+	);
 });
 
 afterEach(async () => {
-	process.env.PI_CODING_AGENT_DIR = savedAgentDir;
-	await rm(root, { recursive: true, force: true });
+	if (originalAgentDir === undefined) delete process.env.PI_CODING_AGENT_DIR;
+	else process.env.PI_CODING_AGENT_DIR = originalAgentDir;
+	await rm(fixture.root, { recursive: true, force: true });
 });
 
-interface FakePi {
-	handlers: Map<string, Array<(...args: never[]) => unknown>>;
-	commands: Map<string, { description: string; handler: (...args: never[]) => unknown }>;
-	events: FakeEventBus;
-	activeTools: string[];
-	sentMessages: Array<{ customType: string; content: unknown; display?: boolean }>;
-	on(event: string, handler: (...args: never[]) => unknown): void;
-	registerCommand(name: string, def: { description: string; handler: (...args: never[]) => unknown }): void;
-	getAllTools(): Array<{ name: string }>;
-	setActiveTools(names: string[]): void;
-	getCommands(): Array<{ name: string; sourceInfo?: { path: string } }>;
-	sendMessage(message: { customType: string; content: unknown; display?: boolean }): void;
-	modelRegistry: { find(provider: string, id: string): unknown | undefined };
-	setModel(model: unknown): Promise<boolean>;
-	setThinkingLevel(level: string): void;
-}
+describe("pi-profile extension: session_start", () => {
+	it("activates the saved profile and applies tools", async () => {
+		await new RuntimeStateStore(fixture.agentDir).write({ activeProfile: "review" });
+		const fake = fakePi(["read", "grep"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills: [skill("alpha"), skill("beta")] });
 
-function fakePi(): FakePi {
-	const handlers = new Map<string, Array<(...args: never[]) => unknown>>();
-	const commands = new Map<string, { description: string; handler: (...args: never[]) => unknown }>();
-	const pi: FakePi = {
-		handlers,
-		commands,
-		events: fakeEventBus(),
-		activeTools: [],
-		sentMessages: [],
-		on(event, handler) {
-			handlers.set(event, [...(handlers.get(event) ?? []), handler]);
-		},
-		registerCommand(name, def) {
-			commands.set(name, def);
-		},
-		getAllTools: () => ["read", "bash"].map((name) => ({ name })),
-		setActiveTools(names) {
-			pi.activeTools = names;
-		},
-		getCommands: () => [],
-		sendMessage(message) {
-			pi.sentMessages.push(message);
-		},
-		modelRegistry: { find: () => undefined },
-		setModel: async () => true,
-		setThinkingLevel: () => {},
-	};
-	return pi;
-}
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
 
-function fakeCtx(options?: {
-	hasUI?: boolean;
-	mode?: "tui" | "rpc" | "json" | "print";
-	selectAnswer?: string;
-	selectAnswers?: string[];
-	inputAnswers?: Array<string | undefined>;
-	confirmAnswers?: boolean[];
-}) {
-	const notifications: Array<{ message: string; level: string }> = [];
-	const selectCalls: Array<{ title: string; options: string[] }> = [];
-	const inputAnswers = [...(options?.inputAnswers ?? [])];
-	const confirmAnswers = [...(options?.confirmAnswers ?? [])];
-	const selectAnswers = [...(options?.selectAnswers ?? [])];
-	// Mirror real Pi: reload re-executes extensions, invalidating this
-	// context — property access afterwards throws (the switch's staleness
-	// probe reads ctx.cwd).
-	let stale = false;
-	return {
-		notifications,
-		selectCalls,
-		get cwd() {
-			if (stale) throw new Error("context invalidated by reload");
-			return root;
-		},
-		hasUI: options?.hasUI ?? false,
-		mode: options?.mode ?? "tui",
-		isIdle: () => true,
-		waitForIdle: async () => {},
-		reload: async () => {
-			stale = true;
-		},
-		ui: {
-			notify(message: string, level: string) {
-				notifications.push({ message, level });
-			},
-			select: async (title: string, selectOptions: string[]) => {
-				selectCalls.push({ title, options: selectOptions });
-				return selectAnswers.length > 0 ? selectAnswers.shift() : options?.selectAnswer;
-			},
-			input: async () => inputAnswers.shift(),
-			confirm: async () => confirmAnswers.shift() ?? true,
-		},
-	};
-}
-
-async function writeLaunchPlan(plan: unknown): Promise<void> {
-	await mkdir(root, { recursive: true });
-	await writeFile(path.join(root, "pi-profile.json"), JSON.stringify(plan));
-}
-
-async function fireSessionStart(pi: FakePi, reason = "startup"): Promise<void> {
-	const handler = pi.handlers.get("session_start")?.[0];
-	await handler?.({ reason } as never, fakeCtx() as never);
-}
-
-async function runBeforeAgentStart(pi: FakePi, systemPrompt: string): Promise<string | undefined> {
-	const handler = pi.handlers.get("before_agent_start")?.[0];
-	const result = (await handler?.({ systemPrompt } as never, fakeCtx() as never)) as
-		| { systemPrompt?: string }
-		| undefined;
-	return result?.systemPrompt;
-}
-
-describe("pi-profile extension", () => {
-	it("appends declared instructions to the built system prompt on every turn", async () => {
-		await writeLaunchPlan({ profile: "review", source: "global", instructions: "Be picky." });
-		const pi = fakePi();
-		piProfileExtension(pi as never);
-
-		expect(await runBeforeAgentStart(pi, "BASE PROMPT")).toBe("BASE PROMPT\n\nBe picky.");
-		expect(await runBeforeAgentStart(pi, "BASE PROMPT")).toBe("BASE PROMPT\n\nBe picky.");
+		expect(fake.activeTools).toEqual(["read"]);
+		expect(fake.notifications).toEqual([]);
 	});
 
-	it("injects the switch summary into exactly one turn after a switch", async () => {
-		await writeLaunchPlan({ profile: "impl", source: "global", switchedFrom: "review" });
-		const pi = fakePi();
-		piProfileExtension(pi as never);
-		await fireSessionStart(pi, "reload");
+	it("keeps the runtime native when no profile is saved (default)", async () => {
+		const fake = fakePi(["read", "grep"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills: [skill("alpha")] });
 
-		const withSummary = await runBeforeAgentStart(pi, "BASE");
-		expect(withSummary).toContain("review → impl");
-		// One-shot: the marker was consumed and cleared from the plan file.
-		expect(await runBeforeAgentStart(pi, "BASE")).not.toContain("→");
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		expect(fake.activeTools).toEqual([]);
 	});
 
-	it("publishes the mcp allowlist at session start when the adapter answers", async () => {
-		await writeLaunchPlan({ profile: "review", source: "global", mcp: ["github"] });
-		const pi = fakePi();
-		installFakeAdapter(pi.events);
-		piProfileExtension(pi as never);
+	it("reports an unknown --profile value and stays native", async () => {
+		const fake = fakePi(["read"]);
+		fake.flagValues.set("profile", "ghost");
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills: [skill("alpha")] });
 
-		await fireSessionStart(pi);
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
 
-		const allowlist = pi.events.emitted.find((entry) => entry.channel === MCP_ALLOWLIST_EVENT);
-		expect(allowlist?.data).toEqual({ version: 1, profile: "review", servers: ["github"] });
+		expect(fake.activeTools).toEqual([]);
+		expect(fake.notifications.map((entry) => entry.message).join("\n")).toMatch(/unknown profile "ghost"/);
 	});
 
-	it("fails loudly at session start when the plan declares mcp but the adapter is absent", async () => {
-		await writeLaunchPlan({ profile: "review", source: "global", mcp: ["github"] });
-		const pi = fakePi();
-		piProfileExtension(pi as never);
+	it("does not persist a --profile selection", async () => {
+		const fake = fakePi(["read"]);
+		fake.flagValues.set("profile", "review");
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills: [skill("alpha")] });
 
-		await expect(fireSessionStart(pi)).rejects.toThrow(/pi-mcp-adapter is not active/);
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		expect(await new RuntimeStateStore(fixture.agentDir).read()).toEqual({});
 	});
+});
 
-	it("publishes no coordination when the plan declares no mcp", async () => {
-		await writeLaunchPlan({ profile: "default", source: "builtin" });
-		const pi = fakePi();
-		piProfileExtension(pi as never);
+describe("pi-profile extension: before_agent_start", () => {
+	it("filters the skills section to the profile and appends instructions", async () => {
+		await new RuntimeStateStore(fixture.agentDir).write({ activeProfile: "review" });
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const skills = [skill("alpha"), skill("beta")];
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills });
+		const systemPrompt = `HEADER${formatSkillsForPrompt(skills, "read")}\nCurrent working directory: ${fixture.cwd}`;
 
-		await fireSessionStart(pi);
-
-		expect(pi.events.emitted.some((entry) => entry.channel === MCP_ALLOWLIST_EVENT)).toBe(false);
-	});
-
-	it("registers the /profile command with use and reload subcommands", async () => {
-		await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-		const pi = fakePi();
-		piProfileExtension(pi as never);
-
-		const command = pi.commands.get("profile");
-		expect(command).toBeDefined();
-		const ctx = fakeCtx();
-		await command?.handler("bogus" as never, ctx as never);
-		expect(ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("usage"))).toBe(
-			true,
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+		const results = await emit(
+			fake,
+			"before_agent_start",
+			{ type: "before_agent_start", prompt: "hi", systemPrompt, systemPromptOptions: promptOptions(skills) },
+			ctx,
 		);
+
+		const result = results[0] as { systemPrompt: string };
+		expect(result.systemPrompt).toContain("Skill alpha");
+		expect(result.systemPrompt).not.toContain("Skill beta");
+		expect(result.systemPrompt).toContain('<profile_instructions name="review">\nReview only.\n</profile_instructions>');
 	});
 
-	describe("observability surface (ticket 07)", () => {
-		it("/profile list sends the trust-gated profile listing as a displayed message", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			await writeFile(
-				path.join(root, "profiles.json"),
-				JSON.stringify({ schemaVersion: 1, profiles: { review: { label: "Code review" } } }),
-			);
-			const pi = fakePi();
-			piProfileExtension(pi as never);
+	it("leaves the prompt untouched for the default profile", async () => {
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const skills = [skill("alpha"), skill("beta")];
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills });
+		const systemPrompt = `HEADER${formatSkillsForPrompt(skills, "read")}`;
 
-			await pi.commands.get("profile")?.handler("list" as never, fakeCtx() as never);
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+		const results = await emit(
+			fake,
+			"before_agent_start",
+			{ type: "before_agent_start", prompt: "hi", systemPrompt, systemPromptOptions: promptOptions(skills) },
+			ctx,
+		);
 
-			expect(pi.sentMessages).toHaveLength(1);
-			expect(pi.sentMessages[0]?.customType).toBe("pi-profile");
-			expect(String(pi.sentMessages[0]?.content)).toContain("review [global] — Code review");
-		});
+		expect(results[0]).toBeUndefined();
+	});
+});
 
-		it("/profile status sends the resolved plan report", async () => {
-			await writeLaunchPlan({
-				profile: "review",
-				source: "global",
-				agentDir: root,
-				resolved: { skills: [{ name: "code-review", filePath: "/x/SKILL.md" }], extensions: [] },
-				mcp: ["github"],
-			});
-			const pi = fakePi();
-			piProfileExtension(pi as never);
+describe("pi-profile extension: commands", () => {
+	it("lists profiles with the structured payload", async () => {
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd });
 
-			await pi.commands.get("profile")?.handler("status" as never, fakeCtx() as never);
+		await fake.commands.get("profile")!.handler("list", ctx);
 
-			const content = String(pi.sentMessages[0]?.content);
-			expect(content).toContain("profile: review (global)");
-			expect(content).toContain("code-review → /x/SKILL.md");
-			expect(content).toContain("mcp: enabled=[github]");
-		});
-
-		it("bare /profile falls back to the list without dialog-capable UI", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-
-			await pi.commands.get("profile")?.handler("" as never, fakeCtx() as never);
-
-			expect(pi.sentMessages).toHaveLength(1);
-			expect(String(pi.sentMessages[0]?.content)).toContain("default [builtin]");
-		});
-
-		it("bare /profile with UI offers every visible profile and cancels cleanly", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			await writeFile(
-				path.join(root, "profiles.json"),
-				JSON.stringify({ schemaVersion: 1, profiles: { review: {} } }),
-			);
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-			const ctx = fakeCtx({ hasUI: true, selectAnswer: undefined });
-
-			await pi.commands.get("profile")?.handler("" as never, ctx as never);
-
-			expect(ctx.selectCalls[0]?.options).toContain("default [builtin]");
-			expect(ctx.selectCalls[0]?.options).toContain("review [global]");
-			// Cancelled: no message, no error notification.
-			expect(pi.sentMessages).toHaveLength(0);
-			expect(ctx.notifications).toHaveLength(0);
-		});
+		const message = fake.messages.at(-1);
+		expect(message?.customType).toBe("pi-profile");
+		expect(message?.content).toMatch(/review \[global\]/);
+		expect((message?.details as { kind: string }).kind).toBe("list");
 	});
 
-	describe("profile CRUD (ticket 09)", () => {
-		it("/profile create runs the wizard and writes the chosen scope", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-			const ctx = fakeCtx({
-				hasUI: true,
-				selectAnswers: ["global"],
-				inputAnswers: ["review", "Code review", "", "review, debug-*", "", "", "", "Be terse.", ""],
-			});
+	it("switches the active profile and persists the selection", async () => {
+		const fake = fakePi(["read", "grep"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills: [skill("alpha")] });
 
-			await pi.commands.get("profile")?.handler("create" as never, ctx as never);
+		await fake.commands.get("profile")!.handler("use review", ctx);
 
-			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
-			expect(catalog.profiles.review).toEqual({
-				label: "Code review",
-				skills: ["review", "debug-*"],
-				instructions: "Be terse.",
-			});
-			expect(ctx.notifications.some((entry) => entry.message.includes("created profile"))).toBe(true);
-		});
-
-		it("editing the ACTIVE profile saves and reloads; editing an inactive one does not", async () => {
-			await writeLaunchPlan({ profile: "review", source: "global", agentDir: root });
-			await writeFile(
-				path.join(root, "profiles.json"),
-				JSON.stringify({ schemaVersion: 1, profiles: { review: { label: "old" }, other: {} } }),
-			);
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-
-			// Active: answers keep everything except a new label.
-			const ctxActive = fakeCtx({ hasUI: true, inputAnswers: ["new label", "", "", "", "", "", "", ""] });
-			await pi.commands.get("profile")?.handler("edit review" as never, ctxActive as never);
-			expect(ctxActive.notifications.some((entry) => entry.message.includes("reloading"))).toBe(true);
-			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
-			expect(catalog.profiles.review).toEqual({ label: "new label" });
-
-			// Inactive: saved, runtime untouched (no reload notification).
-			const ctxInactive = fakeCtx({ hasUI: true, inputAnswers: ["", "desc", "", "", "", "", "", ""] });
-			await pi.commands.get("profile")?.handler("edit other" as never, ctxInactive as never);
-			expect(ctxInactive.notifications.some((entry) => entry.message.includes("inactive"))).toBe(true);
-			expect(catalog && JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8")).profiles.other).toEqual({
-				description: "desc",
-			});
-		});
-
-		it("deleting the active profile requires a replacement, then switches", async () => {
-			await writeLaunchPlan({ profile: "review", source: "global", agentDir: root });
-			await writeFile(
-				path.join(root, "profiles.json"),
-				JSON.stringify({ schemaVersion: 1, profiles: { review: {}, impl: {} } }),
-			);
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-			const ctx = fakeCtx({ hasUI: true, selectAnswers: ["impl [global]"] });
-
-			await pi.commands.get("profile")?.handler("delete review" as never, ctx as never);
-
-			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
-			expect(catalog.profiles.review).toBeUndefined();
-			// Switched: the rewritten plan file names the replacement.
-			const planFile = JSON.parse(await readFile(path.join(root, "pi-profile.json"), "utf8"));
-			expect(planFile.profile).toBe("impl");
-		});
-
-		it("/profile duplicate copies the full definition under a new name", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			await writeFile(
-				path.join(root, "profiles.json"),
-				JSON.stringify({
-					schemaVersion: 1,
-					profiles: { review: { label: "Code review", skills: ["r*"], instructions: "Be terse." } },
-				}),
-			);
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-			const ctx = fakeCtx({ hasUI: true, selectAnswers: ["review [global] — Code review"], inputAnswers: ["review-strict"] });
-
-			await pi.commands.get("profile")?.handler("duplicate" as never, ctx as never);
-
-			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
-			expect(catalog.profiles["review-strict"]).toEqual(catalog.profiles.review);
-		});
-
-		it("create/edit/delete/duplicate are TUI-only, with a mode-aware message", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-			for (const args of ["create", "edit x", "delete x", "duplicate"]) {
-				const ctx = fakeCtx({ mode: "rpc" });
-				await pi.commands.get("profile")?.handler(args as never, ctx as never);
-				expect(
-					ctx.notifications.some(
-						(entry) => entry.level === "error" && entry.message.includes("TUI mode") && entry.message.includes("rpc"),
-					),
-				).toBe(true);
-			}
-		});
+		expect(fake.activeTools).toEqual(["read"]);
+		expect(await new RuntimeStateStore(fixture.agentDir).read()).toEqual({ activeProfile: "review" });
+		expect(fake.notifications.map((entry) => entry.message)).toContain("profile active: review");
 	});
 
-	describe("/mcp enable|disable (ticket 10)", () => {
-		const seedMcp = async () => {
-			await writeLaunchPlan({ profile: "review", source: "global", agentDir: root });
-			await writeFile(
-				path.join(root, "profiles.json"),
-				JSON.stringify({ schemaVersion: 1, profiles: { review: { mcp: ["github"] } } }),
-			);
-			await writeFile(path.join(root, "mcp.json"), JSON.stringify({ mcpServers: { github: {}, linear: {} } }));
-		};
+	it("reports status with the structured payload", async () => {
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills: [skill("alpha"), skill("beta")] });
+		await fake.commands.get("profile")!.handler("use review", ctx);
 
-		it("enable edits the owning catalog and reloads", async () => {
-			await seedMcp();
-			const pi = fakePi();
-			installFakeAdapter(pi.events as FakeEventBus);
-			piProfileExtension(pi as never);
-			const ctx = fakeCtx();
+		await fake.commands.get("profile")!.handler("status", ctx);
 
-			await pi.commands.get("mcp")?.handler("enable linear" as never, ctx as never);
-
-			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
-			expect(catalog.profiles.review.mcp).toEqual(["github", "linear"]);
-			expect(ctx.notifications.some((entry) => entry.message.includes("enabled MCP server"))).toBe(true);
-			// Adapter config untouched.
-			expect(JSON.parse(await readFile(path.join(root, "mcp.json"), "utf8"))).toEqual({
-				mcpServers: { github: {}, linear: {} },
-			});
-		});
-
-		it("enable fails fast on undiscovered names; disable cleans stale ones", async () => {
-			await seedMcp();
-			const pi = fakePi();
-			installFakeAdapter(pi.events as FakeEventBus);
-			piProfileExtension(pi as never);
-
-			const ctx = fakeCtx();
-			await pi.commands.get("mcp")?.handler("enable ghost" as never, ctx as never);
-			expect(ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("unknown MCP server"))).toBe(
-				true,
-			);
-
-			// Stale: in the profile but not in mcp.json.
-			await writeFile(
-				path.join(root, "profiles.json"),
-				JSON.stringify({ schemaVersion: 1, profiles: { review: { mcp: ["github", "stale"] } } }),
-			);
-			await pi.commands.get("mcp")?.handler("disable stale" as never, fakeCtx() as never);
-			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
-			expect(catalog.profiles.review.mcp).toEqual(["github"]);
-		});
-
-		it("fails clearly when the adapter is absent or the profile is default", async () => {
-			await seedMcp();
-			const pi = fakePi(); // no adapter installed
-			piProfileExtension(pi as never);
-			const ctx = fakeCtx();
-			await pi.commands.get("mcp")?.handler("disable github" as never, ctx as never);
-			expect(
-				ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("pi-mcp-adapter is not active")),
-			).toBe(true);
-
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			const pi2 = fakePi();
-			installFakeAdapter(pi2.events as FakeEventBus);
-			piProfileExtension(pi2 as never);
-			const ctx2 = fakeCtx();
-			await pi2.commands.get("mcp")?.handler("disable github" as never, ctx2 as never);
-			expect(ctx2.notifications.some((entry) => entry.message.includes("no catalog entry"))).toBe(true);
-		});
+		const message = fake.messages.at(-1);
+		expect(message?.content).toMatch(/### profile: review \(global\)/);
+		expect((message?.details as { kind: string }).kind).toBe("status");
 	});
 
-	describe("resource CRUD (ticket 08)", () => {
-		it("/profile resource create runs the wizard, writes the global registry, and reloads", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-			const ctx = fakeCtx({
-				hasUI: true,
-				selectAnswers: ["global"],
-				inputAnswers: ["linter", "/x/linter.ts", "base, tools"],
-				confirmAnswers: [true],
-			});
+	it("refuses CRUD outside TUI mode with a mode-aware message", async () => {
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, mode: "rpc", hasUI: false });
 
-			await pi.commands.get("profile")?.handler("resource create" as never, ctx as never);
+		await fake.commands.get("profile")!.handler("create", ctx);
 
-			const registry = await ResourceRegistry.load(root);
-			expect(registry.get("linter")).toEqual({
-				id: "linter",
-				kind: "extension",
-				entry: "/x/linter.ts",
-				dependsOn: ["base", "tools"],
-				alwaysOn: true,
-				origin: "explicit",
-			});
-			expect(ctx.notifications.some((entry) => entry.message.includes('created resource "linter"'))).toBe(true);
+		expect(fake.notifications.at(-1)?.message).toMatch(/requires TUI mode \(current mode: rpc\)/);
+	});
+
+	it("refuses the MCP toggle without an active profile", async () => {
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd });
+
+		await fake.commands.get("mcp")!.handler("enable atlassian", ctx);
+
+		expect(fake.notifications.at(-1)?.message).toMatch(/no active profile/);
+	});
+
+	it("activates the profile chosen from the bare /profile picker", async () => {
+		const fake = fakePi(["read", "grep"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, {
+			cwd: fixture.cwd,
+			skills: [skill("alpha")],
+			selectAnswer: "review [global] — Review",
 		});
 
-		it("/profile resource delete surfaces the referrer guard as an error", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			await writeFile(
-				path.join(root, "resources.json"),
-				JSON.stringify({ schemaVersion: 1, resources: { linter: { kind: "extension", entry: "/x.ts" } } }),
-			);
-			await writeFile(
-				path.join(root, "profiles.json"),
-				JSON.stringify({ schemaVersion: 1, profiles: { review: { extensions: ["linter"] } } }),
-			);
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-			const ctx = fakeCtx({ hasUI: true, confirmAnswers: [true] });
+		await fake.commands.get("profile")!.handler("", ctx);
 
-			await pi.commands.get("profile")?.handler("resource delete linter" as never, ctx as never);
+		expect(fake.activeTools).toEqual(["read"]);
+		expect(fake.notifications.map((entry) => entry.message)).toContain("profile active: review");
+	});
 
-			expect(ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("referenced by"))).toBe(
-				true,
-			);
-			// Not deleted.
-			expect((await ResourceRegistry.load(root)).get("linter")).toBeDefined();
-		});
+	it("falls back to the profile list without dialog-capable UI", async () => {
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, hasUI: false, mode: "print" });
 
-		it("/profile resource mutations are TUI-only, with a mode-aware message", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-			for (const args of ["resource create", "resource edit x", "resource delete x"]) {
-				const ctx = fakeCtx({ mode: "print" });
-				await pi.commands.get("profile")?.handler(args as never, ctx as never);
-				expect(
-					ctx.notifications.some(
-						(entry) => entry.level === "error" && entry.message.includes("TUI mode") && entry.message.includes("print"),
-					),
-				).toBe(true);
-			}
+		await fake.commands.get("profile")!.handler("", ctx);
+
+		expect(fake.messages.at(-1)?.content).toMatch(/review \[global\]/);
+	});
+
+	it("cancels the bare /profile picker without activating anything", async () => {
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd }); // selectAnswer undefined = cancelled
+
+		await fake.commands.get("profile")!.handler("", ctx);
+
+		expect(fake.activeTools).toEqual([]);
+		expect(fake.notifications).toEqual([]);
+	});
+
+	it("suppresses the profile's tools when the CLI declares --tools", async () => {
+		await withArgv(["--tools", "read"], async () => {
+			await new RuntimeStateStore(fixture.agentDir).write({ activeProfile: "review" });
+			const fake = fakePi(["read", "grep"]);
+			piProfileExtension(fake.api);
+			const ctx = fakeContext(fake, { cwd: fixture.cwd, skills: [skill("alpha")] });
+
+			await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+
+			// review declares tools: ["read"] — the CLI keeps owning the set.
+			expect(fake.activeTools).toEqual([]);
+
+			// An explicit /profile use applies the declaration over the CLI.
+			await fake.commands.get("profile")!.handler("use review", ctx);
+			expect(fake.activeTools).toEqual(["read"]);
 		});
 	});
 });
 
-describe("runResourceWizard", () => {
-	it("captures id, entry, dependsOn, alwaysOn; cancel at any step aborts", async () => {
-		const ui = {
-			select: async () => "project",
-			input: async (title: string) => (title.includes("dependsOn") ? "a, b" : title.includes("id") ? "res" : "/e.ts"),
-			confirm: async () => false,
-		};
-		const result = await runResourceWizard(ui, { projectTrusted: true });
-		expect(result).toEqual({ scope: "project", entry: { id: "res", entry: "/e.ts", dependsOn: ["a", "b"], alwaysOn: false } });
+describe("pi-profile extension: skills filter visibility", () => {
+	it("warns once when no skill-reading tool is active", async () => {
+		await new RuntimeStateStore(fixture.agentDir).write({ activeProfile: "review" });
+		const fake = fakePi(["edit"]);
+		piProfileExtension(fake.api);
+		const skills = [skill("alpha")];
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills, toolNames: ["edit"] });
 
-		const cancelling = { select: async () => undefined, input: async () => "x", confirm: async () => true };
-		expect(await runResourceWizard(cancelling, { projectTrusted: true })).toBeUndefined();
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+		const event = {
+			type: "before_agent_start",
+			prompt: "hi",
+			systemPrompt: "HEADER",
+			systemPromptOptions: { cwd: fixture.cwd, selectedTools: ["edit"], skills },
+		};
+		await emit(fake, "before_agent_start", event, ctx);
+		await emit(fake, "before_agent_start", event, ctx);
+
+		const filterWarnings = fake.notifications.filter(
+			(entry) => entry.level === "warning" && /neither the read nor the bash tool is active/.test(entry.message),
+		);
+		expect(filterWarnings).toHaveLength(1);
 	});
 
-	it("hides the project scope when untrusted and prefills on edit", async () => {
-		const offered: string[][] = [];
-		const placeholders: Array<string | undefined> = [];
-		const ui = {
-			select: async (_t: string, options: string[]) => {
-				offered.push(options);
-				return options[0];
-			},
-			input: async (_t: string, placeholder?: string) => {
-				placeholders.push(placeholder);
-				return placeholder ?? "/new.ts";
-			},
-			confirm: async () => true,
-		};
-		expect(await runResourceWizard(ui, { projectTrusted: false })).toMatchObject({ scope: "global" });
-		expect(offered[0]).toEqual(["global"]);
+	it("reports an unapplied filter in /profile status", async () => {
+		await new RuntimeStateStore(fixture.agentDir).write({ activeProfile: "review" });
+		const fake = fakePi(["edit"]);
+		piProfileExtension(fake.api);
+		const skills = [skill("alpha")];
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills, toolNames: ["edit"] });
 
-		const edit = await runResourceWizard(ui, {
-			projectTrusted: true,
-			existing: {
-				id: "linter",
-				kind: "extension",
-				entry: "/old.ts",
-				dependsOn: ["base"],
-				alwaysOn: false,
-				source: "global",
-				shadowsGlobal: false,
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+		await emit(
+			fake,
+			"before_agent_start",
+			{
+				type: "before_agent_start",
+				prompt: "hi",
+				systemPrompt: "HEADER",
+				systemPromptOptions: { cwd: fixture.cwd, selectedTools: ["edit"], skills },
 			},
-		});
-		expect(edit?.entry.id).toBe("linter"); // id fixed on edit
-		expect(edit?.entry.entry).toBe("/old.ts");
+			ctx,
+		);
+		await fake.commands.get("profile")!.handler("status", ctx);
+
+		expect(fake.messages.at(-1)?.content).toMatch(/skills filter: not applied \(no-read-tool\)/);
 	});
 });

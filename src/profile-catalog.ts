@@ -3,23 +3,31 @@
  * (`<agentDir>/profiles.json`) and, for trusted projects, the project
  * catalog (`<projectDir>/.pi/profiles.json`).
  *
+ * ADR-0007 semantics:
+ * - A profile references skills, MCP servers, and tools, and may declare
+ *   instructions and a model preset. Extensions are not a profile resource:
+ *   every installed extension loads natively in every profile.
+ * - schemaVersion 2 is current. Version 1 files load with their per-profile
+ *   `extensions` field ignored and a warning, so existing catalogs keep
+ *   working without an edit.
+ *
  * Invariants:
  * - The built-in `default` profile never exists in either file and cannot be
  *   redefined there.
  * - A project profile with the same name fully replaces the global
  *   definition (no merge, no inheritance); removing the project entry
  *   immediately reveals the global one.
- * - The caller passes `projectDir` only when the resolver's trust check
- *   passed — an untrusted project's catalog is never read.
+ * - The caller passes `projectDir` only when Pi reports the project trusted —
+ *   an untrusted project's catalog is never read.
  * - A malformed catalog fails loudly (CatalogError) rather than silently
- *   starting unfiltered.
+ *   starting with an unintended selection.
  */
 
 import path from "node:path";
 
 import { isRecord, readJsonFile } from "./json-file.ts";
 
-export const PROFILE_SCHEMA_VERSION = 1;
+export const PROFILE_SCHEMA_VERSION = 2;
 export const DEFAULT_PROFILE_NAME = "default";
 
 export interface ProfileModel {
@@ -29,12 +37,11 @@ export interface ProfileModel {
 }
 
 /** A profile definition as stored in a catalog file. All fields optional:
- *  undeclared fields leave Pi's behavior untouched (PRD default-first rule). */
+ *  undeclared fields leave Pi's behavior untouched. */
 export interface ProfileDefinition {
 	label?: string;
 	description?: string;
 	skills?: string[];
-	extensions?: string[];
 	mcp?: string[];
 	tools?: string[];
 	model?: ProfileModel;
@@ -53,6 +60,13 @@ export interface ResolvedProfile {
 	name: string;
 	source: ProfileSource;
 	definition: ProfileDefinition;
+}
+
+/** One parsed catalog file: definitions plus non-fatal compatibility
+ *  warnings the caller surfaces once per activation. */
+export interface CatalogDocument {
+	profiles: Map<string, ProfileDefinition>;
+	warnings: string[];
 }
 
 export class CatalogError extends Error {
@@ -79,7 +93,9 @@ function readOptionalString(value: unknown, field: string, profileName: string):
 }
 
 /** Parses one raw profile definition; exported for the write-side store
- *  (profile-catalog-store.ts) so anything written is loadable. */
+ *  (profile-catalog-store.ts) so anything written is loadable. Unknown
+ *  fields are ignored by design — `extensions` is reported by
+ *  parseCatalogDocument, which has the file path for the warning. */
 export function parseProfileDefinition(name: string, raw: unknown): ProfileDefinition {
 	if (!isRecord(raw)) {
 		throw new CatalogError(`profile "${name}" must be an object`);
@@ -89,7 +105,7 @@ export function parseProfileDefinition(name: string, raw: unknown): ProfileDefin
 	if (label !== undefined) definition.label = label;
 	const description = readOptionalString(raw.description, "description", name);
 	if (description !== undefined) definition.description = description;
-	for (const field of ["skills", "extensions", "mcp", "tools"] as const) {
+	for (const field of ["skills", "mcp", "tools"] as const) {
 		const entries = readStringArray(raw[field], field, name);
 		if (entries !== undefined) definition[field] = entries;
 	}
@@ -105,67 +121,94 @@ export function parseProfileDefinition(name: string, raw: unknown): ProfileDefin
 	return definition;
 }
 
-/** Reads one catalog file; missing → empty map, malformed → CatalogError. */
-async function loadCatalogFile(catalogPath: string): Promise<Map<string, ProfileDefinition>> {
-	const result = await readJsonFile(catalogPath);
-	const profiles = new Map<string, ProfileDefinition>();
-	if (!result.ok) {
-		if (result.reason === "missing") return profiles;
-		throw new CatalogError(`invalid JSON in ${catalogPath}`);
+/** Parses one catalog document. Missing files are handled by the caller;
+ *  this function sees only parsed JSON. */
+export function parseCatalogDocument(value: unknown, filePath: string): CatalogDocument {
+	if (!isRecord(value)) {
+		throw new CatalogError(`${filePath}: catalog must be an object`);
 	}
-	const parsed = result.value;
-	if (!isRecord(parsed)) {
-		throw new CatalogError(`${catalogPath}: catalog must be an object`);
-	}
-	if (parsed.schemaVersion !== PROFILE_SCHEMA_VERSION) {
+	const warnings: string[] = [];
+	const version = value.schemaVersion;
+	if (version !== 1 && version !== PROFILE_SCHEMA_VERSION) {
 		throw new CatalogError(
-			`${catalogPath}: unsupported schemaVersion ${JSON.stringify(parsed.schemaVersion)} (expected ${PROFILE_SCHEMA_VERSION})`,
+			`${filePath}: unsupported schemaVersion ${JSON.stringify(version)} (expected ${PROFILE_SCHEMA_VERSION})`,
 		);
 	}
-	if (!isRecord(parsed.profiles)) {
-		throw new CatalogError(`${catalogPath}: "profiles" must be an object mapping names to definitions`);
+	if (version === 1) {
+		warnings.push(
+			`${filePath}: schemaVersion 1 is read as version ${PROFILE_SCHEMA_VERSION}; profiles declaring "extensions" are upgraded with that field ignored`,
+		);
 	}
-	for (const [name, definition] of Object.entries(parsed.profiles)) {
+	if (!isRecord(value.profiles)) {
+		throw new CatalogError(`${filePath}: "profiles" must be an object mapping names to definitions`);
+	}
+	const profiles = new Map<string, ProfileDefinition>();
+	for (const [name, raw] of Object.entries(value.profiles)) {
 		if (name === DEFAULT_PROFILE_NAME) {
 			throw new CatalogError(
-				`${catalogPath}: "${DEFAULT_PROFILE_NAME}" is built in and must not be defined in the catalog`,
+				`${filePath}: "${DEFAULT_PROFILE_NAME}" is built in and must not be defined in the catalog`,
 			);
 		}
-		profiles.set(name, parseProfileDefinition(name, definition));
+		if (isRecord(raw) && raw.extensions !== undefined) {
+			warnings.push(
+				`${filePath}: profile "${name}" declares "extensions"; extensions are always loaded natively (ADR-0007) and the field is ignored — manage extensions with pi install`,
+			);
+		}
+		profiles.set(name, parseProfileDefinition(name, raw));
 	}
-	return profiles;
+	return { profiles, warnings };
+}
+
+/** Reads one catalog file; missing → empty map, malformed → CatalogError. */
+async function loadCatalogFile(catalogPath: string): Promise<CatalogDocument> {
+	const result = await readJsonFile(catalogPath);
+	if (!result.ok) {
+		if (result.reason === "missing") return { profiles: new Map(), warnings: [] };
+		throw new CatalogError(`invalid JSON in ${catalogPath}`);
+	}
+	return parseCatalogDocument(result.value, catalogPath);
 }
 
 export class ProfileCatalog {
 	readonly #profiles: ReadonlyMap<string, CatalogEntry>;
+	readonly #warnings: readonly string[];
 
-	private constructor(profiles: ReadonlyMap<string, CatalogEntry>) {
+	private constructor(profiles: ReadonlyMap<string, CatalogEntry>, warnings: readonly string[]) {
 		this.#profiles = profiles;
+		this.#warnings = warnings;
+	}
+
+	/** Compatibility warnings from reading the catalog files (v1 schema,
+	 *  ignored `extensions` fields). Empty for a current, well-formed pair. */
+	get warnings(): readonly string[] {
+		return this.#warnings;
 	}
 
 	/**
 	 * Reads the global catalog, plus the project catalog when `projectDir` is
-	 * given (trusted projects only — the caller gates on the trust check).
+	 * given (trusted projects only — the caller gates on Pi's trust check).
 	 * Missing files mean an empty catalog; malformed content throws
 	 * CatalogError. Project entries replace same-name global entries.
 	 */
 	static async load(agentDir: string, options?: { projectDir?: string }): Promise<ProfileCatalog> {
-		const globalProfiles = await loadCatalogFile(path.join(agentDir, "profiles.json"));
+		const global = await loadCatalogFile(path.join(agentDir, "profiles.json"));
 		const profiles = new Map<string, CatalogEntry>();
-		for (const [name, definition] of globalProfiles) {
+		const warnings = [...global.warnings];
+		for (const [name, definition] of global.profiles) {
 			profiles.set(name, { source: "global", definition });
 		}
 		if (options?.projectDir !== undefined) {
-			const projectProfiles = await loadCatalogFile(path.join(options.projectDir, ".pi", "profiles.json"));
-			for (const [name, definition] of projectProfiles) {
+			const project = await loadCatalogFile(path.join(options.projectDir, ".pi", "profiles.json"));
+			warnings.push(...project.warnings);
+			for (const [name, definition] of project.profiles) {
 				profiles.set(name, { source: "project", definition });
 			}
 		}
-		return new ProfileCatalog(profiles);
+		return new ProfileCatalog(profiles, warnings);
 	}
 
 	/** Resolves a profile by name. `default` always resolves to the built-in
-	 *  full-resource profile; unknown names return undefined. */
+	 *  no-op profile; unknown names return undefined. */
 	resolve(name: string): ResolvedProfile | undefined {
 		if (name === DEFAULT_PROFILE_NAME) {
 			return { name: DEFAULT_PROFILE_NAME, source: "builtin", definition: {} };
@@ -181,5 +224,11 @@ export class ProfileCatalog {
 			this.resolve(DEFAULT_PROFILE_NAME)!,
 			...[...this.#profiles.keys()].map((name) => this.resolve(name)!),
 		];
+	}
+
+	/** True when a global definition of the same name is shadowed by the
+	 *  project entry. */
+	shadowsGlobal(name: string): boolean {
+		return this.#profiles.get(name)?.source === "project";
 	}
 }

@@ -1,14 +1,12 @@
 /**
- * ProfileListing: the `/profile list` and `/profile` selector data surface
- * (ticket 07).
+ * ProfileListing: the `/profile list` and `/profile` selector data surface.
  *
  * Trust-gated exactly like activation: an untrusted project's profiles are
  * invisible. The listing reports each visible profile with the source of
- * the WINNING definition (a same-name project definition fully replaces
- * the global one — the shadowed global entry is reported as such).
+ * the WINNING definition (a same-name project definition fully replaces the
+ * global one — the shadowed global entry is reported as such).
  */
 
-import { readTrustInputs } from "../launcher/initial-profile.ts";
 import { ProfileCatalog, type ProfileSource } from "../profile-catalog.ts";
 
 export interface ProfileListEntry {
@@ -25,19 +23,21 @@ export interface ProfileListEntry {
 export async function listProfiles(input: {
 	realAgentDir: string;
 	cwd: string;
-}): Promise<ProfileListEntry[]> {
-	const { projectTrusted } = await readTrustInputs({ agentDir: input.realAgentDir, cwd: input.cwd });
+	projectTrusted: boolean;
+}): Promise<{ entries: ProfileListEntry[]; warnings: string[] }> {
 	const catalog = await ProfileCatalog.load(input.realAgentDir, {
-		projectDir: projectTrusted ? input.cwd : undefined,
+		projectDir: input.projectTrusted ? input.cwd : undefined,
 	});
-	const globalOnly = projectTrusted ? await ProfileCatalog.load(input.realAgentDir) : catalog;
-	return catalog.list().map((profile) => ({
-		name: profile.name,
-		source: profile.source,
-		...(typeof profile.definition.label === "string" ? { label: profile.definition.label } : {}),
-		...(typeof profile.definition.description === "string" ? { description: profile.definition.description } : {}),
-		shadowsGlobal: profile.source === "project" && globalOnly.resolve(profile.name) !== undefined,
-	}));
+	return {
+		entries: catalog.list().map((profile) => ({
+			name: profile.name,
+			source: profile.source,
+			...(typeof profile.definition.label === "string" ? { label: profile.definition.label } : {}),
+			...(typeof profile.definition.description === "string" ? { description: profile.definition.description } : {}),
+			shadowsGlobal: profile.source === "project" && catalog.shadowsGlobal(profile.name),
+		})),
+		warnings: [...catalog.warnings],
+	};
 }
 
 export function formatProfileList(entries: ProfileListEntry[], activeProfile?: string): string {

@@ -22,83 +22,80 @@ async function writeState(content: unknown): Promise<void> {
 	);
 }
 
-describe("RuntimeStateStore (global scope)", () => {
-	it("reads the saved active profile from the global state file", async () => {
-		await writeState({ activeProfile: "review" });
+function store(): RuntimeStateStore {
+	return new RuntimeStateStore(fixture.agentDir);
+}
 
-		const store = new RuntimeStateStore(fixture.agentDir);
-		const state = await store.read();
+describe("RuntimeStateStore", () => {
+	it("reads the saved active profile and overlay", async () => {
+		await writeState({
+			activeProfile: "review",
+			overlay: { disabledSkills: ["git-commit"], disabledMcp: ["atlassian"], tools: ["read", "grep"] },
+		});
 
-		expect(state.activeProfile).toBe("review");
+		expect(await store().read()).toEqual({
+			activeProfile: "review",
+			overlay: { disabledSkills: ["git-commit"], disabledMcp: ["atlassian"], tools: ["read", "grep"] },
+		});
 	});
 
 	it("returns an empty state when no state file exists", async () => {
-		const store = new RuntimeStateStore(fixture.agentDir);
-
-		expect(await store.read()).toEqual({});
+		expect(await store().read()).toEqual({});
 	});
 
-	it("returns an empty state on malformed content rather than failing the launch", async () => {
+	it("returns an empty state on malformed content rather than failing the session", async () => {
 		await writeState("{ not json");
 
-		const store = new RuntimeStateStore(fixture.agentDir);
-
-		expect(await store.read()).toEqual({});
+		expect(await store().read()).toEqual({});
 	});
 
 	it("ignores non-string activeProfile values", async () => {
 		await writeState({ activeProfile: 42 });
 
-		const store = new RuntimeStateStore(fixture.agentDir);
-
-		expect((await store.read()).activeProfile).toBeUndefined();
+		expect(await store().read()).toEqual({});
 	});
 
-	it("reads the rollback anchor (lastVerifiedProfile)", async () => {
-		await writeState({ activeProfile: "review", lastVerifiedProfile: "review" });
-
-		const state = await new RuntimeStateStore(fixture.agentDir).read();
-
-		expect(state).toEqual({ activeProfile: "review", lastVerifiedProfile: "review" });
-	});
-
-	it("writes both fields, replacing the file", async () => {
-		const store = new RuntimeStateStore(fixture.agentDir);
-		await store.write({ activeProfile: "impl", lastVerifiedProfile: "review" });
-
-		expect(await store.read()).toEqual({ activeProfile: "impl", lastVerifiedProfile: "review" });
-	});
-
-	it("creates the state directory when writing (project .pi may be fresh)", async () => {
-		const freshDir = path.join(fixture.root, "new-project", ".pi");
-		const store = new RuntimeStateStore(freshDir);
-
-		await store.write({ activeProfile: "impl" });
-
-		expect(await store.read()).toEqual({ activeProfile: "impl" });
-	});
-
-	it("round-trips the runtime overlay", async () => {
-		const store = new RuntimeStateStore(fixture.agentDir);
-		await store.write({
+	it("ignores fields retired by ADR-0007 instead of misreading them", async () => {
+		await writeState({
 			activeProfile: "review",
-			overlay: { disabledSkills: ["noisy-skill"], tools: ["read"] },
+			lastVerifiedProfile: "implement",
+			overlay: { disabledSkills: ["x"], disabledExtensions: ["old"], disabledMcp: ["m"] },
 		});
 
-		expect((await store.read()).overlay).toEqual({ disabledSkills: ["noisy-skill"], tools: ["read"] });
+		expect(await store().read()).toEqual({
+			activeProfile: "review",
+			overlay: { disabledSkills: ["x"], disabledMcp: ["m"] },
+		});
 	});
 
-	it("update merges patches and deletes undefined fields without clobbering others", async () => {
-		const store = new RuntimeStateStore(fixture.agentDir);
-		await store.write({
-			activeProfile: "review",
-			lastVerifiedProfile: "review",
-			overlay: { disabledSkills: ["noisy-skill"] },
+	it("writes only current fields, dropping retired ones", async () => {
+		await store().write({ activeProfile: "review", overlay: { tools: ["read"] } });
+
+		const raw = JSON.parse(
+			await (await import("node:fs/promises")).readFile(
+				path.join(fixture.agentDir, "pi-profile-state.json"),
+				"utf8",
+			),
+		) as Record<string, unknown>;
+		expect(raw).toEqual({ activeProfile: "review", overlay: { tools: ["read"] } });
+	});
+
+	it("merges patches without clobbering the other field", async () => {
+		await store().write({ activeProfile: "review", overlay: { disabledSkills: ["x"] } });
+
+		await store().update({ activeProfile: "implement" });
+
+		expect(await store().read()).toEqual({
+			activeProfile: "implement",
+			overlay: { disabledSkills: ["x"] },
 		});
+	});
 
-		const next = await store.update({ lastVerifiedProfile: "impl", overlay: undefined });
+	it("deletes a field patched with undefined", async () => {
+		await store().write({ activeProfile: "review", overlay: { disabledSkills: ["x"] } });
 
-		expect(next).toEqual({ activeProfile: "review", lastVerifiedProfile: "impl" });
-		expect(await store.read()).toEqual({ activeProfile: "review", lastVerifiedProfile: "impl" });
+		await store().update({ overlay: undefined });
+
+		expect(await store().read()).toEqual({ activeProfile: "review" });
 	});
 });

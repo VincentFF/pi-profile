@@ -1,130 +1,121 @@
 import { describe, expect, it } from "vitest";
 
 import { buildStatusReport, formatStatusMarkdown } from "../src/switching/status.ts";
+import { selection } from "./helpers/fake-apply.ts";
 
-const basePlan = {
-	profile: "review",
-	source: "global",
-	resolved: {
-		skills: [
-			{ name: "code-review", filePath: "/agent/skills/code-review/SKILL.md" },
-			{ name: "debug", filePath: "/agent/skills/debug/SKILL.md" },
-		],
-		extensions: [{ id: "linter", entry: "/agent/extensions/linter.ts" }],
-	},
-	tools: ["read", "grep"],
-	mcp: ["github"],
-};
+const allSkills = [
+	{ name: "git-commit", filePath: "/skills/git-commit/SKILL.md" },
+	{ name: "code-review", filePath: "/skills/code-review/SKILL.md" },
+];
 
 describe("buildStatusReport", () => {
-	it("reports resolved absolute paths, mcp tri-state, and overlay contents", () => {
+	it("reports every loaded skill as visible without a filter", () => {
 		const report = buildStatusReport({
-			plan: basePlan,
-			overlay: { disabledSkills: ["noisy"] },
-			tools: [],
-			discoveredMcpServers: ["github", "linear"],
-			commands: [
-				{ name: "skill:code-review", sourceInfo: { path: "/agent/skills/code-review/SKILL.md" } },
-				{ name: "skill:debug", sourceInfo: { path: "/agent/skills/debug/SKILL.md" } },
-			],
+			selection: selection({ mcp: ["atlassian"] }),
+			allSkills,
+			discoveredMcpServers: ["atlassian", "github"],
 		});
 
-		expect(report.mcp).toEqual({ enabled: ["github"], disabled: ["linear"], missing: [] });
-		expect(report.overlay).toEqual({ disabledSkills: ["noisy"] });
-		expect(report.conflicts).toEqual([]);
+		expect(report.profile).toBe("review");
+		expect(report.skills.filtered).toBe(false);
+		expect(report.skills.visible.map((skill) => skill.name)).toEqual(["git-commit", "code-review"]);
+		expect(report.skills.loaded).toBe(2);
+		expect(report.mcp).toEqual({ enabled: ["atlassian"], discovered: ["atlassian", "github"], missing: [] });
 	});
 
-	it("flags plan mcp servers that discovery no longer finds as missing", () => {
-		const report = buildStatusReport({ plan: basePlan, discoveredMcpServers: [], commands: [], tools: [] });
-
-		expect(report.mcp.missing).toEqual(["github"]);
-	});
-
-	it("reports the glob delta versus the previous activation", () => {
+	it("reports the filtered visible set and the loaded total", () => {
 		const report = buildStatusReport({
-			plan: {
-				...basePlan,
-				previousResolved: { skills: ["code-review", "old-skill"], extensions: ["linter"], tools: ["read", "bash"], mcp: [] },
-			},
-			discoveredMcpServers: ["github"],
-			commands: [],
-			tools: [],
-		});
-
-		expect(report.delta?.added).toContain("skill:debug");
-		expect(report.delta?.added).toContain("mcp:github");
-		expect(report.delta?.removed).toEqual(["skill:old-skill", "tool:bash"]);
-	});
-
-	it("reports same-name conflicts with Pi's actual winner, never blocking", () => {
-		const report = buildStatusReport({
-			plan: basePlan,
-			tools: [],
+			selection: selection({ skills: { refs: ["code-*"], disabled: [] } }),
+			allSkills,
 			discoveredMcpServers: [],
-			commands: [
-				{ name: "skill:code-review", sourceInfo: { path: "/agent/skills/code-review/SKILL.md" } },
-				// A same-named project skill won Pi's first-wins load order.
-				{ name: "skill:debug", sourceInfo: { path: "/project/.pi/skills/debug/SKILL.md" } },
-			],
 		});
 
-		expect(report.conflicts).toEqual([
-			{
-				name: "skill:debug",
-				expectedPath: "/agent/skills/debug/SKILL.md",
-				winnerPath: "/project/.pi/skills/debug/SKILL.md",
-			},
-		]);
+		expect(report.skills.filtered).toBe(true);
+		expect(report.skills.visible.map((skill) => skill.name)).toEqual(["code-review"]);
+		expect(report.skills.loaded).toBe(2);
 	});
 
-	it("flags resolved skills that never registered as not loaded", () => {
-		const report = buildStatusReport({ plan: basePlan, discoveredMcpServers: [], commands: [], tools: [] });
-
-		expect(report.conflicts.map((conflict) => conflict.winnerPath)).toEqual(["not loaded", "not loaded"]);
-	});
-
-	it("reports tool conflicts only when the winner is neither builtin nor a selected extension", () => {
-		const tools = [
-			{ name: "read", sourceInfo: { path: "<builtin:read>", source: "builtin" } },
-			// An unrelated extension won the name the plan expected from elsewhere.
-			{ name: "grep", sourceInfo: { path: "/other/extensions/sneaky.ts", source: "extension" } },
-		];
-		const report = buildStatusReport({ plan: basePlan, discoveredMcpServers: [], commands: [], tools });
-
-		expect(report.conflicts).toEqual([
-			{ name: "skill:code-review", expectedPath: "/agent/skills/code-review/SKILL.md", winnerPath: "not loaded" },
-			{ name: "skill:debug", expectedPath: "/agent/skills/debug/SKILL.md", winnerPath: "not loaded" },
-			{ name: "tool:grep", expectedPath: "builtin or selected extension", winnerPath: "/other/extensions/sneaky.ts" },
-		]);
-
-		// A tool owned by a plan-selected extension is expected, not a conflict.
-		const withExtensionTool = buildStatusReport({
-			plan: { ...basePlan, tools: ["lint-fix"] },
+	it("reports pending tools and unresolved references", () => {
+		const report = buildStatusReport({
+			selection: selection({
+				tools: ["read", "mcp_tool"],
+				pendingTools: ["mcp_tool"],
+				warnings: {
+					skillsUnresolved: [{ reference: "git-comit", suggestions: ["git-commit"] }],
+					skillsUnmatched: ["zzz-*"],
+					mcpUnmatched: [],
+					toolsUnmatched: [],
+				},
+			}),
+			allSkills,
 			discoveredMcpServers: [],
-			commands: [],
-			tools: [{ name: "lint-fix", sourceInfo: { path: "/agent/extensions/linter.ts", source: "extension" } }],
 		});
-		expect(withExtensionTool.conflicts.map((conflict) => conflict.name)).toEqual([
-			"skill:code-review",
-			"skill:debug",
-		]);
+
+		expect(report.tools).toEqual({ active: ["read", "mcp_tool"], pending: ["mcp_tool"] });
+		expect(report.unresolved.skills).toEqual([{ reference: "git-comit", suggestions: ["git-commit"] }]);
+		expect(report.unresolved.unmatched).toEqual(["zzz-*"]);
+	});
+
+	it("reports declared servers the adapter does not discover", () => {
+		const report = buildStatusReport({
+			selection: selection({ mcp: ["atlassian", "ghost"] }),
+			allSkills,
+			discoveredMcpServers: ["atlassian"],
+		});
+
+		expect(report.mcp.missing).toEqual(["ghost"]);
+	});
+
+	it("carries the last prompt-filter outcome", () => {
+		const report = buildStatusReport({
+			selection: selection({ skills: { refs: ["code-*"], disabled: [] } }),
+			allSkills,
+			discoveredMcpServers: [],
+			filterOutcome: "section-missing",
+		});
+
+		expect(report.skills.filterOutcome).toBe("section-missing");
+		expect(formatStatusMarkdown(report)).toContain("skills filter: not applied (section-missing)");
 	});
 });
 
 describe("formatStatusMarkdown", () => {
-	it("renders all sections readably", () => {
+	it("renders the profile, skills scope, tools, mcp, and warnings", () => {
 		const report = buildStatusReport({
-			plan: basePlan,
-			overlay: { tools: ["read"] },
-			tools: [],
-			discoveredMcpServers: ["github", "linear"],
-			commands: [],
+			selection: selection({
+				skills: { refs: ["code-*"], disabled: ["git-commit"] },
+				tools: ["read"],
+				pendingTools: ["mcp_tool"],
+				mcp: ["github"],
+				warnings: {
+					skillsUnresolved: [{ reference: "ghost-skill", suggestions: [] }],
+					skillsUnmatched: [],
+					mcpUnmatched: [],
+					toolsUnmatched: ["zzz*"],
+				},
+			}),
+			allSkills,
+			discoveredMcpServers: ["github"],
 		});
 
-		const markdown = formatStatusMarkdown(report);
-		expect(markdown).toContain("profile: review (global)");
-		expect(markdown).toContain("overlay: tools=[read]");
-		expect(markdown).toContain("code-review → /agent/skills/code-review/SKILL.md");
-		expect(markdown).toContain("mcp: enabled=[github] disabled=[linear]");
+		const text = formatStatusMarkdown(report);
+
+		expect(text).toContain("### profile: review (global)");
+		expect(text).toContain("skills: 1 of 2 loaded");
+		expect(text).toContain("code-review → /skills/code-review/SKILL.md");
+		expect(text).toContain("tools: [read]");
+		expect(text).toContain("tools pending (not registered yet): [mcp_tool]");
+		expect(text).toContain("mcp: enabled=[github] discovered=[github] missing=[]");
+		expect(text).toContain("unresolved skill: ghost-skill");
+		expect(text).toContain("zero-match globs: [zzz*]");
+	});
+
+	it("renders the overlay when present", () => {
+		const report = {
+			...buildStatusReport({ selection: selection(), allSkills, discoveredMcpServers: [] }),
+			overlay: { disabledSkills: ["git-commit"], tools: ["read"] },
+		};
+
+		expect(formatStatusMarkdown(report)).toContain("overlay: -skill:git-commit tools=[read]");
 	});
 });
