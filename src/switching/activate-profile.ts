@@ -53,7 +53,6 @@ export interface ActivationDeps {
 
 export interface ActivationResult {
 	selection: ResolvedSelection;
-	warnings: string[];
 	/** The overlay this activation applied; absent when the runtime runs the
 	 *  profile exactly as it is declared. Callers surface it (the footer badge)
 	 *  instead of re-reading the state file. */
@@ -69,7 +68,7 @@ export async function resolveProfileSelection(
 	name: string,
 	deps: Pick<ActivationDeps, "agentDir" | "cwd" | "projectTrusted" | "live" | "presetInputs">,
 	overlay?: RuntimeOverlay,
-): Promise<{ selection: ResolvedSelection; warnings: string[] }> {
+): Promise<ResolvedSelection> {
 	const catalog = await ProfileCatalog.load(deps.agentDir, {
 		projectDir: deps.projectTrusted ? deps.cwd : undefined,
 	});
@@ -80,8 +79,7 @@ export async function resolveProfileSelection(
 		);
 	}
 	const suppressTools = !deps.presetInputs.force && deps.presetInputs.explicit.tools;
-	const selection = resolveSelection({ profile, overlay, live: deps.live, suppressTools });
-	return { selection, warnings: [...catalog.warnings] };
+	return resolveSelection({ profile, overlay, live: deps.live, suppressTools });
 }
 
 /** Activates a profile: resolve, validate, optionally persist, apply. */
@@ -91,7 +89,7 @@ export async function activateProfile(
 	options?: { overlay?: RuntimeOverlay | null; persist?: boolean },
 ): Promise<ActivationResult> {
 	const overlay = options?.overlay ?? undefined;
-	const { selection, warnings } = await resolveProfileSelection(name, deps, overlay);
+	const selection = await resolveProfileSelection(name, deps, overlay);
 	const preset = decidePreset({ model: selection.model, ...deps.presetInputs });
 
 	// Validate before touching anything: the model preset is the only
@@ -113,5 +111,5 @@ export async function activateProfile(
 		throw new ActivationError(result.error ?? `profile "${name}" could not be applied`);
 	}
 
-	return { selection, warnings, ...(overlay === undefined ? {} : { overlay }) };
+	return { selection, ...(overlay === undefined ? {} : { overlay }) };
 }

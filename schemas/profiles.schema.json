@@ -10,6 +10,7 @@
   "additionalProperties": false,
   "properties": {
     "schemaVersion": {
+      "description": "1 is current. 2 is the number v0.1.0 wrote for the same field shape and still reads; saves always write 1.",
       "enum": [1, 2]
     },
     "profiles": {
@@ -48,7 +49,7 @@
           "items": {
             "type": "string"
           },
-          "description": "Deprecated (schemaVersion 1). Extensions are always loaded natively (ADR-0007); the field is ignored with a warning."
+          "description": "Ignored. Extensions always load natively (ADR-0007) and are managed with pi install; the field is accepted so existing catalogs keep validating."
         },
         "mcp": {
           "type": "array",

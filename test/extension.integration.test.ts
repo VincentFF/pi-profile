@@ -159,7 +159,7 @@ async function waitForCustomMessage(rpc: RpcDriver, customType: string): Promise
 }
 
 async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
-	await writeFile(path.join(fixture.agentDir, "profiles.json"), JSON.stringify({ schemaVersion: 2, profiles }));
+	await writeFile(path.join(fixture.agentDir, "profiles.json"), JSON.stringify({ schemaVersion: 1, profiles }));
 }
 
 async function writeState(activeProfile: string): Promise<void> {
@@ -221,6 +221,50 @@ describe("native Pi behavior with the extension loaded", () => {
 				const prompt = await waitForProbe((entry) => entry.event === "prompt");
 				expect(String(prompt.systemPrompt)).toContain("alpha-skill");
 				expect(String(prompt.systemPrompt)).not.toContain("beta-skill");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"does not report a loaded skill as unloaded for a startup activation",
+		{ timeout: 90_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await writeCatalog({ review: { skills: ["alpha-skill"] } });
+			await writeState("review");
+			const probe = await writeProbe("probe", observeProbeBody());
+			const rpc = await start(["-e", EXTENSION, "-e", probe]);
+			try {
+				await waitForProbe((entry) => entry.event === "session");
+				await rpc.send({ type: "prompt", message: "hello" });
+				await waitForProbe((entry) => entry.event === "prompt");
+				// A round trip after the turn proves earlier notifications arrived.
+				await rpc.send({ type: "prompt", message: "/profile status" });
+				await waitForCustomMessage(rpc, "pi-profile-switch");
+
+				const notices = rpc.messages
+					.filter((entry) => (entry as { method?: string }).method === "notify")
+					.map((entry) => String((entry as { message?: string }).message));
+				expect(notices.filter((message) => message.includes("is not loaded in this session"))).toEqual([]);
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"reports a genuinely unknown skill on the first turn",
+		{ timeout: 90_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await writeCatalog({ review: { skills: ["ghost-skill"] } });
+			await writeState("review");
+			const rpc = await start(["-e", EXTENSION]);
+			try {
+				await rpc.send({ type: "prompt", message: "hello" });
+				await waitForNotify(rpc, 'skill "ghost-skill" is not loaded in this session');
 			} finally {
 				await rpc.close();
 			}
@@ -395,17 +439,26 @@ describe("native Pi behavior with the extension loaded", () => {
 	);
 
 	it(
-		"warns about a version 1 catalog with ignored extensions",
+		"reads a legacy catalog (schemaVersion 2, ignored extensions) without a compatibility warning",
 		{ timeout: 90_000 },
 		async () => {
 			await writeFile(
 				path.join(fixture.agentDir, "profiles.json"),
-				JSON.stringify({ schemaVersion: 1, profiles: { review: { extensions: ["pi-plan-build"] } } }),
+				JSON.stringify({ schemaVersion: 2, profiles: { review: { extensions: ["pi-plan-build"] } } }),
 			);
 			await writeState("review");
 			const rpc = await start(["-e", EXTENSION], { model: false });
 			try {
-				await waitForNotify(rpc, "schemaVersion 1 is read as version 2");
+				// The session is up and the legacy file activated its profile…
+				await rpc.send({ type: "prompt", message: "/profile status" });
+				const status = await waitForCustomMessage(rpc, "pi-profile-switch");
+				expect(status).toContain("### profile: review (global)");
+
+				// …and nothing was reported about its shape.
+				const notices = rpc.messages
+					.filter((entry) => (entry as { method?: string }).method === "notify")
+					.map((entry) => String((entry as { message?: string }).message));
+				expect(notices.filter((message) => message.includes("schemaVersion"))).toEqual([]);
 			} finally {
 				await rpc.close();
 			}

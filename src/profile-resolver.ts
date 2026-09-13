@@ -23,7 +23,11 @@ import type { RuntimeOverlay } from "./runtime-state-store.ts";
 
 /** The live resource view a resolution runs against. */
 export interface LiveResources {
-	skills: Array<{ name: string; filePath: string }>;
+	/** Pi's loaded skills. `undefined` when the caller cannot read them yet:
+	 *  Pi exposes the list on command contexts and on the `before_agent_start`
+	 *  event, not in `session_start`'s event context. An unknown set leaves the
+	 *  visibility filter intact and reports nothing (see `skillWarnings`). */
+	skills?: Array<{ name: string; filePath: string }>;
 	toolNames: string[];
 	/** MCP adapter state: presence plus discovered server names. */
 	mcp: { adapterPresent: boolean; servers: string[] };
@@ -77,17 +81,21 @@ export class SelectionError extends Error {
 	}
 }
 
-function resolveSkills(
-	declared: string[] | undefined,
-	disabled: string[],
+/** Existence warnings for skill references against one live skill set.
+ *  `undefined` means "not known yet" — Pi's skill list is only readable from
+ *  a command context or from the `before_agent_start` event, so a startup
+ *  activation reports nothing instead of every reference as unloaded. The
+ *  same function re-checks the references on the first turn, when the list
+ *  (including skills contributed through `resources_discover`) is complete. */
+export function skillWarnings(
+	refs: readonly string[],
 	live: LiveResources["skills"],
-): { filter?: SkillsFilter; warning: Pick<SelectionWarnings, "skillsUnresolved" | "skillsUnmatched"> } {
-	const refs = declared ?? [];
-	const warning = { skillsUnresolved: [] as UnresolvedRef[], skillsUnmatched: [] as string[] };
-	if (declared === undefined) {
-		// The profile declares nothing; an overlay may still hide skills.
-		return { ...(disabled.length > 0 ? { filter: { refs: "all" as const, disabled } } : {}), warning };
-	}
+): Pick<SelectionWarnings, "skillsUnresolved" | "skillsUnmatched"> {
+	const warning: Pick<SelectionWarnings, "skillsUnresolved" | "skillsUnmatched"> = {
+		skillsUnresolved: [],
+		skillsUnmatched: [],
+	};
+	if (live === undefined) return warning;
 	for (const ref of refs) {
 		const hits = live.filter((skill) => matchesReference(ref, skill.name));
 		if (hits.length === 0) {
@@ -95,7 +103,22 @@ function resolveSkills(
 			else warning.skillsUnresolved.push({ reference: ref, suggestions: suggestNames(ref, live.map((s) => s.name)) });
 		}
 	}
-	return { filter: { refs, disabled }, warning };
+	return warning;
+}
+
+function resolveSkills(
+	declared: string[] | undefined,
+	disabled: string[],
+	live: LiveResources["skills"],
+): { filter?: SkillsFilter; warning: Pick<SelectionWarnings, "skillsUnresolved" | "skillsUnmatched"> } {
+	if (declared === undefined) {
+		// The profile declares nothing; an overlay may still hide skills.
+		return {
+			...(disabled.length > 0 ? { filter: { refs: "all" as const, disabled } } : {}),
+			warning: skillWarnings([], live),
+		};
+	}
+	return { filter: { refs: declared, disabled }, warning: skillWarnings(declared, live) };
 }
 
 function resolveMcp(
@@ -211,23 +234,33 @@ export function resolveSelection(input: {
 	return selection;
 }
 
-/** User-facing warning lines for one resolved selection. */
-export function formatSelectionWarnings(selection: ResolvedSelection): string[] {
+/** User-facing lines for one set of skill warnings. Shared by the startup
+ *  report and the first-turn re-check, so both read identically. */
+export function formatSkillWarnings(
+	profile: string,
+	warning: Pick<SelectionWarnings, "skillsUnresolved" | "skillsUnmatched">,
+): string[] {
 	const lines: string[] = [];
-	for (const unresolved of selection.warnings.skillsUnresolved) {
+	for (const unresolved of warning.skillsUnresolved) {
 		const hint =
 			unresolved.suggestions.length > 0
 				? ` — did you mean: ${unresolved.suggestions.map((name) => JSON.stringify(name)).join(", ")}?`
 				: "";
 		lines.push(
-			`profile "${selection.name}": skill ${JSON.stringify(unresolved.reference)} is not loaded in this session${hint}`,
+			`profile "${profile}": skill ${JSON.stringify(unresolved.reference)} is not loaded in this session${hint}`,
 		);
 	}
-	if (selection.warnings.skillsUnmatched.length > 0) {
+	if (warning.skillsUnmatched.length > 0) {
 		lines.push(
-			`profile "${selection.name}": skill glob(s) ${selection.warnings.skillsUnmatched.map((ref) => JSON.stringify(ref)).join(", ")} matched nothing`,
+			`profile "${profile}": skill glob(s) ${warning.skillsUnmatched.map((ref) => JSON.stringify(ref)).join(", ")} matched nothing`,
 		);
 	}
+	return lines;
+}
+
+/** User-facing warning lines for one resolved selection. */
+export function formatSelectionWarnings(selection: ResolvedSelection): string[] {
+	const lines: string[] = formatSkillWarnings(selection.name, selection.warnings);
 	if (selection.warnings.mcpUnmatched.length > 0) {
 		lines.push(
 			`profile "${selection.name}": MCP glob(s) ${selection.warnings.mcpUnmatched.map((ref) => JSON.stringify(ref)).join(", ")} matched nothing`,

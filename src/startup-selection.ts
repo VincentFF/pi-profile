@@ -105,10 +105,7 @@ export async function resolveStartupProfile(input: {
 	const catalog = await ProfileCatalog.load(input.agentDir, {
 		projectDir: input.projectTrusted ? input.cwd : undefined,
 	});
-	const warnings: string[] = [
-		...catalog.warnings,
-		...(await legacyRegistryWarnings(input)),
-	];
+	const warnings: string[] = await legacyRegistryWarnings(input);
 
 	if (input.requested !== undefined) {
 		if (catalog.resolve(input.requested) === undefined) {

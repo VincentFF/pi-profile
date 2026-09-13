@@ -33,7 +33,7 @@ Define profiles in `~/.pi/agent/profiles.json` (global) or `<project>/.pi/profil
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 1,
   "profiles": {
     "review": {
       "label": "Code review",
@@ -48,7 +48,7 @@ Define profiles in `~/.pi/agent/profiles.json` (global) or `<project>/.pi/profil
 
 Profiles **reference** resources by name — they never copy them. Full schema with more examples: [`examples/profiles.json`](examples/profiles.json).
 
-Existing `schemaVersion: 1` catalogs keep working: the `extensions` field is reported once and ignored, because extensions now load natively in every profile.
+`schemaVersion` is 1; a catalog written by v0.1.0 (which wrote `2`) reads the same, and saves always write `1`. A legacy `extensions` field is ignored: extensions load natively in every profile, so profiles do not select them — manage them with `pi install`.
 
 ## What a profile controls
 

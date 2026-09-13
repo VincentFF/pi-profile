@@ -13,6 +13,8 @@ import { buildProfileBadge, PROFILE_STATUS_KEY, renderProfileBadge } from "../..
 import type { ProfileDefinition } from "../../src/profile-catalog.ts";
 import {
 	formatSelectionWarnings,
+	formatSkillWarnings,
+	skillWarnings,
 	type LiveResources,
 	type ResolvedSelection,
 } from "../../src/profile-resolver.ts";
@@ -80,13 +82,21 @@ type ContextWithOptions = ExtensionContext & { getSystemPromptOptions?: () => Bu
 interface Activation {
 	selection: ResolvedSelection;
 	skillsOutcome?: SkillsFilterOutcome;
+	/** Whether the skill references were checked against Pi's loaded set.
+	 *  False after a startup activation: `session_start`'s event context
+	 *  cannot read that list, so the check moves to the first turn. */
+	skillsChecked: boolean;
 	/** The overlay this runtime was activated with, when one is in effect. */
 	overlay?: RuntimeOverlay;
 }
 
 /** Maps an activation result onto the runtime state `current` mirrors. */
-function activationOf(result: ActivationResult): Activation {
-	return { selection: result.selection, ...(result.overlay === undefined ? {} : { overlay: result.overlay }) };
+function activationOf(result: ActivationResult, skillsChecked: boolean): Activation {
+	return {
+		selection: result.selection,
+		skillsChecked,
+		...(result.overlay === undefined ? {} : { overlay: result.overlay }),
+	};
 }
 
 /** Subcommands that mutate a catalog; they need dialog-capable UI. */
@@ -157,8 +167,10 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	}
 
 	async function loadLive(ctx: ExtensionContext, projectTrusted: boolean): Promise<LiveResources> {
+		// Only command contexts expose the system-prompt options; the
+		// `session_start` event context has no accessor, so the loaded skills
+		// stay unknown there and their existence check moves to the first turn.
 		const options = (ctx as ContextWithOptions).getSystemPromptOptions?.();
-		const skills = (options?.skills ?? []).map((skill) => ({ name: skill.name, filePath: skill.filePath }));
 		const adapterPresent = probeAdapterPresence(pi.events);
 		let servers: string[] = [];
 		if (adapterPresent) {
@@ -168,7 +180,13 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				notify(ctx, error instanceof Error ? error.message : String(error), "warning");
 			}
 		}
-		return { skills, toolNames: pi.getAllTools().map((tool) => tool.name), mcp: { adapterPresent, servers } };
+		return {
+			...(options?.skills === undefined
+				? {}
+				: { skills: options.skills.map((skill) => ({ name: skill.name, filePath: skill.filePath })) }),
+			toolNames: pi.getAllTools().map((tool) => tool.name),
+			mcp: { adapterPresent, servers },
+		};
 	}
 
 	/** Builds the dependencies for one activation. `force` marks an explicit
@@ -199,20 +217,17 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 			overlay: options?.overlay ?? null,
 			persist: options?.persist ?? true,
 		});
-		setCurrent(ctx, activationOf(result));
-		reportWarnings(ctx, result.warnings);
+		setCurrent(ctx, activationOf(result, deps.live.skills !== undefined));
 		reportWarnings(ctx, formatSelectionWarnings(result.selection));
 		return result;
 	}
 
 	async function profileEntries(ctx: ExtensionContext): Promise<ProfileListEntry[]> {
-		const { entries, warnings } = await listProfiles({
+		return listProfiles({
 			realAgentDir: getAgentDir(),
 			cwd: ctx.cwd,
 			projectTrusted: ctx.isProjectTrusted(),
 		});
-		reportWarnings(ctx, warnings);
-		return entries;
 	}
 
 	function sendListMessage(entries: ProfileListEntry[]): void {
@@ -388,6 +403,34 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				},
 			};
 		}
+		// A startup activation cannot see Pi's skill list, so its references are
+		// checked here, on the first turn that carries the complete set — by then
+		// `resources_discover` has contributed every extension's skills. The
+		// corrected warnings replace the (empty) startup ones, so `/profile
+		// status` reports the same thing the user was told.
+		if (!current.skillsChecked) {
+			const refs = current.selection.skills?.refs;
+			const corrected =
+				refs === undefined || refs === "all"
+					? undefined
+					: skillWarnings(
+							refs,
+							(event.systemPromptOptions.skills ?? []).map((skill) => ({
+								name: skill.name,
+								filePath: skill.filePath,
+							})),
+						);
+			current = {
+				...current,
+				skillsChecked: true,
+				...(corrected === undefined
+					? {}
+					: { selection: { ...current.selection, warnings: { ...current.selection.warnings, ...corrected } } }),
+			};
+			if (corrected !== undefined) {
+				reportWarnings(ctx, formatSkillWarnings(current.selection.name, corrected));
+			}
+		}
 		// Pi has no extension-visible theme-change event and footer statuses are
 		// stored as finished strings, so re-render once per turn: a `/theme`
 		// switch is picked up without waiting for the next profile change.
@@ -460,8 +503,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 						const deps = await activationDeps(ctx, false);
 						const target = { profile: { name: current.selection.name, source: current.selection.source } };
 						const result = await customizeOverlay({ ...deps, ...target }, parseCustomizeArgs(rest.join(" ")));
-						setCurrent(ctx, activationOf(result));
-						reportWarnings(ctx, result.warnings);
+						setCurrent(ctx, activationOf(result, deps.live.skills !== undefined));
 						notify(ctx, `overlay updated: ${result.selection.name}`, "info");
 						return;
 					}
@@ -473,8 +515,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 						const deps = await activationDeps(ctx, false);
 						const target = { profile: { name: current.selection.name, source: current.selection.source } };
 						const result = await resetOverlay({ ...deps, ...target });
-						setCurrent(ctx, activationOf(result));
-						reportWarnings(ctx, result.warnings);
+						setCurrent(ctx, activationOf(result, deps.live.skills !== undefined));
 						notify(ctx, `overlay cleared: ${result.selection.name}`, "info");
 						return;
 					}

@@ -33,7 +33,7 @@ pi --profile default
 
 ```json
 {
-  "schemaVersion": 2,
+  "schemaVersion": 1,
   "profiles": {
     "review": {
       "label": "Code review",
@@ -48,7 +48,7 @@ pi --profile default
 
 Profile 只**引用**资源，从不复制资源。完整示例见 [`examples/profiles.json`](examples/profiles.json)。
 
-已有的 `schemaVersion: 1` catalog 继续可用：`extensions` 字段会被警告一次并忽略——extensions 现在在所有 profile 中原生加载。
+`schemaVersion` 为 1；v0.1.0 写出的 `2` 是同一种字段形状，照常读取，保存时一律写回 `1`。旧的 `extensions` 字段被静默忽略：extensions 在所有 profile 中原生加载，profile 不选择 extension——请用 `pi install` 管理。
 
 ## Profile 控制的范围
 

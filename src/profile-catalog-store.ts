@@ -3,9 +3,8 @@
  * separate from the read-only ProfileCatalog.
  *
  * Invariants:
- * - Whole-file overwrites (pretty-printed, `schemaVersion 2` envelope).
- *   A version 1 file is read with its `extensions` fields dropped and is
- *   rewritten as version 2 on the next save; wizard saves never block on
+ * - Whole-file overwrites (pretty-printed, `schemaVersion 1` envelope, the
+ *   constant owned by profile-catalog.ts). Wizard saves never block on
  *   concurrent edits — re-read at write time, same-name conflicts resolve
  *   last-write-wins.
  * - Definitions are complete and self-contained: no inheritance fields
@@ -38,7 +37,7 @@ export class ProfileCatalogStore {
 
 	/** Validated definitions: missing file → empty; malformed → CatalogError
 	 *  (catalog errors never pass silently, even on the write path).
-	 *  Version 1 files load with `extensions` dropped. */
+	 *  Unknown fields (a legacy `extensions` declaration) are dropped. */
 	async readDefinitions(): Promise<Map<string, ProfileDefinition>> {
 		const result = await readJsonFile(this.#filePath);
 		if (!result.ok) {
@@ -48,7 +47,7 @@ export class ProfileCatalogStore {
 		if (!isRecord(result.value)) {
 			throw new CatalogError(`${this.#filePath}: catalog must be an object`);
 		}
-		return parseCatalogDocument(result.value, this.#filePath).profiles;
+		return parseCatalogDocument(result.value, this.#filePath);
 	}
 
 	/** Overwrites the file with the given definitions (last write wins). */
