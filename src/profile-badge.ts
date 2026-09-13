@@ -17,11 +17,12 @@ import type { ThemeColor } from "@earendil-works/pi-coding-agent";
 import { DEFAULT_PROFILE_NAME } from "./profile-catalog.ts";
 
 /**
- * Status key in Pi's footer. Pi joins all extension statuses into one line and
- * truncates it from the right, ordered by key, so `profile` sorts before `mcp`
- * and `pi-…`: a narrow terminal drops this badge last, not first.
+ * Status key in Pi's footer. Pi joins all extension statuses into one line,
+ * orders them by key, and truncates that line from the right — so an earlier
+ * key keeps its text visible on a narrow terminal. `active-profile` sorts
+ * before the keys it shares the line with (`mcp`, `pi-…`, `thinking`).
  */
-export const PROFILE_STATUS_KEY = "profile";
+export const PROFILE_STATUS_KEY = "active-profile";
 
 /** The label prefix, matching the `/profile status` heading. */
 export const PROFILE_BADGE_LABEL = "profile";

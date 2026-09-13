@@ -112,9 +112,11 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	 *  when the rendering actually changed. */
 	let badgeText: string | undefined;
 
-	/** The only writer of `current` and of the footer badge. Both mirror the
-	 *  selection this runtime applied, so a failed activation (which throws
-	 *  before reaching here) never claims to be active. */
+	/** The only writer of `current`'s profile identity (`selection.name` and
+	 *  `overlay`) and of the footer badge. Both mirror the selection this
+	 *  runtime applied, so a failed activation (which throws before reaching
+	 *  here) never claims to be active. The per-turn updates (`pendingTools`,
+	 *  `skillsOutcome`) leave the identity and the badge untouched. */
 	function setCurrent(ctx: ExtensionContext, next: Activation | undefined): void {
 		current = next;
 		refreshBadge(ctx);

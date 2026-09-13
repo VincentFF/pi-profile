@@ -143,7 +143,7 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 - `session_start`：解析启动 profile（flag → 项目 state（已信任）→ 全局 state → `default`）→ 构建 live view → 解析 + 校验 + 应用；失败时不应用任何设置并报出可行动错误。
 - `before_agent_start`：重试 pending tools；重建 skills 段落；追加 instructions；每轮刷新 footer badge（主题变更无事件，只能靠这一轮刷新自愈）；无可变更时返回 undefined。
-- footer badge（`src/profile-badge.ts`）：`profile: <name>`，overlay 生效时追加 `*`；`default` 与未应用的 profile 不写 badge。`setCurrent` 是运行时状态与 badge 的唯一写入点，只反映已成功应用的激活。
+- footer badge（`src/profile-badge.ts`）：`profile: <name>`，overlay 生效时追加 `*`；`default` 与未应用的 profile 不写 badge。`setCurrent` 是 profile 身份（`selection.name` 与 `overlay`）与 badge 的唯一写入点，只反映已成功应用的激活；`pendingTools`/`skillsOutcome` 的原地更新不改身份，也不触碰 badge。
 - 启动选择（`--profile`）不写 state；stored overlay 不在启动时应用。
 - CRUD 向导仅 TUI（`ctx.mode === "tui"`）；list/status 经 `pi.sendMessage` 发送 `customType: "pi-profile-switch"` 的结构化 `details`。
 

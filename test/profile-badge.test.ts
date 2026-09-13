@@ -4,6 +4,7 @@ import {
 	buildProfileBadge,
 	displayWidth,
 	PROFILE_BADGE_NAME_COLUMNS,
+	PROFILE_STATUS_KEY,
 	renderProfileBadge,
 	truncateToColumns,
 	type BadgeTheme,
@@ -48,6 +49,17 @@ describe("renderProfileBadge", () => {
 		expect(renderProfileBadge(badge("review", true), marked)).toBe(
 			"<dim>profile: <dim>review<warning>*",
 		);
+	});
+});
+
+describe("PROFILE_STATUS_KEY", () => {
+	it("sorts before the statuses it shares the footer line with", () => {
+		// Pi orders the joined status line by key and truncates it from the
+		// right, so an earlier key keeps the badge's text visible on a narrow
+		// terminal. This is a design property of the key, not an accident.
+		for (const other of ["mcp", "mcp-auth", "pi-plan-build-mode", "thinking"]) {
+			expect(PROFILE_STATUS_KEY.localeCompare(other)).toBeLessThan(0);
+		}
 	});
 });
 

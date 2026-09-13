@@ -32,7 +32,7 @@ profile: review*       该 runtime 另有 overlay（runtime ≠ catalog）
 
 | 依据（Pi 0.85.1） | 影响 |
 | --- | --- |
-| footer 把所有扩展状态拼成**独立一行**，空格连接，按 key 字母序排序 | key 取 `profile`：字母序早于 `mcp`、`pi-…`，窄终端从右侧截断时最后才轮到本 badge |
+| footer 把所有扩展状态拼成**独立一行**，空格连接，按 key 升序排序 | key 取 `active-profile`：升序里排在 `mcp`、`pi-…`、`thinking` 之前，而整行从右侧截断，所以本 badge 的文字最晚被截掉 |
 | 整行按终端宽度右侧截断 | 名字必须自己截断（见下） |
 | `setStatus(key, undefined)` 删除条目；无条目时该行不存在 | 隐藏 badge 不占行（产品规则 3 的实现基础） |
 | 状态字符串按原样渲染，颜色由扩展在设置时写入 | 渲染时取 `ctx.ui.theme`，见"主题" |
@@ -40,7 +40,7 @@ profile: review*       该 runtime 另有 overlay（runtime ≠ catalog）
 
 不替换 Pi 自带 footer（`setFooter`/`setHeader`）、不占用编辑器上下的常驻行（`setWidget`）、不接管终端标题（`setTitle` 已被 Pi 用于 `pi - <session name> - <cwd>`）。这些都会改动 Pi 的原生界面，违反"Pi 兼容优先"。
 
-已知风险：status key 是全局命名空间，另一个扩展也用 `profile` 时会互相覆盖（Pi 没有读回状态的 API）；`profile` 按惯例已是本包的名字，先按此约定。
+已知风险：status key 是全局命名空间，另一个扩展也用 `active-profile` 时会互相覆盖（Pi 没有读回状态的 API）；`active-profile` 按惯例已是本包的 key，先按此约定。
 
 ### 宽度预算
 
@@ -70,10 +70,12 @@ Pi 没有面向扩展的主题变更事件，而 footer 状态是渲染完成的
 - 渲染结果固定为 `profile: <name>`，overlay 时追加 `*`；颜色在渲染时向 theme 索取。
 - 超过 16 列的名字被截断且总宽不超过预算；CJK/全角字符按 2 列计；`columns <= 0` 返回空串。
 - `overlayNarrows`：`undefined`、`{}`、全空数组为 false；非空 `disabled*` 与 `tools`（含 `[]`）为 true。
+- `PROFILE_STATUS_KEY` 升序排在 `mcp`/`pi-…`/`thinking` 之前（窄终端不被优先截断），key 同时用于 `setStatus` 与集成用例。
+- 启动激活忽略 stored overlay：`{activeProfile: "review", overlay: {disabledSkills: ["x"]}}` 启动后 badge 为 `profile: review`（不带 `*`）。
 
 ### Integration（真实 `pi --mode rpc`）
 
-- 启动时 state 指向 `review`：RPC 流中出现 `statusKey: "profile"` 的 `setStatus`，去掉 ANSI 后文本为 `profile: review`。
+- 启动时 state 指向 `review`：RPC 流中出现 `statusKey: "active-profile"` 的 `setStatus`，去掉 ANSI 后文本为 `profile: review`。
 
 ### 手动（`docs/acceptance.md`）
 
@@ -99,9 +101,18 @@ Pi 没有面向扩展的主题变更事件，而 footer 状态是渲染完成的
 | `src/runtime-state-store.ts` | 新增 `overlayNarrows` |
 | `extensions/pi-profile-switch/index.ts` | `setCurrent`/`refreshBadge`/`activationOf`，`before_agent_start` 每轮刷新 |
 | `docs/acceptance.md` | 手动清单增加 badge 预期 |
+| `docs/product/prd.md` | 命令与交互章节增加 badge 规则 |
+| `docs/architecture/overview.md` | badge 模块与接口、激活编排返回值 |
 | `README.md`、`README.zh-CN.md` | 命令章节说明 badge |
 | `CONTEXT.md` | 新增 Profile badge 词条 |
 
 ## Comments
 
-2026-09-13 — implemented on `feat/tui-profile-badge`；`npm run check` 干净，`npm test` 20 个测试文件 210/210 通过，其中包含真实 `pi --mode rpc` 的 badge 集成用例。
+2026-09-13 — implemented on `feat/tui-profile-badge`；`npm run check` 干净，`npm test` 20 个测试文件 212/212 通过，其中包含真实 `pi --mode rpc` 的 badge 集成用例。
+
+独立 review（Standards/Spec 两轴）后的修正：
+
+- key 从 `profile` 改为 `active-profile`：原依据把 Pi 的排序说反了（localeCompare 升序里 `mcp` < `pi-…` < `profile`，旧 key 反而最先被右侧截断）。补了钉住这一设计属性的单测。
+- 补“启动忽略 stored overlay”用例：state 里的 overlay 不进入 runtime，badge 也不得显示 `*`（`/profile status` 仍会报 state 里的 overlay，两者语义不同，已在 spec 记录）。
+- 收紧 overview 里“`setCurrent` 是唯一写入点”的表述：它只管 profile 身份与 badge，`pendingTools`/`skillsOutcome` 的原地更新不经过它。
+- 补齐文档影响表（`docs/product/prd.md`、`docs/architecture/overview.md`）。

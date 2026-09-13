@@ -447,7 +447,23 @@ describe("pi-profile-switch extension: footer badge", () => {
 
 		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
 
-		expect(fake.statuses).toEqual([{ key: "profile", text: "profile: review" }]);
+		expect(fake.statuses).toEqual([{ key: "active-profile", text: "profile: review" }]);
+	});
+
+	it("ignores a stored overlay at startup (it never outlives its runtime)", async () => {
+		await new RuntimeStateStore(fixture.agentDir).write({
+			activeProfile: "review",
+			overlay: { disabledSkills: ["alpha"] },
+		});
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, skills: [skill("alpha")] });
+
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		// Startup activation passes `overlay: null`, so the badge must not
+		// claim a narrowing the runtime does not have.
+		expect(fake.statuses.at(-1)?.text).toBe("profile: review");
 	});
 
 	it("writes no status at all for the default profile", async () => {

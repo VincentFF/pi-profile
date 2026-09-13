@@ -424,7 +424,7 @@ describe("native Pi behavior with the extension loaded", () => {
 					(entry) =>
 						(entry as { type?: string }).type === "extension_ui_request" &&
 						(entry as { method?: string }).method === "setStatus" &&
-						(entry as { statusKey?: string }).statusKey === "profile",
+						(entry as { statusKey?: string }).statusKey === "active-profile",
 				);
 				const badge = rpc.messages
 					.filter((entry) => (entry as { method?: string }).method === "setStatus")
