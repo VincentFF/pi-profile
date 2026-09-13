@@ -52,7 +52,7 @@ Create profiles with `/profile create`, which writes `~/.pi/agent/profiles.json`
 
 A preset is a one-time copy into your catalog: it is not tracked, so a package update never changes a profile you already created. Profiles **reference** resources by name — they never copy them. [`examples/profiles.json`](examples/profiles.json) is that same preset as a catalog; the field reference is [`schemas/profiles.schema.json`](schemas/profiles.schema.json).
 
-`schemaVersion` is 1; a catalog written by v0.1.0 (which wrote `2`) reads the same, and saves always write `1`. A legacy `extensions` field is ignored: extensions load natively in every profile, so profiles do not select them — manage them with `pi install`.
+`schemaVersion` is 1. A profile cannot select extensions: they load natively in every profile, so manage them with `pi install`.
 
 ## What a profile controls
 
@@ -89,18 +89,6 @@ All commands work in non-interactive modes (`--mode rpc|print|json`); CRUD wizar
 - **Pi-native** — the configuration directory is Pi's own, so sessions, extension config, packages, context files, and trust behave exactly as they do in plain Pi.
 - **Fail safe** — untrusted project directories are never read; a failed activation applies nothing and reports the cause.
 - **No reload** — switching re-applies runtime state in place; the next turn's prompt carries the new selection.
-
-## Migrating from the launcher
-
-```bash
-pi-profile read-only          # before
-pi --profile read-only        # after
-
-pi-profile read-only -- --mode rpc   # before
-pi --profile read-only --mode rpc    # after
-```
-
-`/profile reload` and the `/profile resource` commands are gone: skills are read on demand and catalogs are re-read on every use, so there is nothing to reload. Remove leftover `~/.pi/agent/pi-profile/runtime/` directories; the extension no longer creates them.
 
 ## Docs
 

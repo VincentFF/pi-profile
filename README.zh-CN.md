@@ -52,7 +52,7 @@ pi --profile default
 
 预设只被复制一次：它不被跟踪，包升级不会改动你已经创建的 profile。Profile 只**引用**资源，从不复制资源。[`examples/profiles.json`](examples/profiles.json) 就是同一个预设构成的 catalog；字段参考见 [`schemas/profiles.schema.json`](schemas/profiles.schema.json)。
 
-`schemaVersion` 为 1；v0.1.0 写出的 `2` 是同一种字段形状，照常读取，保存时一律写回 `1`。旧的 `extensions` 字段被静默忽略：extensions 在所有 profile 中原生加载，profile 不选择 extension——请用 `pi install` 管理。
+`schemaVersion` 为 1。Profile 不选择 extension：extensions 在所有 profile 中原生加载，请用 `pi install` 管理。
 
 ## Profile 控制的范围
 
@@ -89,18 +89,6 @@ pi --profile default
 - **Pi 原生**——配置目录就是 Pi 自己的目录，session、扩展配置、packages、context 文件和信任行为与原生 Pi 完全一致。
 - **失败安全**——未信任的项目目录从不读取；激活失败时不应用任何设置并报出原因。
 - **无 reload**——切换在原位重新应用运行时状态；下一个 turn 的 prompt 直接带上新选择。
-
-## 从 launcher 迁移
-
-```bash
-pi-profile read-only          # 旧
-pi --profile read-only        # 新
-
-pi-profile read-only -- --mode rpc   # 旧
-pi --profile read-only --mode rpc    # 新
-```
-
-`/profile reload` 与 `/profile resource` 命令已移除：skill 内容按需读取、catalog 每次使用重新读取，没有需要 reload 的缓存。删除遗留的 `~/.pi/agent/pi-profile/runtime/` 目录；新版本不再创建它们。
 
 ## 文档
 
