@@ -271,7 +271,12 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 			const wizard = await runProfileCreateWizard(ctx.ui, { projectTrusted: scopeInput.projectTrusted });
 			if (wizard === undefined) return;
 			await createProfile(scopeInput, wizard.scope, wizard.name, wizard.definition);
-			notify(ctx, `created profile "${wizard.name}" (${wizard.scope}) — activate with /profile use ${wizard.name}`, "info");
+			const origin = wizard.preset !== undefined ? ` from preset "${wizard.preset}"` : "";
+			notify(
+				ctx,
+				`created profile "${wizard.name}" (${wizard.scope})${origin} — activate with /profile use ${wizard.name}`,
+				"info",
+			);
 			return;
 		}
 		if (subcommand === "duplicate") {

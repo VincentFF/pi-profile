@@ -4,7 +4,7 @@
 
 [Pi](https://github.com/badlogic/pi-mono) 的命名 profile 扩展。一个 profile 选择模型看到什么、会话使用哪些能力——skills、MCP server、tools、预制模型和附加指令——并在同一 Pi 进程内即时切换。
 
-代码评审用精简的只读 profile，实现需求用全量 profile，临时提问用最小 profile。
+随包提供一个 `read-only` 预设覆盖「读代码 + 报告」的工作流；其余工作流由你自己定义——profile 可以收窄工具集、隐藏 skill、固定模型或附加指令。
 
 `pi-profile-switch` 是普通 Pi package（ADR-0007）：像其他扩展一样安装，不改动 Pi 的配置目录，session、packages、项目信任和其他扩展全部保持原生。
 
@@ -23,30 +23,34 @@ pi install npm:pi-profile-switch
 pi
 
 # 仅本次启动使用指定 profile（不保存）
-pi --profile review
+pi --profile read-only
 
 # 显式的原生基线
 pi --profile default
 ```
 
-在 `~/.pi/agent/profiles.json`（全局）或 `<项目>/.pi/profiles.json`（项目级，仅限已信任项目）中定义 profile：
+用 `/profile create` 创建 profile，写入 `~/.pi/agent/profiles.json`（全局）或 `<项目>/.pi/profiles.json`（项目级，仅限已信任项目）。向导提供随包的 `read-only` 预设——只用 Pi 内建工具，不假设任何 skill、MCP server 或模型——也可以从空定义开始：
 
 ```json
 {
   "schemaVersion": 1,
   "profiles": {
-    "review": {
-      "label": "Code review",
-      "skills": ["code-review"],
-      "mcp": ["github"],
-      "tools": ["read", "grep", "find", "bash"],
-      "instructions": "Review only; do not modify files."
+    "read-only": {
+      "label": "Read-only",
+      "description": "Read-only session; no skills or MCP servers assumed — add your own.",
+      "tools": [
+        "read",
+        "grep",
+        "find",
+        "ls"
+      ],
+      "instructions": "Read-only session: inspect and report; never create, edit, rename, or delete files.\nIf a change is needed, describe it in your reply instead of applying it.\nDo not run commands that modify state (installs, formatters, commits, pushes, network writes).\nPrefer an available skill or MCP tool when it fits the request; otherwise use the tools you have.\nGround claims in evidence: cite file:line and separate verified facts from inferences.\nReply in English."
     }
   }
 }
 ```
 
-Profile 只**引用**资源，从不复制资源。完整示例见 [`examples/profiles.json`](examples/profiles.json)。
+预设只被复制一次：它不被跟踪，包升级不会改动你已经创建的 profile。Profile 只**引用**资源，从不复制资源。[`examples/profiles.json`](examples/profiles.json) 就是同一个预设构成的 catalog；字段参考见 [`schemas/profiles.schema.json`](schemas/profiles.schema.json)。
 
 `schemaVersion` 为 1；v0.1.0 写出的 `2` 是同一种字段形状，照常读取，保存时一律写回 `1`。旧的 `extensions` 字段被静默忽略：extensions 在所有 profile 中原生加载，profile 不选择 extension——请用 `pi install` 管理。
 
@@ -89,11 +93,11 @@ Profile 只**引用**资源，从不复制资源。完整示例见 [`examples/pr
 ## 从 launcher 迁移
 
 ```bash
-pi-profile review          # 旧
-pi --profile review        # 新
+pi-profile read-only          # 旧
+pi --profile read-only        # 新
 
-pi-profile review -- --mode rpc   # 旧
-pi --profile review --mode rpc    # 新
+pi-profile read-only -- --mode rpc   # 旧
+pi --profile read-only --mode rpc    # 新
 ```
 
 `/profile reload` 与 `/profile resource` 命令已移除：skill 内容按需读取、catalog 每次使用重新读取，没有需要 reload 的缓存。删除遗留的 `~/.pi/agent/pi-profile/runtime/` 目录；新版本不再创建它们。

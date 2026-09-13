@@ -8,9 +8,14 @@
  * keeps the current value (prefill via placeholder); there is no
  * field-clearing gesture (delete + create instead). Any cancelled step
  * aborts the wizard — nothing is written.
+ *
+ * Create can start from a shipped preset (src/profile-presets.ts). A preset is
+ * prefilled form state only: the wizard copies its complete definition into the
+ * chosen catalog, and the new profile belongs to the user from then on.
  */
 
 import type { ProfileDefinition } from "../profile-catalog.ts";
+import { PROFILE_PRESETS, type ProfilePreset } from "../profile-presets.ts";
 import type { CatalogScope } from "./profile-crud.ts";
 
 export interface ProfileWizardUi {
@@ -22,6 +27,8 @@ export interface ProfileWizardResult {
 	scope: CatalogScope;
 	name: string;
 	definition: ProfileDefinition;
+	/** Name of the preset this definition was copied from, when any. */
+	preset?: string;
 }
 
 interface ExistingProfile {
@@ -108,23 +115,49 @@ async function captureDefinition(
 	return definition;
 }
 
-/** Create: scope first (project only when trusted), then name, then fields. */
+const BLANK_OPTION = "blank — start from an empty definition";
+
+/** One preset row. The caller identifies the preset by the option's INDEX, so
+ *  a preset named like another row's text cannot be misread. */
+function presetOption(preset: ProfilePreset): string {
+	const hint = preset.definition.description ?? preset.definition.label;
+	return hint !== undefined ? `${preset.name} — ${hint}` : preset.name;
+}
+
+/** Create: scope, optional preset, name, then fields. */
 export async function runProfileCreateWizard(
 	ui: ProfileWizardUi,
-	input: { projectTrusted: boolean },
+	input: { projectTrusted: boolean; presets?: readonly ProfilePreset[] },
 ): Promise<ProfileWizardResult | undefined> {
 	const scopeOptions = input.projectTrusted ? ["global", "project"] : ["global"];
 	// A single available scope needs no dialog.
 	const scope = scopeOptions.length === 1 ? scopeOptions[0] : await ui.select("write to which catalog?", scopeOptions);
 	if (scope === undefined) return undefined;
 
-	const name = await ui.input("profile name");
-	if (name === undefined || name.trim().length === 0) return undefined;
+	const presets = input.presets ?? PROFILE_PRESETS;
+	let preset: ProfilePreset | undefined;
+	if (presets.length > 0) {
+		const options = [BLANK_OPTION, ...presets.map(presetOption)];
+		const chosen = await ui.select("start from which preset?", options);
+		if (chosen === undefined) return undefined;
+		preset = presets[options.indexOf(chosen) - 1];
+	}
 
-	const definition = await captureDefinition(ui);
+	// An empty answer takes the preset's name, so Enter accepts the preset.
+	const name = await ui.input("profile name", preset?.name);
+	if (name === undefined) return undefined;
+	const resolvedName = name.trim().length > 0 ? name.trim() : preset?.name;
+	if (resolvedName === undefined) return undefined;
+
+	const definition = await captureDefinition(ui, preset?.definition);
 	if (definition === undefined) return undefined;
 
-	return { scope: scope as CatalogScope, name: name.trim(), definition };
+	return {
+		scope: scope as CatalogScope,
+		name: resolvedName,
+		definition,
+		...(preset !== undefined ? { preset: preset.name } : {}),
+	};
 }
 
 /** Edit: fields prefilled from the existing complete definition. */
