@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.2.0...v0.3.0) (2026-09-13)
+
+
+### Features
+
+* filter MCP servers per profile ([#10](https://github.com/VincentFF/pi-profile-switch/issues/10)) ([15b0257](https://github.com/VincentFF/pi-profile-switch/commit/15b02578b5b474dbec145f4d9d6c5b08d711fa1c))
+
 ## [0.2.0](https://github.com/VincentFF/pi-profile-switch/compare/v0.1.0...v0.2.0) (2026-09-13)
 
 
