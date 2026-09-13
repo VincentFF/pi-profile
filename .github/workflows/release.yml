@@ -9,7 +9,7 @@
 #   1. Publish v0.1.0 once by hand: `npm login` then `npm publish` (package must exist
 #      on npm before a trusted publisher can be attached to it).
 #   2. npmjs.com → package → Settings → Publishing access → add GitHub Actions
-#      trusted publisher: owner=VincentFF, repo=pi-profile, workflow=release.yml.
+#      trusted publisher: owner=VincentFF, repo=pi-profile-switch, workflow=release.yml.
 name: Release
 
 on:

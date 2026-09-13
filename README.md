@@ -1,4 +1,4 @@
-# pi-profile
+# pi-profile-switch
 
 [English](README.md) | [中文](README.zh-CN.md)
 
@@ -6,12 +6,12 @@ Named profiles for [Pi](https://github.com/badlogic/pi-mono). A profile selects 
 
 Use a lean read-only profile for code review, a full-powered one for implementation, a minimal one for a quick question.
 
-`pi-profile` is a plain Pi package (ADR-0007). It installs like any other extension, leaves Pi's configuration directory untouched, and keeps sessions, packages, project trust, and every other installed extension native.
+`pi-profile-switch` is a plain Pi package (ADR-0007). It installs like any other extension, leaves Pi's configuration directory untouched, and keeps sessions, packages, project trust, and every other installed extension native.
 
 ## Install
 
 ```bash
-pi install npm:pi-profile
+pi install npm:pi-profile-switch
 ```
 
 Requires [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) (installed automatically as a peer dependency).

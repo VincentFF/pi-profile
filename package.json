@@ -1,16 +1,30 @@
 {
-  "name": "pi-profile",
+  "name": "pi-profile-switch",
   "version": "0.1.0",
-  "description": "Named profiles for Pi: prompt, model, skills, MCP servers, and tools per workflow, switched in place.",
+  "description": "Named profiles for Pi: skills, MCP servers, tools, model, and instructions per workflow — switched in place in the same session.",
   "type": "module",
   "keywords": [
     "pi-package",
-    "pi agent",
+    "pi",
     "pi-profile",
+    "pi-profile-switch",
     "profile",
-    "pi"
+    "profiles",
+    "profile-switching",
+    "skills",
+    "mcp",
+    "tools"
   ],
   "license": "MIT",
+  "author": "VincentFF",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VincentFF/pi-profile-switch.git"
+  },
+  "homepage": "https://github.com/VincentFF/pi-profile-switch#readme",
+  "bugs": {
+    "url": "https://github.com/VincentFF/pi-profile-switch/issues"
+  },
   "pi": {
     "extensions": [
       "./extensions"

@@ -1,4 +1,4 @@
-# pi-profile
+# pi-profile-switch
 
 [English](README.md) | [中文](README.zh-CN.md)
 
@@ -6,12 +6,12 @@
 
 代码评审用精简的只读 profile，实现需求用全量 profile，临时提问用最小 profile。
 
-`pi-profile` 是普通 Pi package（ADR-0007）：像其他扩展一样安装，不改动 Pi 的配置目录，session、packages、项目信任和其他扩展全部保持原生。
+`pi-profile-switch` 是普通 Pi package（ADR-0007）：像其他扩展一样安装，不改动 Pi 的配置目录，session、packages、项目信任和其他扩展全部保持原生。
 
 ## 安装
 
 ```bash
-pi install npm:pi-profile
+pi install npm:pi-profile-switch
 ```
 
 依赖 [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)（作为 peer dependency 自动安装）。
