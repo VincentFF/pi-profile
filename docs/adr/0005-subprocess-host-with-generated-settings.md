@@ -1,5 +1,7 @@
 # Subprocess host with per-profile generated Pi settings
 
+**Superseded by [ADR-0007](0007-pure-extension-runtime.md).** Moving `PI_CODING_AGENT_DIR` into a per-launch generated directory broke Pi's per-project session layout and hid every agent-directory file outside the symlink allowlist (`pi-plan-build.json`, `plans/`, `mcp-cache.json`, global `AGENTS.md`); ADR-0007 removes the host process and the generated settings. Kept for history.
+
 Supersedes ADR-0001.
 
 ADR-0001 concluded that Pi has no pre-start resource-filter seam, because the public Extension API offers none, and therefore the launcher must build the Pi runtime itself through the SDK. Spikes against Pi 0.85.1 disproved the premise: the seam exists, it is just not the Extension API. Pi's own settings mechanism filters resources before the first agent turn:

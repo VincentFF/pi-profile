@@ -1,5 +1,7 @@
 # MCP integration locked to pi-mcp-adapter
 
+Amended by [ADR-0007](0007-pure-extension-runtime.md): the lock and the `pi.events` coordination channel stand; the launch-time adapter pre-check is removed because there is no launcher, so a profile that declares `mcp` without an active adapter fails at activation inside the session instead of before spawn.
+
 Amended by [ADR-0005](0005-subprocess-host-with-generated-settings.md): the lock below stands, but the integration transport is no longer in-process host calls. pi-profile runs inside Pi as an extension and coordinates with the adapter over the `pi.events` event bus; the profile-scoped state store contract for `/mcp enable|disable` is unchanged.
 Amended again (ticket 10): the assumed adapter "profile-scoped state store" does not exist (pi-mcp-adapter@2.33.0 exposes only the register/snapshot event pair — no allowlist, no profile-state API, no enable/disable/reload event). The profile's `mcp` array in its owning catalog IS the profile-scoped persistent store; `/mcp enable|disable` edit it via ProfileCatalogStore and take effect through the standard rewrite-settings-and-reload path, with the allowlist republished at session_start over the coordination channel. The lock's intent stands: connection parameters, OAuth, and tokens remain adapter-managed; pi-profile never writes them.
 
