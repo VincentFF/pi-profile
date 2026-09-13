@@ -14,6 +14,9 @@ The built-in, undeletable profile that declares nothing: no filtering, no tool c
 **Catalog**:
 A `profiles.json` file holding profile definitions: `~/.pi/agent/profiles.json` (global) or `.pi/profiles.json` (project). A project profile with the same name fully replaces the global one; there is no inheritance.
 
+**Default catalog**:
+The `read-only` catalog shipped in `examples/profiles.json`. Pi packages have no install hook, so it is written to `<agentDir>/profiles.json` the first time the extension loads, and only when that file does not exist — an existing catalog is never read, rewritten, or backed up. Seeding changes no startup behavior: with no saved selection the session still runs Pi's built-in `default`. The catalog field for MCP servers is `mcps`; the legacy key `mcp` is still read as an alias and is rewritten on the next save.
+
 **Source scope**:
 Whether a profile came from the global or project catalog. Determines where runtime state and CRUD edits are written.
 

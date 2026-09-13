@@ -12,6 +12,12 @@
  * - Unknown fields (an `extensions` declaration left over from v0.1.0, an
  *   inheritance key) are ignored silently; saving drops them, so a written
  *   definition always matches the current shape.
+ * - The catalog key for MCP servers is `mcps` (plural, like `skills` and
+ *   `tools`). The legacy name `mcp` is still READ as an alias so an
+ *   existing catalog keeps its allowlist; `mcps` wins when both keys are
+ *   present, and a value of the wrong type fails loudly either way.
+ *   Definitions always carry the canonical `mcps` field in memory, and
+ *   profile-catalog-store.ts drops a file's legacy key on its next write.
  *
  * Invariants:
  * - The built-in `default` profile never exists in either file and cannot be
@@ -44,7 +50,7 @@ export interface ProfileDefinition {
 	label?: string;
 	description?: string;
 	skills?: string[];
-	mcp?: string[];
+	mcps?: string[];
 	tools?: string[];
 	model?: ProfileModel;
 	instructions?: string;
@@ -79,6 +85,27 @@ function readStringArray(value: unknown, field: string, profileName: string): st
 	return value as string[];
 }
 
+/** Legacy catalog key names, still accepted on read (canonical name wins).
+ *  The write paths (/profile CRUD, /mcp enable|disable) delete the alias, so
+ *  a file migrates to the canonical spelling the next time it is saved. */
+export const LEGACY_FIELD_ALIASES = { mcps: "mcp" } as const;
+
+/** Reads an array-of-strings field under its canonical name or a legacy
+ *  alias. Both spellings are validated when present, so a value of the
+ *  wrong type never passes silently through either key. */
+function readAliasedStringArray(
+	raw: Record<string, unknown>,
+	canonical: string,
+	legacy: string,
+	profileName: string,
+): string[] | undefined {
+	for (const key of [canonical, legacy]) {
+		if (raw[key] !== undefined) readStringArray(raw[key], key, profileName);
+	}
+	const source = raw[canonical] !== undefined ? canonical : legacy;
+	return readStringArray(raw[source], source, profileName);
+}
+
 function readOptionalString(value: unknown, field: string, profileName: string): string | undefined {
 	if (value === undefined) return undefined;
 	if (typeof value !== "string") {
@@ -100,10 +127,12 @@ export function parseProfileDefinition(name: string, raw: unknown): ProfileDefin
 	if (label !== undefined) definition.label = label;
 	const description = readOptionalString(raw.description, "description", name);
 	if (description !== undefined) definition.description = description;
-	for (const field of ["skills", "mcp", "tools"] as const) {
+	for (const field of ["skills", "tools"] as const) {
 		const entries = readStringArray(raw[field], field, name);
 		if (entries !== undefined) definition[field] = entries;
 	}
+	const mcps = readAliasedStringArray(raw, "mcps", LEGACY_FIELD_ALIASES.mcps, name);
+	if (mcps !== undefined) definition.mcps = mcps;
 	if (raw.model !== undefined) {
 		if (!isRecord(raw.model) || typeof raw.model.provider !== "string" || typeof raw.model.id !== "string") {
 			throw new CatalogError(`profile "${name}": "model" must be an object with string "provider" and "id"`);

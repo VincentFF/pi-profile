@@ -73,14 +73,19 @@ export function resolveProjectTrustedSync(agentDir: string, cwd: string): boolea
 	return readDefaultProjectTrustSync(agentDir) === "always";
 }
 
-/** The saved selection for this run: project state wins over global state
- *  (project state only when trusted), then the built-in default. */
+/** The profile this pass generates the overlay for: this process's already
+ *  applied selection (`continuation`) first — a reload must not regress to
+ *  the `--profile` flag — then the flag, then the saved selection: project
+ *  state wins over global state (project state only when trusted), then the
+ *  built-in default. */
 export function resolveStartupProfileNameSync(input: {
 	agentDir: string;
 	cwd: string;
 	projectTrusted: boolean;
 	argv: readonly string[];
+	continuation?: string;
 }): string {
+	if (input.continuation !== undefined && input.continuation.length > 0) return input.continuation;
 	const requested = readFlagFromArgv(input.argv, "profile");
 	if (requested !== undefined && requested.length > 0) return requested;
 	const project = input.projectTrusted
@@ -97,6 +102,9 @@ export interface McpOverlaySyncInput {
 	projectTrusted?: boolean;
 	/** Effective `--mcp-config`; undefined means the managed overlay path. */
 	overridePath?: string;
+	/** The selection this process already applied: a reload's overlay belongs
+	 *  to it, not to the `--profile` flag. */
+	continuation?: string;
 	/** The command line, for the load pass (Pi applies flag values only after
 	 *  extension loading, so `--profile` is read from here). */
 	argv?: readonly string[];
@@ -126,6 +134,7 @@ export function syncStartupMcpOverlay(
 				cwd: input.cwd,
 				projectTrusted: trust ?? resolveProjectTrustedSync(input.agentDir, input.cwd),
 				argv: input.argv ?? [],
+				...(input.continuation === undefined ? {} : { continuation: input.continuation }),
 			});
 		const refs = input.mcpRefs ?? readProfileMcpRefsSync({ ...input, name: profileName, trust });
 		return writeOverlayForRefs({ ...input, refs });
@@ -228,7 +237,7 @@ function readActiveProfile(statePath: string): string | undefined {
 	return typeof name === "string" && name.length > 0 ? name : undefined;
 }
 
-/** The profile's raw `mcp` references; `"unknown"` when the profile or its
+/** The profile's raw `mcps` references; `"unknown"` when the profile or its
  *  catalog cannot be read (caller falls back to "no filtering"). */
 function readProfileMcpRefsSync(
 	input: McpOverlaySyncInput & { name: string; trust: boolean | undefined },
@@ -241,7 +250,7 @@ function readProfileMcpRefsSync(
 		: new Map<string, ProfileDefinition>();
 	if (global === "error" || project === "error") return "unknown";
 	const definition = project.get(input.name) ?? global.get(input.name);
-	return definition === undefined ? "unknown" : definition.mcp;
+	return definition === undefined ? "unknown" : definition.mcps;
 }
 
 function readCatalogSync(filePath: string): Map<string, ProfileDefinition> | "error" {

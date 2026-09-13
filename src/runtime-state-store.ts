@@ -33,6 +33,11 @@ export function stateDirFor(source: ProfileSource, dirs: { agentDir: string; cwd
 export interface RuntimeState {
 	activeProfile?: string;
 	overlay?: RuntimeOverlay;
+	/** Patch-only marker: clears `activeProfile` from the store it is sent
+	 *  to, and to that store alone. A profile switch sends it to the OTHER
+	 *  scope's store, so a stale project selection cannot shadow the new
+	 *  global choice on the next startup. Never stored, never read back. */
+	otherActiveProfile?: undefined;
 }
 
 export interface RuntimeOverlay {
@@ -112,6 +117,7 @@ export class RuntimeStateStore {
 			if (patch.overlay === undefined) delete next.overlay;
 			else next.overlay = patch.overlay;
 		}
+		if ("otherActiveProfile" in patch) delete next.activeProfile;
 		await this.write(next);
 		return next;
 	}

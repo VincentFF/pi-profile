@@ -14,7 +14,7 @@ beforeEach(async () => {
 		path.join(fixture.agentDir, "profiles.json"),
 		JSON.stringify({
 			schemaVersion: 1,
-			profiles: { review: { mcp: ["atlassian"] }, empty: {} },
+			profiles: { review: { mcps: ["atlassian"] }, empty: {} },
 		}),
 	);
 	await writeFile(
@@ -35,16 +35,16 @@ const globalInput = (name = "review") => ({
 });
 
 describe("setMcpServerEnabled", () => {
-	it("adds a discovered server to the profile's mcp array", async () => {
+	it("adds a discovered server to the profile's mcps array", async () => {
 		const result = await setMcpServerEnabled(globalInput(), "github", true);
 
-		expect(result).toEqual({ mcp: ["atlassian", "github"], changed: true });
+		expect(result).toEqual({ mcps: ["atlassian", "github"], changed: true });
 	});
 
 	it("removes a server and drops the key when the array becomes empty", async () => {
 		const result = await setMcpServerEnabled(globalInput(), "atlassian", false);
 
-		expect(result).toEqual({ mcp: [], changed: true });
+		expect(result).toEqual({ mcps: [], changed: true });
 		const document = JSON.parse(
 			await (await import("node:fs/promises")).readFile(path.join(fixture.agentDir, "profiles.json"), "utf8"),
 		) as { profiles: Record<string, unknown> };
@@ -54,7 +54,7 @@ describe("setMcpServerEnabled", () => {
 
 	it("reports no change when the server is already in the requested state", async () => {
 		expect(await setMcpServerEnabled(globalInput(), "atlassian", true)).toEqual({
-			mcp: ["atlassian"],
+			mcps: ["atlassian"],
 			changed: false,
 		});
 	});
@@ -66,10 +66,26 @@ describe("setMcpServerEnabled", () => {
 	it("allows disabling a name the adapter no longer discovers", async () => {
 		await writeFile(
 			path.join(fixture.agentDir, "profiles.json"),
-			JSON.stringify({ schemaVersion: 1, profiles: { review: { mcp: ["removed"] } } }),
+			JSON.stringify({ schemaVersion: 1, profiles: { review: { mcps: ["removed"] } } }),
 		);
 
-		expect(await setMcpServerEnabled(globalInput(), "removed", false)).toEqual({ mcp: [], changed: true });
+		expect(await setMcpServerEnabled(globalInput(), "removed", false)).toEqual({ mcps: [], changed: true });
+	});
+
+	it("migrates a legacy \"mcp\" array to \"mcps\" on the next save", async () => {
+		await writeFile(
+			path.join(fixture.agentDir, "profiles.json"),
+			JSON.stringify({ schemaVersion: 1, profiles: { review: { mcp: ["atlassian"] } } }),
+		);
+
+		await setMcpServerEnabled(globalInput(), "github", true);
+
+		const text = await (await import("node:fs/promises")).readFile(
+			path.join(fixture.agentDir, "profiles.json"),
+			"utf8",
+		);
+		expect(JSON.parse(text).profiles.review).toEqual({ mcps: ["atlassian", "github"] });
+		expect(text).not.toContain('"mcp"');
 	});
 
 	it("refuses the built-in default profile", async () => {

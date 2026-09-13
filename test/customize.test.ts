@@ -17,8 +17,8 @@ beforeEach(async () => {
 		JSON.stringify({
 			schemaVersion: 1,
 			profiles: {
-				review: { skills: ["git-commit", "code-review"], tools: ["read"], mcp: ["atlassian"] },
-				broken: { mcp: ["ghost-server"] },
+				review: { skills: ["git-commit", "code-review"], tools: ["read"], mcps: ["atlassian"] },
+				broken: { mcps: ["ghost-server"] },
 			},
 		}),
 	);

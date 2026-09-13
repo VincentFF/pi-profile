@@ -130,8 +130,8 @@ async function writeCatalog(): Promise<void> {
 		JSON.stringify({
 			schemaVersion: 1,
 			profiles: {
-				review: { mcp: ["alpha"], tools: ["read"] },
-				implement: { mcp: ["beta"], tools: ["read"] },
+				review: { mcps: ["alpha"], tools: ["read"] },
+				implement: { mcps: ["beta"], tools: ["read"] },
 			},
 		}),
 	);

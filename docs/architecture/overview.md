@@ -32,7 +32,7 @@
 | 资源 | 机制 |
 | --- | --- |
 | skills | prompt 可见性过滤：`before_agent_start` 用 Pi 导出的 `formatSkillsForPrompt` 重建段落并替换 |
-| mcp | profile 的 `mcp` 白名单写入 adapter 的 Pi-global 槽位（生成的 disable overlay），同时保留 `pi.events` allowlist 发布（ADR-0008） |
+| mcp | profile 的 `mcps` 白名单写入 adapter 的 Pi-global 槽位（生成的 disable overlay），同时保留 `pi.events` allowlist 发布（ADR-0008） |
 | tools | `pi.setActiveTools` 对 live registry 展开后的活动集合；未注册字面量 pending 重试 |
 | model / thinkingLevel | `pi.setModel` / `pi.setThinkingLevel`，遵循显式选择优先 |
 | instructions | 与 skills 过滤合并到同一个 `before_agent_start` 返回值 |
@@ -94,7 +94,7 @@ filtered   = formatSkillsForPrompt(visibleSkills(all, filter), fileReadTool)
       "instructions": "Review only; never edit tracked files.",
       "model": { "provider": "anthropic", "id": "claude-sonnet-4-5", "thinkingLevel": "high" },
       "skills": ["git-commit", "matt/*"],
-      "mcp": ["github-ro"],
+      "mcps": ["github-ro"],
       "tools": ["read", "grep", "find", "ls"]
     }
   }
@@ -106,7 +106,7 @@ filtered   = formatSkillsForPrompt(visibleSkills(all, filter), fileReadTool)
 | `instructions` | 每个 turn 追加；未声明时不追加 |
 | `model` | 对 `ctx.modelRegistry` 解析；`thinkingLevel` 由 `setThinkingLevel` 自动 clamp |
 | `skills` | 每个 turn 对 live skill 名称解析（支持 glob） |
-| `mcp` | 激活时对 adapter 探测结果解析 |
+| `mcps` | 激活时对 adapter 探测结果解析；旧键 `mcp` 仍按别名读取，下一次保存时改写为 `mcps` |
 | `tools` | 对 `pi.getAllTools()` 名称解析；未注册字面量 pending |
 
 `RuntimeOverlay` 字段：`disabledSkills`、`disabledMcp`、`tools`（替换 profile 的 tools）。
@@ -142,7 +142,8 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 **Rules**：
 
-- `session_start`：解析启动 profile（flag → 项目 state（已信任）→ 全局 state → `default`）→ 构建 live view → 解析 + 校验 + 应用；失败时不应用任何设置并报出可行动错误。
+- load：调用 `seedDefaultProfilesSync`，在 `<agentDir>/profiles.json` 不存在时写入默认 catalog（Pi package 无安装钩子，见 `default-profiles.ts`）；写入失败不在加载阶段抛出，而是在 `session_start` 报告一次。已有文件绝不读取或改写。
+- `session_start`：解析启动 profile（flag → 项目 state（已信任）→ 全局 state → `default`）→ 构建 live view → 解析 + 校验 + 应用；失败时不应用任何设置并报出可行动错误。首次之后的 session start（`reason: "reload" | "new" | "resume" | "fork"`）先沿用本进程已应用的 selection：`--profile` 是启动指令，reload 时重读它会复活用户刚离开的 profile。
 - `before_agent_start`：重试 pending tools；重建 skills 段落；追加 instructions；每轮刷新 footer badge（主题变更无事件，只能靠这一轮刷新自愈）；无可变更时返回 undefined。
 - footer badge（`src/profile-badge.ts`）：`profile: <name>`，overlay 生效时追加 `*`；`default` 与未应用的 profile 不写 badge。`setCurrent` 是 profile 身份（`selection.name` 与 `overlay`）与 badge 的唯一写入点，只反映已成功应用的激活；`pendingTools`/`skillsOutcome` 的原地更新不改身份，也不触碰 badge。
 - 启动选择（`--profile`）不写 state；stored overlay 不在启动时应用。
@@ -194,7 +195,7 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 **Interface**：`syncStartupMcpOverlay`（load 与 `session_start` 复核）/ `syncMcpOverlayForSelection`（切换）/ `readFlagFromArgv` / `resolveStartupProfileNameSync` / `resolveProjectTrustedSync`。
 
-**Rules**：load 阶段同步执行且先于 adapter 的配置读取；Pi 在扩展加载之后才应用 CLI flag 值，因此 `--profile` / `--mcp-config` 从 argv 读取；信任镜像 Pi 的顺序（`hasTrustRequiringProjectResources` → 存储决策 → `defaultProjectTrust`，交互询问在 load 阶段按未信任处理）；用户显式 `--mcp-config` 指向别的文件时整段管理关闭；profile 不可解析时生成"不过滤"的 overlay（真正的错误由随后的激活响亮报告）。
+**Rules**：load 阶段同步执行且先于 adapter 的配置读取；Pi 在扩展加载之后才应用 CLI flag 值，因此 `--profile` / `--mcp-config` 从 argv 读取；本进程已应用的 selection（`continuation`）优先于 `--profile`，因此 reload 生成的 overlay 与 `session_start` 随后应用的 profile 一致；信任镜像 Pi 的顺序（`hasTrustRequiringProjectResources` → 存储决策 → `defaultProjectTrust`，交互询问在 load 阶段按未信任处理）；用户显式 `--mcp-config` 指向别的文件时整段管理关闭；profile 不可解析时生成"不过滤"的 overlay（真正的错误由随后的激活响亮报告）。
 
 ### `switching/apply-profile.ts`
 
@@ -233,7 +234,8 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 ```text
 pi [--profile review]
   │
-  ├─ 解析启动 profile（flag → 项目 state → 全局 state → default）
+  ├─ 解析启动 profile（flag → 项目 state → 全局 state → default；
+  │    非首次 session start 沿用本进程已应用的 selection）
   ├─ 构建 live view：pi.getAllTools() + adapter 探测（skills 此时不可读，首轮再检查）
   ├─ resolve（glob 展开、overlay、warnings）
   ├─ validate（model 存在且已认证；MCP intent 可满足）
@@ -248,7 +250,7 @@ pi [--profile review]
   │
   ├─ 重新读取 catalog/adapter/live view
   ├─ resolve + validate（失败时不改变任何状态）
-  ├─ 持久化选择到目标 profile 的 source scope（清除 overlay）
+  ├─ 持久化选择到目标 profile 的 source scope（清除 overlay）；切到另一个 scope 时清掉其 stale `activeProfile`，保留其 overlay
   ├─ apply（model/tools 立即生效）
   ├─ MCP 选择变化 → 重写 overlay → waitForIdle → ctx.reload()（ADR-0008）
   └─ skills/instructions：下一个 turn 的 prompt 直接带上
@@ -267,6 +269,7 @@ pi-profile-switch/
 │   ├── profile-catalog.ts       # 只接受 schemaVersion 1；未知字段忽略
 │   ├── profile-catalog-store.ts # 写入侧
 │   ├── profile-presets.ts       # 随包预设（create 起点，零资源假设）
+│   ├── default-profiles.ts      # 首次加载写入 <agentDir>/profiles.json（幂等，不覆盖已有文件）
 │   ├── runtime-state-store.ts
 │   ├── profile-resolver.ts      # 纯函数选择解析
 │   ├── profile-badge.ts         # footer badge 构造与列宽截断
@@ -306,3 +309,5 @@ pi-profile-switch/
 | 全局 `<agentDir>/AGENTS.md` 进入 system prompt | probe 扩展断言 prompt 含 fixture 内容 |
 | 所有已安装 extension 在任意 profile 下加载 | 扩展不控制 extension 集合 |
 | `default` profile 逐字原生 | 不过滤、不 setActiveTools、不发布 allowlist |
+| 任意 profile 都能切回 `default`，并在下次启动保持 | 集成测试：项目 profile → `/profile use default` → 重启后为 `default`；单测覆盖跨 scope 清理与 overlay 保留 |
+| MCP overlay 触发的 reload 不改变当前选择 | 集成测试：`--profile review` 启动 → `/profile use implement`（overlay 变化触发 reload）→ status 与 badge 仍为 `implement`；load 阶段 overlay 与 `session_start` 都采用 continuation |

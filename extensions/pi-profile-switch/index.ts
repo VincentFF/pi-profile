@@ -12,6 +12,7 @@ import { probeAdapterPresence } from "../../src/mcp-coordination.ts";
 import { readSessionChoices } from "../../src/model-selection.ts";
 import { buildProfileBadge, PROFILE_STATUS_KEY, renderProfileBadge } from "../../src/profile-badge.ts";
 import type { ProfileDefinition } from "../../src/profile-catalog.ts";
+import { seedDefaultProfilesSync } from "../../src/default-profiles.ts";
 import {
 	formatSelectionWarnings,
 	formatSkillWarnings,
@@ -26,8 +27,10 @@ import {
 	type SkillsFilterOutcome,
 } from "../../src/skill-selection.ts";
 import {
+	appliedProfile,
 	detectExplicitDeclarations,
 	readProfileFlag,
+	recordAppliedProfile,
 	registerProfileFlag,
 	resolveStartupProfile,
 } from "../../src/startup-selection.ts";
@@ -69,10 +72,14 @@ import { buildStatusReport, formatStatusMarkdown } from "../../src/switching/sta
  * all native.
  *
  * Responsibilities:
+ * - load: seed `<agentDir>/profiles.json` from the shipped default catalog
+ *   when the file does not exist yet (Pi packages have no install hook), and
+ *   report a failure once at `session_start`.
  * - `session_start`: resolve the startup profile (`--profile <flag>`, else
- *   the saved selection, else `default`), then apply the runtime parts of
- *   the selection — model preset, active tools, MCP allowlist. A failed
- *   activation applies nothing and reports loudly.
+ *   the saved selection, else `default`; every start after the first
+ *   continues the selection this process already applied), then apply the
+ *   runtime parts of the selection — model preset, active tools, MCP
+ *   allowlist. A failed activation applies nothing and reports loudly.
  * - `before_agent_start`: rebuild the system prompt each turn — replace the
  *   skills section with the profile's visible set and append the profile's
  *   instructions. Unselected skills stay loaded and `/skill:`-invocable.
@@ -123,11 +130,21 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	registerProfileFlag(pi);
 	const argv = process.argv.slice(2);
 	const explicit = detectExplicitDeclarations(argv);
+	const loadAgentDir = getAgentDir();
+	// Install-time default: Pi packages have no install hook, so the first
+	// load seeds <agentDir>/profiles.json from the shipped catalog. The write
+	// is idempotent, never overwrites a user catalog, and a failure is
+	// reported at session_start instead of blocking the load.
+	let seedWarning: string | undefined;
+	try {
+		seedDefaultProfilesSync(loadAgentDir);
+	} catch (error) {
+		seedWarning = `pi-profile-switch: could not write the default profiles.json — ${error instanceof Error ? error.message : String(error)}`;
+	}
 	// pi-mcp-adapter reads its config before any session event fires (and, for
 	// eager servers, at its own load time), so the startup profile's overlay
 	// is generated here, synchronously. Pi applies CLI flag values only after
 	// extension loading, hence argv.
-	const loadAgentDir = getAgentDir();
 	const adapterInstalled = adapterPresent({
 		agentDir: loadAgentDir,
 		argv,
@@ -135,11 +152,15 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	});
 	if (adapterInstalled) {
 		const requestedConfigPath = readFlagFromArgv(argv, "mcp-config");
+		// A reload's overlay belongs to the run's current selection: the same
+		// continuation `session_start` applies right after this pass.
+		const runProfile = appliedProfile();
 		syncStartupMcpOverlay({
 			agentDir: loadAgentDir,
 			cwd: process.cwd(),
 			argv,
 			...(requestedConfigPath === undefined ? {} : { overridePath: requestedConfigPath }),
+			...(runProfile === undefined ? {} : { continuation: runProfile }),
 		});
 	}
 	let current: Activation | undefined;
@@ -243,6 +264,8 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 			overlay: options?.overlay ?? null,
 			persist: options?.persist ?? true,
 		});
+		// The run's current selection, for the reload continuation.
+		recordAppliedProfile(result.selection.name);
 		setCurrent(ctx, activationOf(result, deps.live.skills !== undefined));
 		reportWarnings(ctx, formatSelectionWarnings(result.selection));
 		return result;
@@ -461,11 +484,20 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 		}
 	}
 
-	pi.on("session_start", async (_event, ctx) => {
+	pi.on("session_start", async (event, ctx) => {
 		setCurrent(ctx, undefined);
 		filterWarningShown = false;
+		if (seedWarning !== undefined) {
+			notify(ctx, seedWarning, "warning");
+			seedWarning = undefined;
+		}
 		const agentDir = getAgentDir();
 		const projectTrusted = ctx.isProjectTrusted();
+		// Every session start after the first (reload, new, resume, fork)
+		// continues the selection this process already applied. The `--profile`
+		// flag is a startup directive: re-reading it here would silently
+		// resurrect the profile the user just left.
+		const continuation = event.reason === "startup" ? undefined : appliedProfile();
 		const requested = readProfileFlag(pi);
 		let startup;
 		try {
@@ -474,6 +506,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				cwd: ctx.cwd,
 				projectTrusted,
 				...(requested !== undefined ? { requested } : {}),
+				...(continuation !== undefined ? { continuation } : {}),
 			});
 		} catch (error) {
 			notify(ctx, error instanceof Error ? error.message : String(error), "error");
@@ -492,6 +525,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				});
 			}
 		} catch (error) {
+			recordAppliedProfile(undefined);
 			notify(ctx, error instanceof Error ? error.message : String(error), "error");
 			reportWarnings(ctx, startup.warnings);
 		}
@@ -687,7 +721,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				const reactivated = await activate(ctx, profile.name, { overlay: overlay ?? null, persist: true });
 				notify(
 					ctx,
-					`${action}d MCP server "${server}" in profile "${profile.name}" (mcp: [${result.mcp.join(", ")}])`,
+					`${action}d MCP server "${server}" in profile "${profile.name}" (mcps: [${result.mcps.join(", ")}])`,
 					"info",
 				);
 				await reloadForMcpOverlay(ctx, reactivated.selection);

@@ -116,6 +116,18 @@ async function waitForProbe(
 	}
 }
 
+/** Waits until a probe has recorded `count` `session_start` events; a runtime
+ *  reload fires one, so this is the deterministic "reload finished" signal. */
+async function waitForSessionStarts(count: number, timeoutMs = 20_000): Promise<void> {
+	const deadline = Date.now() + timeoutMs;
+	for (;;) {
+		const starts = (await readProbe()).filter((entry) => entry.event === "session_start").length;
+		if (starts >= count) return;
+		if (Date.now() > deadline) throw new Error(`timeout waiting for ${count} session starts`);
+		await new Promise((resolve) => setTimeout(resolve, 100));
+	}
+}
+
 /** The RPC child must not inherit a launcher's session-dir override from the
  *  developer's environment; the test simulates a native shell. */
 function childEnv(): NodeJS.ProcessEnv {
@@ -166,7 +178,132 @@ async function writeState(activeProfile: string): Promise<void> {
 	await writeFile(path.join(fixture.agentDir, "pi-profile-state.json"), JSON.stringify({ activeProfile }));
 }
 
+describe("saved-selection scope", () => {
+	it(
+		"keeps the in-session profile across the MCP reload it triggers",
+		{ timeout: 90_000 },
+		async () => {
+			// `implement` disables the one discovered server, so the switch
+			// changes the overlay and rebuilds the runtime. The settings entry
+			// makes the extension treat the adapter as installed at load time
+			// (the same gate the real package passes).
+			await writeCatalog({ review: {}, implement: { mcps: [] } });
+			await writeFile(
+				path.join(fixture.agentDir, "settings.json"),
+				JSON.stringify({ packages: ["npm:pi-mcp-adapter"] }),
+			);
+			const probe = await writeProbe(
+				"reload-probe",
+				`pi.events.on("pi-mcp-adapter:runtime-snapshot:v1", (request: unknown) => {
+	(request as { result: unknown }).result = { ok: false, error: new Error("unknown server") };
+});
+pi.on("session_start", async () => record({ event: "session_start" }));`,
+			);
+			// Start with the flag: a reload that re-read it would resurrect
+			// `review` and undo the switch.
+			const rpc = await start(["-e", EXTENSION, "-e", probe, "--profile", "review"], { model: false });
+			try {
+				await waitForSessionStarts(1);
+				await rpc.send({ type: "prompt", message: "/profile use implement" });
+				await waitForNotify(rpc, "reloading runtime");
+				await waitForSessionStarts(2);
+
+				await rpc.send({ type: "prompt", message: "/profile status" });
+				const status = await waitForCustomMessage(rpc, "pi-profile-switch");
+
+				expect(status).toContain("### profile: implement (global)");
+				const badges = rpc.messages.filter(
+					(entry) =>
+						(entry as { method?: string }).method === "setStatus" &&
+						(entry as { statusKey?: string }).statusKey === "active-profile",
+				);
+				expect(String((badges.at(-1) as { statusText?: string }).statusText)).toContain("implement");
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"restores the built-in default from a project profile switch",
+		{ timeout: 90_000 },
+		async () => {
+			// A project profile is saved into the project state; switching to
+			// the built-in default must clear it, or the stale project entry
+			// shadows the choice on the next startup.
+			await writeCatalog({ global: {} });
+			await writeFile(
+				path.join(fixture.cwd, ".pi", "profiles.json"),
+				JSON.stringify({ schemaVersion: 1, profiles: { local: { tools: ["read"] } } }),
+			);
+
+			const first = await start(["-e", EXTENSION], { model: false });
+			try {
+				await first.send({ type: "prompt", message: "/profile use local" });
+				await waitForNotify(first, "profile active: local");
+				await first.send({ type: "prompt", message: "/profile use default" });
+				await waitForNotify(first, "profile active: default");
+			} finally {
+				await first.close();
+			}
+
+			const projectState = JSON.parse(
+				await readFile(path.join(fixture.cwd, ".pi", "pi-profile-state.json"), "utf8"),
+			) as { activeProfile?: string };
+			expect(projectState.activeProfile).toBeUndefined();
+
+			const second = await start(["-e", EXTENSION], { model: false });
+			try {
+				await second.send({ type: "prompt", message: "/profile status" });
+				const status = await waitForCustomMessage(second, "pi-profile-switch");
+				expect(status).toContain("### profile: default (builtin)");
+			} finally {
+				await second.close();
+			}
+		},
+	);
+});
+
 describe("native Pi behavior with the extension loaded", () => {
+	it(
+		"seeds the default catalog on the first load and activates the seeded profile on restart",
+		{ timeout: 90_000 },
+		async () => {
+			// Fresh agent dir: no profiles.json yet. `get_commands` answers only
+			// after the extension has loaded, so it doubles as the readiness gate.
+			const first = await start(["-e", EXTENSION], { model: false });
+			try {
+				await first.commandNames();
+			} finally {
+				await first.close();
+			}
+
+			const seeded = JSON.parse(await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8")) as {
+				profiles: Record<string, unknown>;
+			};
+			expect(Object.keys(seeded.profiles)).toEqual(["read-only"]);
+
+			// The seeded profile is a real profile: select it, restart, and let
+			// Pi's own state store prove it came from the seeded file.
+			const second = await start(["-e", EXTENSION], { model: false });
+			try {
+				await second.send({ type: "prompt", message: "/profile use read-only" });
+				await waitForNotify(second, "profile active: read-only");
+			} finally {
+				await second.close();
+			}
+
+			const third = await start(["-e", EXTENSION], { model: false });
+			try {
+				await third.send({ type: "prompt", message: "/profile status" });
+				const status = await waitForCustomMessage(third, "pi-profile-switch");
+				expect(status).toContain("### profile: read-only (global)");
+			} finally {
+				await third.close();
+			}
+		},
+	);
+
 	it(
 		"keeps the agent dir and session layout native, and reads third-party config and context files",
 		{ timeout: 90_000 },
@@ -316,7 +453,7 @@ describe("native Pi behavior with the extension loaded", () => {
 		async () => {
 			await addGlobalSkill(fixture, "alpha-skill");
 			await addGlobalSkill(fixture, "beta-skill");
-			await writeCatalog({ review: { skills: ["alpha-skill"], mcp: ["atlassian"] } });
+			await writeCatalog({ review: { skills: ["alpha-skill"], mcps: ["atlassian"] } });
 			await writeState("review");
 			const adapter = await writeProbe("adapter-probe", adapterProbeBody());
 			const rpc = await start(["-e", EXTENSION, "-e", adapter], { model: false });
@@ -339,7 +476,7 @@ describe("native Pi behavior with the extension loaded", () => {
 		"publishes the MCP allowlist to an installed adapter",
 		{ timeout: 90_000 },
 		async () => {
-			await writeCatalog({ review: { mcp: ["atlassian"] } });
+			await writeCatalog({ review: { mcps: ["atlassian"] } });
 			await writeState("review");
 			const adapter = await writeProbe("adapter-probe", adapterProbeBody());
 			const rpc = await start(["-e", EXTENSION, "-e", adapter], { model: false });
@@ -361,7 +498,7 @@ describe("native Pi behavior with the extension loaded", () => {
 		"fails a profile whose MCP intent cannot be satisfied, without applying anything",
 		{ timeout: 90_000 },
 		async () => {
-			await writeCatalog({ review: { tools: ["read"], mcp: ["ghost"] } });
+			await writeCatalog({ review: { tools: ["read"], mcps: ["ghost"] } });
 			await writeState("review");
 			const adapter = await writeProbe("adapter-probe", adapterProbeBody());
 			const rpc = await start(["-e", EXTENSION, "-e", adapter], { model: false });
