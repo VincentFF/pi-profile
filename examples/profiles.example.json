@@ -19,7 +19,7 @@
         "code-review",
         "git-*"
       ],
-      "mcp": [
+      "mcps": [
         "github"
       ],
       "tools": [
@@ -56,7 +56,7 @@
         "git-commit",
         "test-*"
       ],
-      "mcp": [
+      "mcps": [
         "github"
       ],
       "tools": [

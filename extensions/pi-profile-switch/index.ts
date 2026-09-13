@@ -12,6 +12,7 @@ import { probeAdapterPresence } from "../../src/mcp-coordination.ts";
 import { readSessionChoices } from "../../src/model-selection.ts";
 import { buildProfileBadge, PROFILE_STATUS_KEY, renderProfileBadge } from "../../src/profile-badge.ts";
 import type { ProfileDefinition } from "../../src/profile-catalog.ts";
+import { seedDefaultProfilesSync } from "../../src/default-profiles.ts";
 import {
 	formatSelectionWarnings,
 	formatSkillWarnings,
@@ -69,6 +70,9 @@ import { buildStatusReport, formatStatusMarkdown } from "../../src/switching/sta
  * all native.
  *
  * Responsibilities:
+ * - load: seed `<agentDir>/profiles.json` from the shipped default catalog
+ *   when the file does not exist yet (Pi packages have no install hook), and
+ *   report a failure once at `session_start`.
  * - `session_start`: resolve the startup profile (`--profile <flag>`, else
  *   the saved selection, else `default`), then apply the runtime parts of
  *   the selection — model preset, active tools, MCP allowlist. A failed
@@ -123,11 +127,21 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	registerProfileFlag(pi);
 	const argv = process.argv.slice(2);
 	const explicit = detectExplicitDeclarations(argv);
+	const loadAgentDir = getAgentDir();
+	// Install-time default: Pi packages have no install hook, so the first
+	// load seeds <agentDir>/profiles.json from the shipped catalog. The write
+	// is idempotent, never overwrites a user catalog, and a failure is
+	// reported at session_start instead of blocking the load.
+	let seedWarning: string | undefined;
+	try {
+		seedDefaultProfilesSync(loadAgentDir);
+	} catch (error) {
+		seedWarning = `pi-profile-switch: could not write the default profiles.json — ${error instanceof Error ? error.message : String(error)}`;
+	}
 	// pi-mcp-adapter reads its config before any session event fires (and, for
 	// eager servers, at its own load time), so the startup profile's overlay
 	// is generated here, synchronously. Pi applies CLI flag values only after
 	// extension loading, hence argv.
-	const loadAgentDir = getAgentDir();
 	const adapterInstalled = adapterPresent({
 		agentDir: loadAgentDir,
 		argv,
@@ -464,6 +478,10 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	pi.on("session_start", async (_event, ctx) => {
 		setCurrent(ctx, undefined);
 		filterWarningShown = false;
+		if (seedWarning !== undefined) {
+			notify(ctx, seedWarning, "warning");
+			seedWarning = undefined;
+		}
 		const agentDir = getAgentDir();
 		const projectTrusted = ctx.isProjectTrusted();
 		const requested = readProfileFlag(pi);
@@ -687,7 +705,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				const reactivated = await activate(ctx, profile.name, { overlay: overlay ?? null, persist: true });
 				notify(
 					ctx,
-					`${action}d MCP server "${server}" in profile "${profile.name}" (mcp: [${result.mcp.join(", ")}])`,
+					`${action}d MCP server "${server}" in profile "${profile.name}" (mcps: [${result.mcps.join(", ")}])`,
 					"info",
 				);
 				await reloadForMcpOverlay(ctx, reactivated.selection);

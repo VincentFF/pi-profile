@@ -6,7 +6,7 @@
 
 随包提供一个 `read-only` 预设覆盖「读代码 + 报告」的工作流；其余工作流由你自己定义——profile 可以收窄工具集、隐藏 skill、固定模型或附加指令。
 
-`pi-profile-switch` 是普通 Pi package（ADR-0007）：像其他扩展一样安装，不改动 Pi 的配置目录，session、packages、项目信任和其他扩展全部保持原生。
+`pi-profile-switch` 是普通 Pi package（ADR-0007）：像其他扩展一样安装，配置目录始终是 Pi 自己的那一份，session、packages、项目信任和其他扩展全部保持原生。它只在配置目录里新增一个文件，就是下面这个默认 catalog。
 
 ## 安装
 
@@ -15,6 +15,8 @@ pi install npm:pi-profile-switch
 ```
 
 依赖 [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)（作为 peer dependency 自动安装）。
+
+Pi package 没有安装钩子，因此默认 catalog 在扩展首次加载时写入（任何模式都会执行，包括 `--mode rpc`）：`~/.pi/agent/profiles.json` 不存在时，用随包的 `read-only` profile 创建它。已存在的文件不会被读取、改写或备份——删掉它即可拿回默认值。
 
 ## 快速上手
 
@@ -29,7 +31,9 @@ pi --profile read-only
 pi --profile default
 ```
 
-用 `/profile create` 创建 profile，写入 `~/.pi/agent/profiles.json`（全局）或 `<项目>/.pi/profiles.json`（项目级，仅限已信任项目）。向导提供随包的 `read-only` 预设——只用 Pi 内建工具，不假设任何 skill、MCP server 或模型——也可以从空定义开始。
+新安装已经带有一个 `read-only` profile，用 `pi --profile read-only` 或 `/profile use read-only` 激活。
+
+用 `/profile create` 创建更多 profile，写入 `~/.pi/agent/profiles.json`（全局）或 `<项目>/.pi/profiles.json`（项目级，仅限已信任项目）。向导提供随包的 `read-only` 预设——只用 Pi 内建工具，不假设任何 skill、MCP server 或模型——也可以从空定义开始。
 
 预设只被复制一次：它不被跟踪，包升级不会改动你已经创建的 profile。Profile 只**引用**资源，从不复制资源。[`examples/profiles.example.json`](examples/profiles.example.json) 是覆盖全部字段的完整 catalog，示例中的资源名请替换成你本机已有的名字。
 
@@ -42,7 +46,7 @@ pi --profile default
 | `instructions` | 每个 turn 追加到 system prompt 末尾 |
 | `model` | 会话启动的模型预设；显式 `--model`/`--thinking` 或 session 历史中记录的模型优先 |
 | `skills` | 模型在 prompt skills 列表中看到的内容；所有已安装 skill 仍保持加载，用户可用 `/skill:name` 手动调用 |
-| `mcp` | 本次会话暴露哪些 MCP server：白名单写入 adapter 自己的配置（`~/.pi/agent/mcp.json`），其余 server 一律标为 disabled。你原本放在该文件里的 server 会迁移到 `mcp.user.json`；连接参数只在你自己的配置里，从不进入 profile |
+| `mcps` | 本次会话暴露哪些 MCP server：白名单写入 adapter 自己的配置（`~/.pi/agent/mcp.json`），其余 server 一律标为 disabled。你原本放在该文件里的 server 会迁移到 `mcp.user.json`；连接参数只在你自己的配置里，从不进入 profile。旧键 `mcp` 仍可读取，下次保存 profile 时变为 `mcps` |
 | `tools` | 活动工具集：声明的名字/glob 成为活动集合；之后才注册的工具（MCP、扩展）在出现时补上 |
 
 未声明的字段保持 Pi 原生行为，`default` 什么都不声明。

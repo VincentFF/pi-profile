@@ -33,7 +33,7 @@ const reviewProfile = {
 	label: "Review",
 	description: "Code review workflow",
 	skills: ["code-review", "git-commit"],
-	mcp: ["atlassian"],
+	mcps: ["atlassian"],
 	tools: ["read", "grep"],
 	model: { provider: "openai", id: "gpt-5.4", thinkingLevel: "high" },
 	instructions: "Be picky.",
@@ -109,6 +109,7 @@ describe("ProfileCatalog (global catalog)", () => {
 });
 
 describe("ProfileCatalog unknown-field tolerance", () => {
+
 	it("drops a profile's extensions field silently", async () => {
 		await writeGlobal({
 			schemaVersion: 1,
@@ -129,6 +130,33 @@ describe("ProfileCatalog unknown-field tolerance", () => {
 		const catalog = await ProfileCatalog.load(fixture.agentDir);
 
 		expect(catalog.resolve("review")?.definition).toEqual({ skills: ["git-commit"] });
+	});
+});
+
+describe("ProfileCatalog legacy mcp alias", () => {
+	it("reads the legacy \"mcp\" key as the \"mcps\" declaration", async () => {
+		await writeGlobal({ schemaVersion: 1, profiles: { review: { mcp: ["atlassian"] } } });
+
+		const catalog = await ProfileCatalog.load(fixture.agentDir);
+
+		expect(catalog.resolve("review")?.definition).toEqual({ mcps: ["atlassian"] });
+	});
+
+	it("lets the canonical \"mcps\" key win when a file carries both", async () => {
+		await writeGlobal({
+			schemaVersion: 1,
+			profiles: { review: { mcps: ["canonical"], mcp: ["legacy"] } },
+		});
+
+		const catalog = await ProfileCatalog.load(fixture.agentDir);
+
+		expect(catalog.resolve("review")?.definition).toEqual({ mcps: ["canonical"] });
+	});
+
+	it("still fails loudly on a wrong-typed alias value", async () => {
+		await writeGlobal({ schemaVersion: 1, profiles: { review: { mcp: "atlassian" } } });
+
+		await expect(ProfileCatalog.load(fixture.agentDir)).rejects.toThrow(/"mcp" must be an array of strings/);
 	});
 });
 

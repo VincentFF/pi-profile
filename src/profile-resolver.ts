@@ -5,7 +5,7 @@
  * ADR-0007 semantics:
  * - `skills` resolves to a visibility filter (see skill-selection.ts), not
  *   to loaded resources: every skill stays loaded and user-invocable.
- * - `mcp` resolves to a runtime server allowlist; a declared MCP intent that
+ * - `mcps` resolves to a runtime server allowlist; a declared MCP intent that
  *   cannot be satisfied (adapter absent, literal server unknown) fails the
  *   activation before anything is applied.
  * - `tools` resolves to an active tool set; literals the live registry does
@@ -136,7 +136,7 @@ function resolveMcp(
 	if (!live.adapterPresent) {
 		throw new SelectionError(
 			`profile "${profileName}" declares MCP servers but pi-mcp-adapter is not active in this session — ` +
-				`install the adapter or remove the "mcp" declaration`,
+				`install the adapter or remove the "mcps" declaration`,
 		);
 	}
 	const selected: string[] = [];
@@ -201,7 +201,7 @@ export function resolveSelection(input: {
 	const definition = profile.definition;
 
 	const skills = resolveSkills(definition.skills, overlay?.disabledSkills ?? [], live.skills);
-	const mcp = resolveMcp(definition.mcp, overlay?.disabledMcp ?? [], live.mcp, profile.name);
+	const mcp = resolveMcp(definition.mcps, overlay?.disabledMcp ?? [], live.mcp, profile.name);
 	const tools = input.suppressTools === true
 		? { pendingTools: [], warning: { toolsUnmatched: [] } }
 		: resolveTools(overlay?.tools ?? definition.tools, live.toolNames);

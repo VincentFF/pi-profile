@@ -16,7 +16,7 @@ beforeEach(async () => {
 		JSON.stringify({
 			schemaVersion: 1,
 			profiles: {
-				review: { skills: ["git-commit"], tools: ["read"], mcp: ["atlassian"] },
+				review: { skills: ["git-commit"], tools: ["read"], mcps: ["atlassian"] },
 				plain: {},
 				picky: { model: { provider: "openai", id: "gpt" } },
 			},

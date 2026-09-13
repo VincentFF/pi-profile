@@ -87,10 +87,10 @@ describe("resolveSelection: skills", () => {
 	});
 });
 
-describe("resolveSelection: mcp", () => {
+describe("resolveSelection: mcps", () => {
 	it("resolves declared literal and glob server names", () => {
 		const selection = resolveSelection({
-			profile: profile({ mcp: ["atlassian", "git*"] }),
+			profile: profile({ mcps: ["atlassian", "git*"] }),
 			live: live(),
 		});
 
@@ -100,7 +100,7 @@ describe("resolveSelection: mcp", () => {
 	it("fails the activation when the adapter is not active", () => {
 		expect(() =>
 			resolveSelection({
-				profile: profile({ mcp: ["atlassian"] }),
+				profile: profile({ mcps: ["atlassian"] }),
 				live: live({ mcp: { adapterPresent: false, servers: [] } }),
 			}),
 		).toThrow(SelectionError);
@@ -108,7 +108,7 @@ describe("resolveSelection: mcp", () => {
 
 	it("fails the activation for a literal server the adapter does not know", () => {
 		expect(() =>
-			resolveSelection({ profile: profile({ mcp: ["ghost"] }), live: live() }),
+			resolveSelection({ profile: profile({ mcps: ["ghost"] }), live: live() }),
 		).toThrow(/unknown MCP server "ghost" — adapter discovered: \[atlassian, github\]/);
 	});
 
@@ -130,7 +130,7 @@ describe("resolveSelection: mcp", () => {
 
 	it("applies the overlay narrowing to declared servers as well", () => {
 		const selection = resolveSelection({
-			profile: profile({ mcp: ["atlassian", "github"] }),
+			profile: profile({ mcps: ["atlassian", "github"] }),
 			overlay: { disabledMcp: ["atlassian"] },
 			live: live(),
 		});
@@ -139,7 +139,7 @@ describe("resolveSelection: mcp", () => {
 	});
 
 	it("records zero-match mcp globs as unmatched", () => {
-		const selection = resolveSelection({ profile: profile({ mcp: ["zzz-*"] }), live: live() });
+		const selection = resolveSelection({ profile: profile({ mcps: ["zzz-*"] }), live: live() });
 
 		expect(selection.mcp).toEqual([]);
 		expect(selection.warnings.mcpUnmatched).toEqual(["zzz-*"]);

@@ -44,7 +44,7 @@ describe("profile presets", () => {
 	it("assumes no installed skills, MCP servers, or credentials", () => {
 		for (const preset of PROFILE_PRESETS) {
 			expect(preset.definition.skills, preset.name).toBeUndefined();
-			expect(preset.definition.mcp, preset.name).toBeUndefined();
+			expect(preset.definition.mcps, preset.name).toBeUndefined();
 			expect(preset.definition.model, preset.name).toBeUndefined();
 			expect(Object.keys(preset.definition as Record<string, unknown>)).not.toContain("extensions");
 		}
@@ -122,7 +122,7 @@ function scriptedUi(answers: { selects?: string[]; inputs?: string[] }): Profile
 
 const preset = PROFILE_PRESETS[0];
 const presetRow = `${preset.name} — ${preset.definition.description}`;
-/** label, description, skills, mcp, tools, instructions, model. */
+/** label, description, skills, mcps, tools, instructions, model. */
 const KEEP = ["", "", "", "", "", "", ""];
 
 describe("create wizard presets", () => {

@@ -44,12 +44,12 @@
           },
           "description": "Skill names or globs. Controls what the model sees in the system prompt's skills section; every loaded skill stays callable by the user through /skill:name."
         },
-        "mcp": {
+        "mcps": {
           "type": "array",
           "items": {
             "type": "string"
           },
-          "description": "MCP server names or globs, discovered by pi-mcp-adapter configuration. Connection details stay in adapter-managed config."
+          "description": "MCP server names or globs, discovered by pi-mcp-adapter configuration. Connection details stay in adapter-managed config. The legacy key \"mcp\" is still accepted on read and migrates to \"mcps\" on the next save."
         },
         "tools": {
           "type": "array",

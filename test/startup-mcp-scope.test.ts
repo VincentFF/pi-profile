@@ -112,7 +112,7 @@ describe("resolveProjectTrustedSync", () => {
 
 describe("syncStartupMcpOverlay", () => {
 	it("adopts a hand-written Pi-global file into the sidecar and generates the overlay", async () => {
-		await writeCatalog({ review: { mcp: ["github"] } });
+		await writeCatalog({ review: { mcps: ["github"] } });
 		await writeGlobalMcp({ github: { url: "https://x" }, linear: { command: "mcp-linear" } }, { settings: { toolPrefix: "server" } });
 
 		const result = syncStartupMcpOverlay(loadPass({ argv: ["--profile", "review"] }));
@@ -130,14 +130,14 @@ describe("syncStartupMcpOverlay", () => {
 	});
 
 	it("re-reads the sidecar on the next pass instead of the generated file", async () => {
-		await writeCatalog({ review: { mcp: ["github"] } });
+		await writeCatalog({ review: { mcps: ["github"] } });
 		await writeState("review");
 		await writeGlobalMcp({ github: {}, linear: {} });
 		syncStartupMcpOverlay(loadPass());
 
 		// A second pass with a different profile starts from the sidecar, so the
 		// stubs written into the slot never feed back as definitions.
-		await writeCatalog({ review: { mcp: ["linear"] } });
+		await writeCatalog({ review: { mcps: ["linear"] } });
 		expect(syncStartupMcpOverlay(loadPass()).changed).toBe(true);
 		expect(await readOverlay()).toEqual({
 			...marker,
@@ -146,7 +146,7 @@ describe("syncStartupMcpOverlay", () => {
 	});
 
 	it("uses the saved selection when no flag is given", async () => {
-		await writeCatalog({ review: { mcp: ["github"] } });
+		await writeCatalog({ review: { mcps: ["github"] } });
 		await writeState("review");
 		await writeGlobalMcp({ github: {}, linear: {} });
 
@@ -165,7 +165,7 @@ describe("syncStartupMcpOverlay", () => {
 	});
 
 	it("disables every discovered server for an empty allowlist", async () => {
-		await writeCatalog({ review: { mcp: [] } });
+		await writeCatalog({ review: { mcps: [] } });
 		await writeState("review");
 		await writeGlobalMcp({ github: {} });
 		await mkdir(path.join(fixture.root, ".agents"), { recursive: true });
@@ -180,7 +180,7 @@ describe("syncStartupMcpOverlay", () => {
 	});
 
 	it("ignores project files when the project is not trusted", async () => {
-		await writeCatalog({ review: { mcp: ["github"] } });
+		await writeCatalog({ review: { mcps: ["github"] } });
 		await writeState("review");
 		await writeGlobalMcp({ github: {} });
 		await writeFile(path.join(fixture.cwd, ".pi", "mcp.json"), JSON.stringify({ mcpServers: { project: {} } }));
@@ -191,7 +191,7 @@ describe("syncStartupMcpOverlay", () => {
 	});
 
 	it("filters nothing when the profile cannot be resolved", async () => {
-		await writeCatalog({ review: { mcp: [] } });
+		await writeCatalog({ review: { mcps: [] } });
 		await writeState("ghost");
 		await writeGlobalMcp({ github: {} });
 
@@ -202,7 +202,7 @@ describe("syncStartupMcpOverlay", () => {
 	});
 
 	it("never touches a foreign --mcp-config", async () => {
-		await writeCatalog({ review: { mcp: [] } });
+		await writeCatalog({ review: { mcps: [] } });
 		await writeState("review");
 		await writeGlobalMcp({ github: {} });
 		const foreign = path.join(fixture.root, "own.json");
@@ -217,7 +217,7 @@ describe("syncStartupMcpOverlay", () => {
 	});
 
 	it("reports an unreadable slot instead of overwriting it", async () => {
-		await writeCatalog({ review: { mcp: [] } });
+		await writeCatalog({ review: { mcps: [] } });
 		await writeState("review");
 		await writeFile(path.join(fixture.agentDir, "mcp.json"), "{ not json");
 
@@ -229,7 +229,7 @@ describe("syncStartupMcpOverlay", () => {
 	});
 
 	it("is idempotent: an unchanged selection writes nothing", async () => {
-		await writeCatalog({ review: { mcp: ["github"] } });
+		await writeCatalog({ review: { mcps: ["github"] } });
 		await writeState("review");
 		await writeGlobalMcp({ github: {}, linear: {} });
 

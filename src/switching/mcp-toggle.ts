@@ -1,7 +1,7 @@
 /**
  * McpToggle: persistent, profile-scoped `/mcp enable|disable` (ticket 10).
  *
- * The profile's `mcp` array in its OWNING catalog is the profile-scoped
+ * The profile's `mcps` array in its OWNING catalog is the profile-scoped
  * state store (ticket 04 established that pi-mcp-adapter@2.33.0 has no
  * allowlist/profile-state API — ADR-0002's assumed store does not exist;
  * pi-profile-switch owns the contract). The runtime effect is the caller's
@@ -20,7 +20,13 @@
  */
 
 import { discoverAdapterServerNames } from "../mcp-config.ts";
-import { CatalogError, DEFAULT_PROFILE_NAME, type ProfileDefinition, type ProfileSource } from "../profile-catalog.ts";
+import {
+	CatalogError,
+	DEFAULT_PROFILE_NAME,
+	LEGACY_FIELD_ALIASES,
+	type ProfileDefinition,
+	type ProfileSource,
+} from "../profile-catalog.ts";
 import { catalogStore, readCatalogScope, type CatalogScope } from "./profile-crud.ts";
 
 export async function setMcpServerEnabled(
@@ -32,7 +38,7 @@ export async function setMcpServerEnabled(
 	},
 	server: string,
 	enabled: boolean,
-): Promise<{ mcp: string[]; changed: boolean }> {
+): Promise<{ mcps: string[]; changed: boolean }> {
 	const { name, source } = input.profile;
 	if (name === DEFAULT_PROFILE_NAME || source === "builtin") {
 		throw new CatalogError(
@@ -60,16 +66,18 @@ export async function setMcpServerEnabled(
 		throw new CatalogError(`profile "${input.profile.name}" not found in the ${scope} catalog`);
 	}
 
-	const current = definition.mcp ?? [];
+	const current = definition.mcps ?? [];
 	if (enabled === current.includes(server)) {
-		return { mcp: current, changed: false }; // already in the requested state
+		return { mcps: current, changed: false }; // already in the requested state
 	}
 	const next = enabled ? [...current, server] : current.filter((name) => name !== server);
 	// Drop the key entirely when empty (exactOptionalPropertyTypes; a
-	// written `mcp: undefined` would also misrepresent the definition).
+	// written `mcps: undefined` would also misrepresent the definition) and
+	// drop the legacy alias, so one save migrates the file to `mcps`.
 	const rest = { ...definition };
-	delete rest.mcp;
-	const updated: ProfileDefinition = next.length > 0 ? { ...rest, mcp: next } : rest;
+	delete rest.mcps;
+	const updated: ProfileDefinition = next.length > 0 ? { ...rest, mcps: next } : rest;
+	delete (updated as Record<string, unknown>)[LEGACY_FIELD_ALIASES.mcps];
 	await catalogStore(input, scope).upsert(input.profile.name, updated);
-	return { mcp: next, changed: true };
+	return { mcps: next, changed: true };
 }

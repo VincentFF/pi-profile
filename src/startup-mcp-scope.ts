@@ -228,7 +228,7 @@ function readActiveProfile(statePath: string): string | undefined {
 	return typeof name === "string" && name.length > 0 ? name : undefined;
 }
 
-/** The profile's raw `mcp` references; `"unknown"` when the profile or its
+/** The profile's raw `mcps` references; `"unknown"` when the profile or its
  *  catalog cannot be read (caller falls back to "no filtering"). */
 function readProfileMcpRefsSync(
 	input: McpOverlaySyncInput & { name: string; trust: boolean | undefined },
@@ -241,7 +241,7 @@ function readProfileMcpRefsSync(
 		: new Map<string, ProfileDefinition>();
 	if (global === "error" || project === "error") return "unknown";
 	const definition = project.get(input.name) ?? global.get(input.name);
-	return definition === undefined ? "unknown" : definition.mcp;
+	return definition === undefined ? "unknown" : definition.mcps;
 }
 
 function readCatalogSync(filePath: string): Map<string, ProfileDefinition> | "error" {

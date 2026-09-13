@@ -168,6 +168,45 @@ async function writeState(activeProfile: string): Promise<void> {
 
 describe("native Pi behavior with the extension loaded", () => {
 	it(
+		"seeds the default catalog on the first load and activates the seeded profile on restart",
+		{ timeout: 90_000 },
+		async () => {
+			// Fresh agent dir: no profiles.json yet. `get_commands` answers only
+			// after the extension has loaded, so it doubles as the readiness gate.
+			const first = await start(["-e", EXTENSION], { model: false });
+			try {
+				await first.commandNames();
+			} finally {
+				await first.close();
+			}
+
+			const seeded = JSON.parse(await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8")) as {
+				profiles: Record<string, unknown>;
+			};
+			expect(Object.keys(seeded.profiles)).toEqual(["read-only"]);
+
+			// The seeded profile is a real profile: select it, restart, and let
+			// Pi's own state store prove it came from the seeded file.
+			const second = await start(["-e", EXTENSION], { model: false });
+			try {
+				await second.send({ type: "prompt", message: "/profile use read-only" });
+				await waitForNotify(second, "profile active: read-only");
+			} finally {
+				await second.close();
+			}
+
+			const third = await start(["-e", EXTENSION], { model: false });
+			try {
+				await third.send({ type: "prompt", message: "/profile status" });
+				const status = await waitForCustomMessage(third, "pi-profile-switch");
+				expect(status).toContain("### profile: read-only (global)");
+			} finally {
+				await third.close();
+			}
+		},
+	);
+
+	it(
 		"keeps the agent dir and session layout native, and reads third-party config and context files",
 		{ timeout: 90_000 },
 		async () => {
@@ -316,7 +355,7 @@ describe("native Pi behavior with the extension loaded", () => {
 		async () => {
 			await addGlobalSkill(fixture, "alpha-skill");
 			await addGlobalSkill(fixture, "beta-skill");
-			await writeCatalog({ review: { skills: ["alpha-skill"], mcp: ["atlassian"] } });
+			await writeCatalog({ review: { skills: ["alpha-skill"], mcps: ["atlassian"] } });
 			await writeState("review");
 			const adapter = await writeProbe("adapter-probe", adapterProbeBody());
 			const rpc = await start(["-e", EXTENSION, "-e", adapter], { model: false });
@@ -339,7 +378,7 @@ describe("native Pi behavior with the extension loaded", () => {
 		"publishes the MCP allowlist to an installed adapter",
 		{ timeout: 90_000 },
 		async () => {
-			await writeCatalog({ review: { mcp: ["atlassian"] } });
+			await writeCatalog({ review: { mcps: ["atlassian"] } });
 			await writeState("review");
 			const adapter = await writeProbe("adapter-probe", adapterProbeBody());
 			const rpc = await start(["-e", EXTENSION, "-e", adapter], { model: false });
@@ -361,7 +400,7 @@ describe("native Pi behavior with the extension loaded", () => {
 		"fails a profile whose MCP intent cannot be satisfied, without applying anything",
 		{ timeout: 90_000 },
 		async () => {
-			await writeCatalog({ review: { tools: ["read"], mcp: ["ghost"] } });
+			await writeCatalog({ review: { tools: ["read"], mcps: ["ghost"] } });
 			await writeState("review");
 			const adapter = await writeProbe("adapter-probe", adapterProbeBody());
 			const rpc = await start(["-e", EXTENSION, "-e", adapter], { model: false });

@@ -75,7 +75,7 @@ async function captureDefinition(
 
 	const listFields = [
 		["skills", "skills (comma-separated names or globs, empty = all visible)"],
-		["mcp", "mcp servers (names or globs, empty = none)"],
+		["mcps", "MCP servers (names or globs, empty = none)"],
 		["tools", "tools (names or globs, empty = pi default set)"],
 	] as const;
 	for (const [field, prompt] of listFields) {
