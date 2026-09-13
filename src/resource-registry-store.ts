@@ -17,12 +17,14 @@ import path from "node:path";
 
 import { isRecord, readJsonFile } from "./json-file.ts";
 import { PROFILE_SCHEMA_VERSION } from "./profile-catalog.ts";
-import { parseResourceEntry, RegistryError, type ResourceEntry } from "./resource-registry.ts";
+import { parseResourceEntry, RegistryError, type RawResourceEntry } from "./resource-registry.ts";
 
-/** The serializable entry shape accepted by the wizard (kind is fixed). */
+/** The serializable entry shape accepted by the wizard (kind is fixed).
+ *  `entry` may be omitted when the ID matches a discovered extension — the
+ *  discovered entry is inherited at load time (ADR-0006). */
 export interface RegistryEntryInput {
 	id: string;
-	entry: string;
+	entry?: string;
 	dependsOn?: string[];
 	alwaysOn?: boolean;
 }
@@ -36,7 +38,7 @@ export class ResourceRegistryStore {
 
 	/** Raw resources map: missing file → empty; malformed → RegistryError
 	 *  (registry errors never pass silently, even on the write path). */
-	async readEntries(): Promise<Map<string, ResourceEntry>> {
+	async readEntries(): Promise<Map<string, RawResourceEntry>> {
 		const result = await readJsonFile(this.#filePath);
 		if (!result.ok) {
 			if (result.reason === "missing") return new Map();
@@ -55,7 +57,7 @@ export class ResourceRegistryStore {
 		}
 		// Reuse the registry's own parser: the store can never hold an entry
 		// the reader would reject.
-		const entries = new Map<string, ResourceEntry>();
+		const entries = new Map<string, RawResourceEntry>();
 		for (const [id, raw] of Object.entries(result.value.resources)) {
 			entries.set(id, parseResourceEntry(id, raw));
 		}
@@ -63,12 +65,12 @@ export class ResourceRegistryStore {
 	}
 
 	/** Overwrites the file with the given entries (last write wins). */
-	async writeEntries(entries: ReadonlyMap<string, ResourceEntry>): Promise<void> {
+	async writeEntries(entries: ReadonlyMap<string, RawResourceEntry>): Promise<void> {
 		const resources: Record<string, unknown> = {};
 		for (const [id, entry] of [...entries.entries()].sort(([a], [b]) => a.localeCompare(b))) {
 			resources[id] = {
 				kind: "extension",
-				entry: entry.entry,
+				...(entry.entry !== undefined ? { entry: entry.entry } : {}),
 				...(entry.dependsOn.length > 0 ? { dependsOn: entry.dependsOn } : {}),
 				...(entry.alwaysOn ? { alwaysOn: true } : {}),
 			};
@@ -85,8 +87,8 @@ export class ResourceRegistryStore {
 		if (input.id.trim().length === 0) {
 			throw new RegistryError(`resource id must be non-empty`);
 		}
-		if (input.entry.trim().length === 0) {
-			throw new RegistryError(`resource "${input.id}": "entry" must be a non-empty string`);
+		if (input.entry !== undefined && input.entry.trim().length === 0) {
+			throw new RegistryError(`resource "${input.id}": "entry" must be a non-empty string when present`);
 		}
 		if (input.dependsOn?.some((dep) => dep.trim().length === 0)) {
 			throw new RegistryError(`resource "${input.id}": "dependsOn" entries must be non-empty strings`);
@@ -95,7 +97,7 @@ export class ResourceRegistryStore {
 		entries.set(input.id, {
 			id: input.id,
 			kind: "extension",
-			entry: input.entry,
+			...(input.entry !== undefined ? { entry: input.entry } : {}),
 			dependsOn: input.dependsOn ?? [],
 			alwaysOn: input.alwaysOn ?? false,
 		});

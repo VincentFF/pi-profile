@@ -4,8 +4,12 @@
  *
  * Rules:
  * - Glob references (`*`, `?`) expand against the full registry at every
- *   resolution; zero matches is fine (new matches join on the next start).
+ *   resolution; zero matches is fine (new matches join on the next start) and
+ *   is reported in the plan's `unmatched` list so typos are visible.
  * - Literal references must exist; a missing literal fails activation.
+ *   Extension references resolve through ResourceRegistry.select (ADR-0006):
+ *   registry ID, installed package name/alias, loose-file stem, or an
+ *   on-disk path — no pre-registration required.
  * - `alwaysOn` resources and the recursive `dependsOn` closure join every
  *   plan; cycles and missing entries fail loudly (via ResourceRegistry).
  * - Undeclared model/thinking/instructions never enter the plan, so Pi's
@@ -25,7 +29,7 @@
 import { minimatch } from "minimatch";
 
 import type { ProfileDefinition, ProfileModel, ProfileSource, ResolvedProfile } from "./profile-catalog.ts";
-import { ResourceRegistry } from "./resource-registry.ts";
+import { ResourceRegistry, type ResourceEntry } from "./resource-registry.ts";
 import type { RuntimeOverlay } from "./runtime-state-store.ts";
 import type { SkillEntry } from "./skill-registry.ts";
 
@@ -66,6 +70,11 @@ export interface ActivationPlan {
 	/** Expanded MCP server allowlist for pi-mcp-adapter coordination;
 	 *  undefined when the profile declares no `mcp` (no coordination). */
 	mcp?: string[];
+	/** Glob references (skills/extensions/MCP) that matched nothing this
+	 *  resolution — surfaced as warnings so zero-match typos are never silent.
+	 *  Tool globs are excluded: extension-contributed tools are unknowable
+	 *  before spawn, so a pre-spawn zero-match proves nothing. */
+	unmatched?: string[];
 }
 
 export interface ResolveInput {
@@ -101,22 +110,26 @@ function isGlob(reference: string): boolean {
 }
 
 /** Expands one reference list against a named universe. Literal misses fail
- *  when `literalMustExist`; globs expand to zero or more matches. */
+ *  when `literalMustExist`; globs expand to zero or more matches, and a
+ *  zero-match glob is reported through `onZeroMatch`. */
 function expandReferences<T>(
 	references: string[],
 	universe: readonly T[],
 	nameOf: (item: T) => string,
 	kind: string,
-	options?: { literalMustExist?: boolean },
+	options?: { literalMustExist?: boolean; onZeroMatch?: (reference: string) => void },
 ): T[] {
 	const selected = new Map<string, T>();
 	for (const reference of references) {
 		if (isGlob(reference)) {
+			let matched = 0;
 			for (const item of universe) {
 				if (minimatch(nameOf(item), reference)) {
 					selected.set(nameOf(item), item);
+					matched += 1;
 				}
 			}
+			if (matched === 0) options?.onZeroMatch?.(reference);
 			continue;
 		}
 		const item = universe.find((candidate) => nameOf(candidate) === reference);
@@ -141,6 +154,7 @@ export function defaultPlan(): ActivationPlan {
 export async function resolveProfile(input: ResolveInput): Promise<ActivationPlan> {
 	const { profile, skills, resources, overlay } = input;
 	const definition: ProfileDefinition = profile.definition;
+	const unmatched: string[] = [];
 
 	let mcp: string[] | undefined;
 	if (definition.mcp !== undefined && definition.mcp.length > 0) {
@@ -149,16 +163,32 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 				`profile "${profile.name}" declares MCP servers but no adapter server discovery is available`,
 			);
 		}
-		mcp = expandReferences(definition.mcp, input.discoveredMcpServers, (name) => name, "MCP server");
+		mcp = expandReferences(definition.mcp, input.discoveredMcpServers, (name) => name, "MCP server", {
+			onZeroMatch: (reference) => unmatched.push(`mcp:${reference}`),
+		});
 	}
 
-	let selectedSkills = expandReferences(definition.skills ?? [], skills, (skill) => skill.name, "skill");
+	let selectedSkills = expandReferences(definition.skills ?? [], skills, (skill) => skill.name, "skill", {
+		onZeroMatch: (reference) => unmatched.push(`skill:${reference}`),
+	});
 
-	const resourceIds = resources.list().map((entry) => entry.id);
-	const selectedIds = expandReferences(definition.extensions ?? [], resourceIds, (id) => id, "extension").concat(
-		resources.alwaysOn().map((entry) => entry.id),
+	// Extension references resolve through the registry's merged view
+	// (explicit entries over implicit discovery, ADR-0006). Direct path
+	// references (origin "path") are ad-hoc: they bypass the dependency
+	// closure and join the plan afterwards, deduped by entry path.
+	const selection = await resources.select(definition.extensions ?? []);
+	for (const reference of selection.unmatched) unmatched.push(`extension:${reference}`);
+	const pathEntries = selection.entries.filter((entry) => entry.origin === "path");
+	const selectedIds = selection.entries
+		.filter((entry) => entry.origin !== "path")
+		.map((entry) => entry.id)
+		.concat(resources.alwaysOnIds());
+	const closure = await resources.closure(
+		[...new Set(selectedIds)],
+		selection.entries.filter((entry) => entry.origin !== "path"),
 	);
-	let closure = await resources.closure([...new Set(selectedIds)]);
+	const closurePaths = new Set(closure.map((entry) => entry.entry));
+	let planExtensions: ResourceEntry[] = closure.concat(pathEntries.filter((entry) => !closurePaths.has(entry.entry)));
 
 	// --- overlay narrowing (ticket 06) ---
 	// Overlay references must name resources the profile actually resolves
@@ -177,10 +207,8 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 			selectedSkills = selectedSkills.filter((skill) => !disabled.has(skill.name));
 		}
 		if (overlay.disabledExtensions !== undefined && overlay.disabledExtensions.length > 0) {
-			const protectedIds = new Set(
-				(await resources.closure(resources.alwaysOn().map((entry) => entry.id))).map((entry) => entry.id),
-			);
-			const closureIds = new Set(closure.map((entry) => entry.id));
+			const protectedIds = new Set(await resources.closure(resources.alwaysOnIds()).then((entries) => entries.map((entry) => entry.id)));
+			const closureIds = new Set(planExtensions.map((entry) => entry.id));
 			for (const id of overlay.disabledExtensions) {
 				if (protectedIds.has(id)) {
 					throw new ActivationError(
@@ -192,7 +220,7 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 				}
 			}
 			const disabled = new Set(overlay.disabledExtensions);
-			closure = closure.filter((entry) => !disabled.has(entry.id));
+			planExtensions = planExtensions.filter((entry) => !disabled.has(entry.id));
 		}
 		if (overlay.disabledMcp !== undefined && overlay.disabledMcp.length > 0) {
 			const active = new Set(mcp ?? []);
@@ -239,10 +267,11 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		source: profile.source,
 		filter: "selection",
 		skills: selectedSkills,
-		extensions: closure.map((entry) => ({ id: entry.id, entry: entry.entry })),
+		extensions: planExtensions.map((entry) => ({ id: entry.id, entry: entry.entry })),
 		...(tools !== undefined && toolReferences !== undefined ? { tools, toolReferences: [...toolReferences] } : {}),
 		...(model !== undefined ? { model } : {}),
 		...(definition.instructions !== undefined ? { instructions: definition.instructions } : {}),
 		...(mcp !== undefined ? { mcp } : {}),
+		...(unmatched.length > 0 ? { unmatched } : {}),
 	};
 }

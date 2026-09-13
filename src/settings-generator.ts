@@ -345,6 +345,9 @@ export async function writeRuntimeFiles(
 					skills: plan.skills.map((skill) => ({ name: skill.name, filePath: skill.filePath })),
 					extensions: plan.extensions,
 				},
+				// Zero-match glob references (ADR-0006) — surfaced by /profile status
+				// so a typo'd glob is visible instead of silently selecting nothing.
+				...(plan.unmatched !== undefined ? { unmatched: plan.unmatched } : {}),
 				...options.planExtras,
 			},
 			null,

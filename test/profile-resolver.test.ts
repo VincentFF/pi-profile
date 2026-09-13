@@ -340,3 +340,82 @@ describe("overlay application (ticket 06)", () => {
 		).rejects.toThrow(/overlay disables unknown MCP server "ghost-server"/);
 	});
 });
+
+describe("discovery-first extension references (ADR-0006)", () => {
+	async function registryWithPackage(name: string): Promise<{ registry: ResourceRegistry; entry: string }> {
+		const root = path.join(fixture.agentDir, "npm", "node_modules", name);
+		await mkdir(root, { recursive: true });
+		const entry = path.join(root, "index.ts");
+		await writeFile(entry, "export default function () {}\n");
+		const registry = await ResourceRegistry.load(fixture.agentDir, {
+			implicit: { packages: [{ name, source: `npm:${name}`, root, entries: [entry] }], local: [], warnings: [] },
+		});
+		return { registry, entry };
+	}
+
+	it("a profile references an installed package by name, no registration", async () => {
+		const { registry, entry } = await registryWithPackage("pi-mcp-adapter");
+
+		const plan = await resolveProfile({
+			profile: profile("review", { extensions: ["pi-mcp-adapter"] }),
+			skills: [],
+			resources: registry,
+		});
+
+		expect(plan.extensions).toEqual([{ id: "pi-mcp-adapter", entry }]);
+	});
+
+	it("a profile references an extension by absolute path", async () => {
+		const dir = path.join(fixture.agentDir, "extensions");
+		await mkdir(dir, { recursive: true });
+		const file = path.join(dir, "one-off.ts");
+		await writeFile(file, "export default function () {}\n");
+
+		const plan = await resolveProfile({
+			profile: profile("review", { extensions: [file] }),
+			skills: [],
+			resources: await registryWith({}),
+		});
+
+		expect(plan.extensions).toEqual([{ id: file, entry: file }]);
+	});
+
+	it("unknown extension literals fail with actionable guidance", async () => {
+		const { registry } = await registryWithPackage("pi-mcp-adapter");
+
+		const error = await resolveProfile({
+			profile: profile("review", { extensions: ["mcp-adapter"] }),
+			skills: [],
+			resources: registry,
+		}).catch((caught: unknown) => caught);
+
+		expect((error as Error).message).toContain('did you mean "pi-mcp-adapter"');
+		expect((error as Error).message).toContain("resources.json");
+	});
+
+	it("zero-match globs land in plan.unmatched instead of failing silently", async () => {
+		const plan = await resolveProfile({
+			profile: profile("review", { skills: ["future-*"], extensions: ["ghost-*"] }),
+			skills: [skill("code-review")],
+			resources: await registryWith({}),
+		});
+
+		expect(plan.skills).toEqual([]);
+		expect(plan.extensions).toEqual([]);
+		expect(plan.unmatched).toEqual(["skill:future-*", "extension:ghost-*"]);
+	});
+
+	it("overlays disable package-selected extensions by their resolved ID", async () => {
+		const { registry, entry } = await registryWithPackage("pi-mcp-adapter");
+
+		const plan = await resolveProfile({
+			profile: profile("review", { extensions: ["pi-mcp-adapter"] }),
+			skills: [],
+			resources: registry,
+			overlay: { disabledExtensions: ["pi-mcp-adapter"] },
+		});
+
+		expect(plan.extensions).toEqual([]);
+		expect(entry).toContain("pi-mcp-adapter");
+	});
+});

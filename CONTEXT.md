@@ -34,13 +34,13 @@ The pi-profile-owned runtime directory holding a generated `settings.json` (the 
 Pi's native `ctx.reload()`: re-reads the settings file from disk, rebuilds resources, re-executes extensions, and preserves the session. The mechanism behind `/profile use`, `/profile reload`, overlay application, and rollback.
 
 **Resource**:
-Any capability a profile references: skill, extension, MCP server, or tool. Inside `resources.json` and `ResourceRegistry` specifically, an extension entry identified by a stable logical ID.
+Any capability a profile references: skill, extension, MCP server, or tool. Inside `resources.json` and `ResourceRegistry` specifically, an extension entry — either implicitly discovered (installed package entry, extensions-dir file) or an explicit override identified by a stable logical ID.
 
 **SkillRegistry**:
 The mapping from skill name to final `SKILL.md`, mirroring Pi's current full discovery result. Re-resolved on every start or reload.
 
 **ResourceRegistry**:
-The extension registry: logical ID, entry path, `dependsOn` dependencies, and `alwaysOn` flag. Merged from global and project `resources.json`; project IDs override global ones.
+The merged extension reference view (ADR-0006): implicit discovery (installed packages' `pi.extensions` entries, referenced by package name or source alias; loose files, referenced by filename stem) plus explicit `resources.json` overrides carrying `dependsOn` and `alwaysOn`. Explicit IDs win over same-ID implicit entries and may omit `entry` to inherit the discovered one. Project IDs override global ones. Registration is the override, never the prerequisite.
 
 **McpServerRegistry**:
 The MCP server names and states discovered by `pi-mcp-adapter`. Owned by the adapter; pi-profile only references server names.

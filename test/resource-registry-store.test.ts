@@ -36,7 +36,14 @@ describe("ResourceRegistryStore", () => {
 		await store().upsert({ id: "linter", entry: "/new.ts" });
 
 		const loaded = await ResourceRegistry.load(fixture.agentDir);
-		expect(loaded.get("linter")).toEqual({ id: "linter", kind: "extension", entry: "/new.ts", dependsOn: [], alwaysOn: false });
+		expect(loaded.get("linter")).toEqual({
+			id: "linter",
+			kind: "extension",
+			entry: "/new.ts",
+			dependsOn: [],
+			alwaysOn: false,
+			origin: "explicit",
+		});
 	});
 
 	it("remove deletes the entry and is loud about unknown ids", async () => {

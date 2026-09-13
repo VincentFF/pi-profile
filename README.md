@@ -36,6 +36,7 @@ pi-profile review -- --model openai/gpt-5.4
 ## 不变量
 
 - **引用而非复制**：profile 只引用已存在的 skills/extensions/MCP servers/tools；pi-profile 从不复制资源内容。
+- **发现优先于注册**：已安装包（`package.json#pi.extensions`）与标准目录散装文件直接可在 profile 中引用；`resources.json` 仅用于覆盖（`alwaysOn`/`dependsOn`）与标准位置外的 extension（ADR-0006）。
 - **无继承**：profile 定义自包含，没有 `extends`/merge/数组追加；变体只能通过完整复制定义（`/profile duplicate`）产生。
 - **信任守门**：未信任项目的 `.pi` 目录从不被读取或写入。
 - **冲突不阻塞**：同名 tool/command 冲突按 Pi 加载序先到先得，结果在 `/profile status` 可见。

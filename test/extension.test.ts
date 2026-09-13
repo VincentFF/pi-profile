@@ -458,6 +458,7 @@ describe("pi-profile extension", () => {
 				entry: "/x/linter.ts",
 				dependsOn: ["base", "tools"],
 				alwaysOn: true,
+				origin: "explicit",
 			});
 			expect(ctx.notifications.some((entry) => entry.message.includes('created resource "linter"'))).toBe(true);
 		});

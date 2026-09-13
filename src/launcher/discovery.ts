@@ -8,6 +8,7 @@ import path from "node:path";
 
 import { DefaultPackageManager, SettingsManager } from "@earendil-works/pi-coding-agent";
 
+import { discoverImplicitExtensions, type ImplicitExtensionDiscovery } from "../extension-discovery.ts";
 import type { ConfiguredPackageRoot } from "../settings-generator.ts";
 import { discoverSkills, type SkillEntry } from "../skill-registry.ts";
 import type { LauncherContext } from "./initial-profile.ts";
@@ -15,6 +16,9 @@ import type { LauncherContext } from "./initial-profile.ts";
 export interface LauncherDiscovery {
 	skills: SkillEntry[];
 	packages: ConfiguredPackageRoot[];
+	/** Implicit selectable extensions: package entries + loose files
+	 *  (ADR-0006). Merged under the explicit registries by ResourceRegistry. */
+	implicitExtensions: ImplicitExtensionDiscovery;
 }
 
 /** Resolves a configured package's local root without network access:
@@ -46,6 +50,13 @@ export async function discoverLauncherResources(
 		.listConfiguredPackages()
 		.filter((pkg) => pkg.scope === "user")
 		.map((pkg) => ({ source: pkg.source, root: resolvePackageRoot(pkg.source, pkg.installedPath, context.agentDir) }));
-	const skills = await discoverSkills(context);
-	return { skills, packages: configured };
+	const [skills, implicitExtensions] = await Promise.all([
+		discoverSkills(context),
+		discoverImplicitExtensions({
+			agentDir: context.agentDir,
+			packages: configured,
+			projectDir: context.projectTrusted ? context.cwd : undefined,
+		}),
+	]);
+	return { skills, packages: configured, implicitExtensions };
 }

@@ -18,12 +18,12 @@ import path from "node:path";
 
 import { readTrustInputs } from "../launcher/initial-profile.ts";
 import { ProfileCatalog } from "../profile-catalog.ts";
-import { RegistryError, type ResourceEntry } from "../resource-registry.ts";
+import { RegistryError, type RawResourceEntry } from "../resource-registry.ts";
 import { ResourceRegistryStore } from "../resource-registry-store.ts";
 
 export type RegistryScope = "global" | "project";
 
-export interface RegistryListEntry extends ResourceEntry {
+export interface RegistryListEntry extends RawResourceEntry {
 	source: RegistryScope;
 	shadowsGlobal: boolean;
 }
@@ -109,7 +109,7 @@ export async function deleteRegistryEntry(
 export async function upsertRegistryEntry(
 	input: { realAgentDir: string; cwd: string },
 	scope: RegistryScope,
-	entry: { id: string; entry: string; dependsOn?: string[]; alwaysOn?: boolean },
+	entry: { id: string; entry?: string; dependsOn?: string[]; alwaysOn?: boolean },
 ): Promise<void> {
 	if (scope === "project" && !(await projectTrusted(input))) {
 		throw new RegistryError(`project registry is unavailable: ${input.cwd} is not trusted`);

@@ -44,11 +44,14 @@ describe("shipped JSON schemas", () => {
 		expect(validate({ schemaVersion: 2, profiles: {} })).toBe(false);
 	});
 
-	it("the resources schema rejects non-extension kinds and missing entries", async () => {
+	it("the resources schema rejects non-extension kinds; entry is optional (inherited overrides)", async () => {
 		const validate = newAjv().compile(await loadSchema("resources.schema.json"));
 
 		expect(validate({ schemaVersion: 1, resources: { x: { kind: "mcp", entry: "/e.ts" } } })).toBe(false);
-		expect(validate({ schemaVersion: 1, resources: { x: { kind: "extension" } } })).toBe(false);
+		// ADR-0006: an override matching a discovered extension omits `entry`
+		// and inherits the discovered one; the loader rejects entry-less IDs
+		// that match nothing.
+		expect(validate({ schemaVersion: 1, resources: { x: { kind: "extension" } } })).toBe(true);
 		expect(
 			validate({ schemaVersion: 1, resources: { x: { kind: "extension", entry: "/e.ts", alwaysOn: true } } }),
 		).toBe(true);
@@ -67,8 +70,20 @@ describe("shipped JSON schemas", () => {
 			);
 			const catalog = await ProfileCatalog.load(dir);
 			expect(catalog.resolve("review")?.definition.label).toBe("Code review");
-			const registry = await ResourceRegistry.load(dir);
-			expect(registry.get("mcp-adapter")?.entry).toContain("pi-mcp-adapter");
+			// The examples' entry-less override for pi-web-access inherits from
+			// the discovered package when it is installed (ADR-0006).
+			const pkgRoot = path.join(dir, "npm", "node_modules", "pi-web-access");
+			const pkgEntry = path.join(pkgRoot, "index.ts");
+			const registry = await ResourceRegistry.load(dir, {
+				implicit: {
+					packages: [{ name: "pi-web-access", source: "npm:pi-web-access", root: pkgRoot, entries: [pkgEntry] }],
+					local: [],
+					warnings: [],
+				},
+			});
+			expect(registry.get("pi-web-access")?.entry).toBe(pkgEntry);
+			expect(registry.get("pi-web-access")?.alwaysOn).toBe(true);
+			expect(registry.get("team-conventions")?.entry).toContain("conventions.ts");
 		} finally {
 			await rm(dir, { recursive: true, force: true });
 		}

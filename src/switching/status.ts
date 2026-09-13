@@ -36,6 +36,8 @@ export interface StatusReport {
 	mcp: { enabled: string[]; disabled: string[]; missing: string[] };
 	/** Glob delta versus the previous activation (prefixed names). */
 	delta?: { added: string[]; removed: string[] };
+	/** Glob references that matched nothing at resolution (ADR-0006). */
+	unmatched?: string[];
 	conflicts: StatusConflict[];
 }
 
@@ -130,6 +132,7 @@ export function buildStatusReport(input: {
 		...(plan.tools !== undefined ? { tools: plan.tools } : {}),
 		mcp,
 		...(delta !== undefined ? { delta } : {}),
+		...(plan.unmatched !== undefined && plan.unmatched.length > 0 ? { unmatched: plan.unmatched } : {}),
 		conflicts,
 	};
 }
@@ -166,6 +169,9 @@ export function formatStatusMarkdown(report: StatusReport): string {
 	);
 	if (report.delta !== undefined) {
 		lines.push(`delta: +[${report.delta.added.join(", ")}] -[${report.delta.removed.join(", ")}]`);
+	}
+	if (report.unmatched !== undefined) {
+		lines.push(`unmatched (zero-match globs this resolution): [${report.unmatched.join(", ")}]`);
 	}
 	for (const conflict of report.conflicts) {
 		lines.push(

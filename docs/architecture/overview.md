@@ -79,9 +79,15 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 
 ### `ResourceRegistry`
 
-**Interface**：用逻辑 ID 解析 extension 入口，返回依赖闭包。
+**Interface**：extension 的可引用视图（ADR-0006）——隐式发现层（已安装包的 `pi.extensions` 入口、标准目录散装文件）合并显式 `resources.json` 覆盖层；`select()` 把 profile 引用（registry ID、包名/别名、散装 stem、磁盘路径、glob）解析为条目并返回依赖闭包。
 
 **Rules**（不变）：ID 稳定唯一；环形依赖、缺失入口、缺失依赖使 profile 无法激活；`alwaysOn` 总是进入 ActivationPlan；不负责排序。
+
+**Rules**（新增）：显式条目覆盖同 ID 隐式条目且可省略 `entry` 继承；悬空 override（无隐式匹配且未给 `entry`）延迟到引用时失败，alwaysOn 者加入每个闭包 fail-closed；散装/包 ID 碰撞由散装胜出并记录 warning（包经 source 别名仍可选）；未知字面量错误必须可行动（候选列表 + did-you-mean + 注册示例）；零匹配 glob 进入 `unmatched` 警告而非静默。
+
+### `ExtensionDiscovery`
+
+**Interface**：只读发现可引用的隐式 extension——已配置 user 包的 `package.json#pi.extensions` 入口（存在才计入）与 `<agentDir>/extensions`、已信任项目 `.pi/extensions` 的散装 `.ts`/`.js` 文件。从不执行扩展代码，从不安装包。
 
 ### `SkillRegistry`
 
@@ -96,8 +102,10 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 **Rules**：
 
 - 一个 plan 对应一个 profile 和一个 overlay；展开四类 glob，应用 overlay，合并 `alwaysOn` 与依赖闭包。
+- extension 引用经 `ResourceRegistry.select()` 解析（发现优先，ADR-0006）；路径引用产生 ad-hoc 条目，绕过依赖闭包。
 - overlay 可以调整当前 profile 声明的资源引用，但不能关闭 `alwaysOn` extension 或其依赖链（传递闭包）。
 - 未声明的 model、thinking 或 instructions 不进入 plan（保持 Pi 当前状态）。
+- 零匹配的 skill/extension/MCP glob 进入 plan 的 `unmatched` 列表（警告面，不阻塞激活）。
 - **Trust 守门**：launcher（`project-trust.ts`）按 Pi 的判定序镜像 trust 布尔量：一次性 `--approve` 输入 → 无任何 trust-requiring 项目资源则信任（含 pi-profile 自己的 catalog/state 文件，Pi 的原生清单不认识它们）→ 真实 `trust.json` 最近祖先条目 → `defaultProjectTrust: always`；项目 catalog、registry、资源仅在已信任时进入 plan。pi-profile 因此成为项目资源的唯一信任守门人——命名 profile 的生成 settings 置 `defaultProjectTrust: "never"` 且不链接 `trust.json`（已存储的 trust 决定在 Pi 侧优先于 never），保证 Pi 侧永不自动发现项目资源。已知偏离：不咨询 extension 的 `project_trust` 事件（那需要在 launcher 里执行扩展代码）。
 
 ### `SettingsGenerator`
@@ -139,7 +147,7 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 
 ### `profiles.json` / `resources.json` / `pi-profile-state.json`
 
-与前一版完全一致（schemaVersion 1），见 PRD 配置范围与本文件历史版本；核心字段不变：profile 的 `skills`/`extensions`/`mcp`/`tools`（glob）、可选 `model`（`provider`/`id`/`thinkingLevel`）与 `instructions`；resource 的 `kind`/`entry`/`dependsOn`/`alwaysOn`；state 的 `activeProfile`/`overlay`/`lastVerifiedProfile`。
+核心字段：profile 的 `skills`/`extensions`/`mcp`/`tools`（glob）、可选 `model`（`provider`/`id`/`thinkingLevel`）与 `instructions`；resource 的 `kind`/`dependsOn`/`alwaysOn` 与可选 `entry`（ADR-0006：覆盖已发现 extension 时省略以继承入口）；state 的 `activeProfile`/`overlay`/`lastVerifiedProfile`。`resources.json` 整体可选：隐式发现（包 + 散装文件）不需要任何注册。
 
 ### 生成的 `settings.json`（pi-profile 私有运行时产物，非用户配置）
 
@@ -212,7 +220,8 @@ pi-profile/
 │   │   ├── args.ts               # 位置参数 + 透传段解析（含 --approve 拦截）
 │   │   └── spawn.ts              # 子进程 spawn、信号与退出码转发
 │   ├── profile-catalog.ts
-│   ├── resource-registry.ts
+│   ├── resource-registry.ts      # 隐式发现 + 显式覆盖的合并视图与 select()
+│   ├── extension-discovery.ts    # 只读隐式发现：包 pi.extensions + 散装文件
 │   ├── skill-registry.ts         # 只读 SDK discovery
 │   ├── profile-resolver.ts
 │   ├── settings-generator.ts     # plan → settings.json + symlinks + env + flags

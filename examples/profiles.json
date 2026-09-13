@@ -9,7 +9,7 @@
         "diagnosing-bugs"
       ],
       "extensions": [
-        "mcp-adapter"
+        "pi-mcp-adapter"
       ],
       "mcp": [
         "github"
@@ -28,7 +28,7 @@
         "tdd"
       ],
       "extensions": [
-        "mcp-adapter"
+        "pi-mcp-adapter"
       ],
       "mcp": [
         "github",

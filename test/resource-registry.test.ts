@@ -225,3 +225,225 @@ describe("ResourceRegistry (global registry)", () => {
 		});
 	});
 });
+
+describe("implicit discovery merge (ADR-0006)", () => {
+	async function packageEntry(name: string, file = "index.ts"): Promise<{ root: string; entry: string }> {
+		const root = path.join(fixture.agentDir, "npm", "node_modules", name);
+		await mkdir(root, { recursive: true });
+		const entry = path.join(root, file);
+		await writeFile(entry, "export default function () {}\n");
+		return { root, entry };
+	}
+
+	it("installed packages are selectable by name with zero registration", async () => {
+		const pkg = await packageEntry("pi-mcp-adapter");
+		const registry = await ResourceRegistry.load(fixture.agentDir, {
+			implicit: {
+				packages: [{ name: "pi-mcp-adapter", source: "npm:pi-mcp-adapter", root: pkg.root, entries: [pkg.entry] }],
+				local: [],
+				warnings: [],
+			},
+		});
+
+		const selected = await registry.select(["pi-mcp-adapter"]);
+
+		expect(selected.entries.map((entry) => ({ id: entry.id, entry: entry.entry, origin: entry.origin }))).toEqual([
+			{ id: "pi-mcp-adapter", entry: pkg.entry, origin: "package" },
+		]);
+		expect(selected.unmatched).toEqual([]);
+	});
+
+	it("the npm: source string is accepted as an alias", async () => {
+		const pkg = await packageEntry("pi-mcp-adapter");
+		const registry = await ResourceRegistry.load(fixture.agentDir, {
+			implicit: {
+				packages: [{ name: "pi-mcp-adapter", source: "npm:pi-mcp-adapter", root: pkg.root, entries: [pkg.entry] }],
+				local: [],
+				warnings: [],
+			},
+		});
+
+		const selected = await registry.select(["npm:pi-mcp-adapter"]);
+
+		expect(selected.entries.map((entry) => entry.id)).toEqual(["pi-mcp-adapter"]);
+	});
+
+	it("a multi-entry package selects all entries by name, single entries by id", async () => {
+		const root = path.join(fixture.agentDir, "npm", "node_modules", "pi-multi");
+		await mkdir(root, { recursive: true });
+		const a = path.join(root, "index.ts");
+		const b = path.join(root, "panel.ts");
+		await writeFile(a, "export default function () {}\n");
+		await writeFile(b, "export default function () {}\n");
+		const registry = await ResourceRegistry.load(fixture.agentDir, {
+			implicit: { packages: [{ name: "pi-multi", source: "npm:pi-multi", root, entries: [a, b] }], local: [], warnings: [] },
+		});
+
+		expect(registry.list().map((entry) => entry.id).sort()).toEqual(["pi-multi:index.ts", "pi-multi:panel.ts"]);
+		const byName = await registry.select(["pi-multi"]);
+		expect(byName.entries.map((entry) => entry.entry).sort()).toEqual([a, b]);
+		const byId = await registry.select(["pi-multi:panel.ts"]);
+		expect(byId.entries.map((entry) => entry.entry)).toEqual([b]);
+	});
+
+	it("a loose file colliding with a package name wins the ID; the package stays selectable via its source", async () => {
+		const pkg = await packageEntry("foo");
+		const localEntry = await entryFile("foo");
+		const registry = await ResourceRegistry.load(fixture.agentDir, {
+			implicit: {
+				packages: [{ name: "foo", source: "npm:foo", root: pkg.root, entries: [pkg.entry] }],
+				local: [{ id: "foo", entry: localEntry }],
+				warnings: [],
+			},
+		});
+
+		expect(registry.get("foo")?.entry).toBe(localEntry);
+		expect(registry.warnings().some((warning) => warning.includes('"foo"'))).toBe(true);
+		const viaAlias = await registry.select(["npm:foo"]);
+		expect(viaAlias.entries.map((entry) => entry.entry)).toEqual([pkg.entry]);
+	});
+
+	it("an explicit override may omit entry and inherit the discovered one", async () => {
+		const pkg = await packageEntry("pi-web-access");
+		await writeRegistry({
+			schemaVersion: 1,
+			resources: { "pi-web-access": { kind: "extension", alwaysOn: true } },
+		});
+		const registry = await ResourceRegistry.load(fixture.agentDir, {
+			implicit: {
+				packages: [{ name: "pi-web-access", source: "npm:pi-web-access", root: pkg.root, entries: [pkg.entry] }],
+				local: [],
+				warnings: [],
+			},
+		});
+
+		const entry = registry.get("pi-web-access");
+		expect(entry?.entry).toBe(pkg.entry);
+		expect(entry?.alwaysOn).toBe(true);
+		expect(entry?.origin).toBe("explicit");
+		expect(registry.alwaysOn().map((candidate) => candidate.id)).toEqual(["pi-web-access"]);
+	});
+
+	it("an entry-less override with no discovered match dangles: load succeeds, referencing it fails", async () => {
+		await writeRegistry({ schemaVersion: 1, resources: { ghost: { kind: "extension" } } });
+
+		const registry = await ResourceRegistry.load(fixture.agentDir);
+
+		expect(registry.get("ghost")).toBeUndefined();
+		expect(registry.warnings().some((warning) => warning.includes('"ghost"'))).toBe(true);
+		await expect(registry.select(["ghost"])).rejects.toThrow(/has no entry/);
+	});
+
+	it("a dangling alwaysOn override joins every closure (fail-closed), then fails loudly", async () => {
+		await writeRegistry({ schemaVersion: 1, resources: { gate: { kind: "extension", alwaysOn: true } } });
+
+		const registry = await ResourceRegistry.load(fixture.agentDir);
+
+		expect(registry.alwaysOnIds()).toEqual(["gate"]);
+		await expect(registry.closure(registry.alwaysOnIds())).rejects.toThrow(/gate.*has no entry/);
+	});
+
+	it("explicit entries still override implicit ones field-by-field", async () => {
+		const pkg = await packageEntry("foo");
+		const explicitEntry = await entryFile("foo-explicit");
+		await writeRegistry({
+			schemaVersion: 1,
+			resources: { foo: { kind: "extension", entry: explicitEntry } },
+		});
+		const registry = await ResourceRegistry.load(fixture.agentDir, {
+			implicit: {
+				packages: [{ name: "foo", source: "npm:foo", root: pkg.root, entries: [pkg.entry] }],
+				local: [],
+				warnings: [],
+			},
+		});
+
+		expect(registry.get("foo")?.entry).toBe(explicitEntry);
+		expect(registry.get("foo")?.origin).toBe("explicit");
+	});
+
+	it("dependsOn may target implicit package IDs", async () => {
+		const pkg = await packageEntry("base-ext");
+		await writeRegistry({
+			schemaVersion: 1,
+			resources: { top: { kind: "extension", entry: await entryFile("top"), dependsOn: ["base-ext"] } },
+		});
+		const registry = await ResourceRegistry.load(fixture.agentDir, {
+			implicit: {
+				packages: [{ name: "base-ext", source: "npm:base-ext", root: pkg.root, entries: [pkg.entry] }],
+				local: [],
+				warnings: [],
+			},
+		});
+
+		const closure = await registry.closure(["top"]);
+		expect(closure.map((entry) => entry.id).sort()).toEqual(["base-ext", "top"]);
+	});
+
+	describe("select()", () => {
+		it("expands globs against IDs and package names", async () => {
+			const pkg = await packageEntry("pi-web-access");
+			const local = await entryFile("local-gate");
+			const registry = await ResourceRegistry.load(fixture.agentDir, {
+				implicit: {
+					packages: [{ name: "pi-web-access", source: "npm:pi-web-access", root: pkg.root, entries: [pkg.entry] }],
+					local: [{ id: "local-gate", entry: local }],
+					warnings: [],
+				},
+			});
+
+			const selected = await registry.select(["pi-*", "local-*"]);
+
+			expect(selected.entries.map((entry) => entry.id).sort()).toEqual(["local-gate", "pi-web-access"]);
+		});
+
+		it("collects zero-match globs instead of failing", async () => {
+			const registry = await ResourceRegistry.load(fixture.agentDir);
+
+			const selected = await registry.select(["ghost-*"]);
+
+			expect(selected.entries).toEqual([]);
+			expect(selected.unmatched).toEqual(["ghost-*"]);
+		});
+
+		it("accepts an existing on-disk path as an ad-hoc entry", async () => {
+			const file = await entryFile("one-off");
+			const registry = await ResourceRegistry.load(fixture.agentDir);
+
+			const selected = await registry.select([file]);
+
+			expect(selected.entries).toEqual([
+				{ id: file, kind: "extension", entry: file, dependsOn: [], alwaysOn: false, origin: "path" },
+			]);
+		});
+
+		it("fails loudly for a missing path and for relative paths", async () => {
+			const registry = await ResourceRegistry.load(fixture.agentDir);
+
+			await expect(registry.select([path.join(fixture.agentDir, "extensions", "missing.ts")])).rejects.toThrow(
+				/extension path not found/,
+			);
+			await expect(registry.select(["./local.ts"])).rejects.toThrow(/relative path/);
+		});
+
+		it("unknown literals fail with candidates, a did-you-mean, and a registration example", async () => {
+			const pkg = await packageEntry("pi-mcp-adapter");
+			const registry = await ResourceRegistry.load(fixture.agentDir, {
+				implicit: {
+					packages: [{ name: "pi-mcp-adapter", source: "npm:pi-mcp-adapter", root: pkg.root, entries: [pkg.entry] }],
+					local: [],
+					warnings: [],
+				},
+			});
+
+			const error = await registry.select(["mcp-adapter"]).catch((caught: unknown) => caught);
+
+			expect(error).toBeInstanceOf(RegistryError);
+			const message = (error as Error).message;
+			expect(message).toContain('unknown extension: "mcp-adapter"');
+			expect(message).toContain("pi-mcp-adapter");
+			expect(message).toContain('did you mean "pi-mcp-adapter"');
+			expect(message).toContain("resources.json");
+		});
+	});
+});

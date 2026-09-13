@@ -31,6 +31,14 @@ export class UnknownProfileError extends Error {
 	}
 }
 
+/** Zero-match glob references surface as launch warnings (ADR-0006):
+ *  visible, but never blocking — globs re-expand on every resolution. */
+function unmatchedWarnings(plan: ActivationPlan): string[] {
+	return (plan.unmatched ?? []).map(
+		(reference) => `profile "${plan.profile}": "${reference}" matched nothing this resolution`,
+	);
+}
+
 export interface LauncherContext {
 	/** The user's real agent dir (e.g. ~/.pi/agent). */
 	agentDir: string;
@@ -138,23 +146,26 @@ export async function resolveInitialProfile(
 			source: "builtin",
 			definition: { skills: ["*"], extensions: ["*"] },
 		};
-		const [discovery, resources] = await Promise.all([
-			discoverLauncherResources({ ...context, projectTrusted }),
-			ResourceRegistry.load(context.agentDir, { projectDir }),
-		]);
+		const discovery = await discoverLauncherResources({ ...context, projectTrusted });
+		const resources = await ResourceRegistry.load(context.agentDir, {
+			projectDir,
+			implicit: discovery.implicitExtensions,
+		});
 		const plan = await resolveProfile({
 			profile: synthetic,
 			skills: discovery.skills,
 			resources,
 			overlay,
 		});
+		warnings.push(...resources.warnings(), ...unmatchedWarnings(plan));
 		return { plan, discovery, projectSettings, warnings };
 	}
 
-	const [discovery, resources] = await Promise.all([
-		discoverLauncherResources({ ...context, projectTrusted }),
-		ResourceRegistry.load(context.agentDir, { projectDir }),
-	]);
+	const discovery = await discoverLauncherResources({ ...context, projectTrusted });
+	const resources = await ResourceRegistry.load(context.agentDir, {
+		projectDir,
+		implicit: discovery.implicitExtensions,
+	});
 	const plan = await resolveProfile({
 		profile,
 		skills: discovery.skills,
@@ -165,6 +176,7 @@ export async function resolveInitialProfile(
 			: undefined,
 		overlay: options?.overlay,
 	});
+	warnings.push(...resources.warnings(), ...unmatchedWarnings(plan));
 	if (plan.mcp !== undefined && !plan.extensions.some(isAdapterExtension)) {
 		// Fail before spawn: without the adapter in the active extension set
 		// nobody applies the allowlist, and the declared servers would either

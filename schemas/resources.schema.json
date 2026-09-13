@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "pi-profile extension resource registry",
-  "description": "Extension resources (global ~/.pi/agent/resources.json or project .pi/resources.json). Project IDs override global ones. Entries are extension kind only — MCP capabilities cannot be declared here.",
+  "description": "Extension resources (global ~/.pi/agent/resources.json or project .pi/resources.json). Project IDs override global ones. Entries are extension kind only — MCP capabilities cannot be declared here. Optional: installed packages and extensions-dir files are selectable without registration; explicit entries are overrides.",
   "type": "object",
   "required": [
     "schemaVersion",
@@ -24,8 +24,7 @@
       "type": "object",
       "additionalProperties": false,
       "required": [
-        "kind",
-        "entry"
+        "kind"
       ],
       "properties": {
         "kind": {
@@ -34,7 +33,7 @@
         "entry": {
           "type": "string",
           "minLength": 1,
-          "description": "Absolute path to the extension entry file."
+          "description": "Absolute path to the extension entry file. Optional when the ID matches a discovered extension (installed package or extensions-dir file): the discovered entry is inherited. Required otherwise."
         },
         "dependsOn": {
           "type": "array",
