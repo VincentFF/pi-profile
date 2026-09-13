@@ -67,6 +67,17 @@ describe("resolveSelection: skills", () => {
 		expect(selection.skills).toEqual({ refs: ["zzz-*"], disabled: [] });
 	});
 
+	it("keeps the filter and skips existence warnings when the live set is unknown", () => {
+		const selection = resolveSelection({
+			profile: profile({ skills: ["git-commit", "ghost-skill", "zzz-*"] }),
+			live: live({ skills: undefined }),
+		});
+
+		expect(selection.skills).toEqual({ refs: ["git-commit", "ghost-skill", "zzz-*"], disabled: [] });
+		expect(selection.warnings.skillsUnresolved).toEqual([]);
+		expect(selection.warnings.skillsUnmatched).toEqual([]);
+	});
+
 	it("hides overlay-disabled skills from an undeclared profile too", () => {
 		const overlay: RuntimeOverlay = { disabledSkills: ["code-review"] };
 

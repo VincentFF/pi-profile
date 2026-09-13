@@ -228,6 +228,50 @@ describe("native Pi behavior with the extension loaded", () => {
 	);
 
 	it(
+		"does not report a loaded skill as unloaded for a startup activation",
+		{ timeout: 90_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await writeCatalog({ review: { skills: ["alpha-skill"] } });
+			await writeState("review");
+			const probe = await writeProbe("probe", observeProbeBody());
+			const rpc = await start(["-e", EXTENSION, "-e", probe]);
+			try {
+				await waitForProbe((entry) => entry.event === "session");
+				await rpc.send({ type: "prompt", message: "hello" });
+				await waitForProbe((entry) => entry.event === "prompt");
+				// A round trip after the turn proves earlier notifications arrived.
+				await rpc.send({ type: "prompt", message: "/profile status" });
+				await waitForCustomMessage(rpc, "pi-profile-switch");
+
+				const notices = rpc.messages
+					.filter((entry) => (entry as { method?: string }).method === "notify")
+					.map((entry) => String((entry as { message?: string }).message));
+				expect(notices.filter((message) => message.includes("is not loaded in this session"))).toEqual([]);
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
+		"reports a genuinely unknown skill on the first turn",
+		{ timeout: 90_000 },
+		async () => {
+			await addGlobalSkill(fixture, "alpha-skill");
+			await writeCatalog({ review: { skills: ["ghost-skill"] } });
+			await writeState("review");
+			const rpc = await start(["-e", EXTENSION]);
+			try {
+				await rpc.send({ type: "prompt", message: "hello" });
+				await waitForNotify(rpc, 'skill "ghost-skill" is not loaded in this session');
+			} finally {
+				await rpc.close();
+			}
+		},
+	);
+
+	it(
 		"switches profiles in place: same session, no reload, next turn reflects the new skills",
 		{ timeout: 90_000 },
 		async () => {

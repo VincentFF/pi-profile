@@ -105,6 +105,9 @@ interface FakeContextOptions {
 	hasUI?: boolean;
 	/** Answer returned by `ctx.ui.select` (undefined = cancelled). */
 	selectAnswer?: string;
+	/** Omit the command-context accessor for the system-prompt options, the
+	 *  way Pi's `session_start` event context does. */
+	noSkillAccessor?: boolean;
 	/** Theme stub. The default renders text unchanged so assertions read as
 	 *  plain badge text; pass a marker theme to observe the color choices. */
 	theme?: { fg(color: string, text: string): string };
@@ -130,7 +133,9 @@ function fakeContext(fake: FakePi, options: FakeContextOptions): ExtensionContex
 		modelRegistry: surface.modelRegistry,
 		sessionManager: { getEntries: () => [] },
 		isProjectTrusted: () => options.trusted ?? false,
-		getSystemPromptOptions: () => promptOptions(options.skills ?? []),
+		...(options.noSkillAccessor === true
+			? {}
+			: { getSystemPromptOptions: () => promptOptions(options.skills ?? []) }),
 		waitForIdle: async () => {},
 	};
 	return context as unknown as ExtensionContext & ExtensionCommandContext;
@@ -199,6 +204,18 @@ describe("pi-profile-switch extension: session_start", () => {
 		expect(fake.notifications).toEqual([]);
 	});
 
+	it("does not report declared skills when the event context cannot read the loaded set", async () => {
+		await new RuntimeStateStore(fixture.agentDir).write({ activeProfile: "review" });
+		const fake = fakePi(["read", "grep"]);
+		piProfileExtension(fake.api);
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, noSkillAccessor: true });
+
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+
+		expect(fake.activeTools).toEqual(["read"]);
+		expect(fake.notifications).toEqual([]);
+	});
+
 	it("keeps the runtime native when no profile is saved (default)", async () => {
 		const fake = fakePi(["read", "grep"]);
 		piProfileExtension(fake.api);
@@ -254,6 +271,30 @@ describe("pi-profile-switch extension: before_agent_start", () => {
 		expect(result.systemPrompt).toContain("Skill alpha");
 		expect(result.systemPrompt).not.toContain("Skill beta");
 		expect(result.systemPrompt).toContain('<profile_instructions name="review">\nReview only.\n</profile_instructions>');
+	});
+
+	it("checks the declared skills on the first turn when startup could not read them", async () => {
+		await new RuntimeStateStore(fixture.agentDir).write({ activeProfile: "review" });
+		const fake = fakePi(["read"]);
+		piProfileExtension(fake.api);
+		const skills = [skill("beta")];
+		const ctx = fakeContext(fake, { cwd: fixture.cwd, noSkillAccessor: true });
+		const event = {
+			type: "before_agent_start",
+			prompt: "hi",
+			systemPrompt: `HEADER${formatSkillsForPrompt(skills, "read")}`,
+			systemPromptOptions: promptOptions(skills),
+		};
+
+		await emit(fake, "session_start", { type: "session_start", reason: "startup" }, ctx);
+		expect(fake.notifications).toEqual([]);
+
+		await emit(fake, "before_agent_start", event, ctx);
+		await emit(fake, "before_agent_start", event, ctx);
+
+		const reported = fake.notifications.filter((entry) => entry.message.includes("is not loaded in this session"));
+		expect(reported).toHaveLength(1);
+		expect(reported[0]?.message).toContain('skill "alpha"');
 	});
 
 	it("leaves the prompt untouched for the default profile", async () => {

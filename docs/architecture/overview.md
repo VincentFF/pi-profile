@@ -43,7 +43,7 @@
 
 | 能力 | API |
 | --- | --- |
-| 全量已加载 skills | `ctx.getSystemPromptOptions().skills`，与 Pi 构建 prompt 时传给 `buildSystemPrompt` 的数组同源 |
+| 全量已加载 skills | 命令上下文：`ctx.getSystemPromptOptions().skills`；每轮：`before_agent_start` 事件的 `systemPromptOptions.skills`（与 Pi 传给 `buildSystemPrompt` 的数组同源）。**事件上下文（`session_start`）没有这个访问器** |
 | skills 段落格式化 | 公开导出 `formatSkillsForPrompt(skills, fileReadTool)`；Pi 在默认与自定义 prompt 两个分支都逐字追加其返回值 |
 | prompt 替换 | `before_agent_start` 返回 `{ systemPrompt }`，只作用于当前 turn，多个扩展按加载顺序链式处理 |
 | `/skill:` 命令来源 | `resourceLoader.getSkills().skills`，与 prompt 无关；可见性过滤不影响用户手动调用 |
@@ -61,7 +61,7 @@ Pi 的 package `exports` 不暴露 `buildSystemPrompt`，扩展无法自行重�
 
 ```
 selected   = 解析 profile.skills 与 overlay.disabledSkills 得到的可见集合
-all        = ctx.getSystemPromptOptions().skills
+all        = event.systemPromptOptions.skills   // 随 before_agent_start 提供；session_start 读不到
 fileReadTool = ["read","bash"].find(tool => options.selectedTools.includes(tool))
 original   = formatSkillsForPrompt(all, fileReadTool)          // 与 Pi 的输出逐字一致
 filtered   = formatSkillsForPrompt(visibleSkills(all, filter), fileReadTool)
@@ -80,6 +80,7 @@ filtered   = formatSkillsForPrompt(visibleSkills(all, filter), fileReadTool)
 - 未选中的 skill 仍加载、仍在 `/skill:` 菜单、仍可被用户调用；模型看不到它的 name、description、location。
 - `disableModelInvocation` 的 skill 由 `formatSkillsForPrompt` 自身过滤，与 Pi 行为一致。
 - 段落替换失败时本轮退化为原生 prompt 并报告 warning，不阻塞对话。
+- 启动（`session_start`）读不到 skill 列表，因此 profile 的 skill 引用在启动时**不做存在性判断**（否则每个引用都会被误报为"未加载"）；第一轮 `before_agent_start` 用真实列表检查一次，只警告一次，并写回 selection 供 `/profile status` 读取。
 
 ## profile 语义
 
@@ -157,6 +158,8 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 **Interface**：纯函数——输入 profile、可选 overlay、`LiveResources`，输出 `ResolvedSelection`；声明 MCP 无法满足时抛 `ActivationError`。
 
+**Rules**：`LiveResources.skills` 可为 `undefined`（调用方此刻读不到 skill 列表）——此时照常产出过滤条件，但不产出存在性警告；`skillWarnings(refs, live)` 与 `formatSkillWarnings` 供首轮重查复用。
+
 ### `SkillSelection`
 
 **Interface**：`visibleSkills` / `visibleSkillNames` / `applySkillsFilter` / `formatInstructionsBlock`。
@@ -205,7 +208,7 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 pi [--profile review]
   │
   ├─ 解析启动 profile（flag → 项目 state → 全局 state → default）
-  ├─ 构建 live view：options.skills + pi.getAllTools() + adapter 探测
+  ├─ 构建 live view：pi.getAllTools() + adapter 探测（skills 此时不可读，首轮再检查）
   ├─ resolve（glob 展开、overlay、warnings）
   ├─ validate（model 存在且已认证；MCP intent 可满足）
   ├─ apply（setModel/setThinkingLevel → setActiveTools → 发布 MCP allowlist）
