@@ -1,6 +1,6 @@
 # TUI 手动验收清单
 
-全新用户可复现。前置条件：已安装 `pi` 与 `pi-profile`（`pi install npm:pi-profile` 或本仓库 `pi install ./`），有一个可用的模型 provider 配置；可选：已安装 `pi-mcp-adapter` 并在其配置中有名为 `atlassian` 的 server（步骤 7–8 需要）。
+全新用户可复现。前置条件：已安装 `pi` 与 `pi-profile-switch`（`pi install npm:pi-profile-switch` 或本仓库 `pi install ./`），有一个可用的模型 provider 配置；可选：已安装 `pi-mcp-adapter` 并在其配置中有名为 `atlassian` 的 server（步骤 7–8 需要）。
 
 ## 准备
 

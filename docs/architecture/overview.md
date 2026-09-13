@@ -1,8 +1,8 @@
-# pi-profile 架构设计
+# pi-profile-switch 架构设计
 
 ## 范围
 
-本文定义 `pi-profile` 的内部设计：总体结构、模块接口、数据契约、激活与切换流程、包结构。产品目标与用户可见语义见 `docs/product/prd.md`；关键决策的动机见 `docs/adr/`。
+本文定义 `pi-profile-switch` 的内部设计：总体结构、模块接口、数据契约、激活与切换流程、包结构。产品目标与用户可见语义见 `docs/product/prd.md`；关键决策的动机见 `docs/adr/`。
 
 宿主架构：纯 Pi extension（ADR-0007，取代 ADR-0001/ADR-0005 的 launcher + 生成式 settings）。
 
@@ -14,7 +14,7 @@
 │                                                                    │
 │  已安装的 extensions（全部原生加载，不做隔离）                        │
 │  ┌──────────────────────────────────────────────────────────────┐  │
-│  │  pi-profile extension                                        │  │
+│  │  pi-profile-switch extension                                        │  │
 │  │  session_start   → 解析 profile，应用 model/tools/MCP          │  │
 │  │  before_agent_start → 重建 skills 段落 + 追加 instructions     │  │
 │  │  /profile 命令族、/mcp enable|disable                         │  │
@@ -25,7 +25,7 @@
 └────────────────────────────────────────────────────────────────────┘
 ```
 
-`pi-profile` 的外部 interface 是 `/profile` 命令族、`--profile` CLI flag、catalog schema 与 state 文件。解析、glob 展开、引用校验、可见性过滤、MCP 协调与状态持久化都在内部完成。`PI_CODING_AGENT_DIR`、`PI_CODING_AGENT_SESSION_DIR`、生成文件与 symlink 全部不再使用。
+`pi-profile-switch` 的外部 interface 是 `/profile` 命令族、`--profile` CLI flag、catalog schema 与 state 文件。解析、glob 展开、引用校验、可见性过滤、MCP 协调与状态持久化都在内部完成。`PI_CODING_AGENT_DIR`、`PI_CODING_AGENT_SESSION_DIR`、生成文件与 symlink 全部不再使用。
 
 ## 受控与不受控
 
@@ -37,7 +37,7 @@
 | model / thinkingLevel | `pi.setModel` / `pi.setThinkingLevel`，遵循显式选择优先 |
 | instructions | 与 skills 过滤合并到同一个 `before_agent_start` 返回值 |
 | extensions | 不控制：所有已安装 extension 在每个 profile 中原生加载 |
-| sessions / agentDir 文件 / packages / trust / prompts / themes | 原生行为，pi-profile 不触碰 |
+| sessions / agentDir 文件 / packages / trust / prompts / themes | 原生行为，pi-profile-switch 不触碰 |
 
 ## 运行时接缝（Pi 0.85.1 验证）
 
@@ -135,7 +135,7 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 ## 模块与接口
 
-### `extensions/pi-profile/index.ts`
+### `extensions/pi-profile-switch/index.ts`
 
 **Interface**：注册 `--profile` flag、`/profile` 命令族、`/mcp enable|disable`、`session_start` 与 `before_agent_start` handler。
 
@@ -144,7 +144,7 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 - `session_start`：解析启动 profile（flag → 项目 state（已信任）→ 全局 state → `default`）→ 构建 live view → 解析 + 校验 + 应用；失败时不应用任何设置并报出可行动错误。
 - `before_agent_start`：重试 pending tools；重建 skills 段落；追加 instructions；无可变更时返回 undefined。
 - 启动选择（`--profile`）不写 state；stored overlay 不在启动时应用。
-- CRUD 向导仅 TUI（`ctx.mode === "tui"`）；list/status 经 `pi.sendMessage` 发送 `customType: "pi-profile"` 的结构化 `details`。
+- CRUD 向导仅 TUI（`ctx.mode === "tui"`）；list/status 经 `pi.sendMessage` 发送 `customType: "pi-profile-switch"` 的结构化 `details`。
 
 ### `ProfileCatalog` / `ProfileCatalogStore`
 
@@ -222,10 +222,10 @@ pi [--profile review]
 ## Package 结构
 
 ```text
-pi-profile/
+pi-profile-switch/
 ├── package.json                 # pi.extensions 入口；无 bin
 ├── extensions/
-│   └── pi-profile/index.ts      # 命令、flag、session_start、before_agent_start、MCP 协调
+│   └── pi-profile-switch/index.ts      # 命令、flag、session_start、before_agent_start、MCP 协调
 ├── src/
 │   ├── profile-catalog.ts       # v2 读取 + v1 兼容
 │   ├── profile-catalog-store.ts # 写入侧

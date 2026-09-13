@@ -4,7 +4,7 @@
  * The profile's `mcp` array in its OWNING catalog is the profile-scoped
  * state store (ticket 04 established that pi-mcp-adapter@2.33.0 has no
  * allowlist/profile-state API — ADR-0002's assumed store does not exist;
- * pi-profile owns the contract). The runtime effect is the caller's
+ * pi-profile-switch owns the contract). The runtime effect is the caller's
  * re-activation of the active profile, which republishes the allowlist over
  * the coordination channel.
  *

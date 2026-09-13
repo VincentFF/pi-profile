@@ -1,8 +1,8 @@
-# pi-profile 产品需求
+# pi-profile-switch 产品需求
 
 ## 定位
 
-`pi-profile` 是一个 Pi package。它把 profile 作为 Pi 会话的选择机制：一个 profile 选择模型看到什么（prompt 与 skills 可见性）、会话使用哪些 MCP server 和 tools，并可选提供 model 预设与附加指令；这些选择在同一 Pi 进程内即时切换。
+`pi-profile-switch` 是一个 Pi package。它把 profile 作为 Pi 会话的选择机制：一个 profile 选择模型看到什么（prompt 与 skills 可见性）、会话使用哪些 MCP server 和 tools，并可选提供 model 预设与附加指令；这些选择在同一 Pi 进程内即时切换。
 
 profile 不复制资源。一个 `SKILL.md`、MCP server 或 tool 只有一份实现；多个 profile 只引用它。修改实现后，所有引用它的 profile 立即获得新内容。
 
@@ -10,7 +10,7 @@ extensions 不是 profile 资源：所有已安装 extension 在每个 profile �
 
 ## 设计哲学
 
-Pi 是一个极简 agent；`pi-profile` 只完成会话选择这一必要需求。
+Pi 是一个极简 agent；`pi-profile-switch` 只完成会话选择这一必要需求。
 
 - 用户直接拥有并维护自己的 profile。
 - profile 中的 `skills`、`mcp` 和 `tools` 默认都可自由调整。
@@ -44,7 +44,7 @@ pi --profile research --model openai/gpt-5.4
 pi --profile review --mode rpc
 ```
 
-`--profile` 由 pi-profile 注册并读取；未安装本扩展时 Pi 按原生 unknown option 报错。`default` 不声明任何字段，行为逐字原生。
+`--profile` 由 pi-profile-switch 注册并读取；未安装本扩展时 Pi 按原生 unknown option 报错。`default` 不声明任何字段，行为逐字原生。
 
 ## 运行语义
 
@@ -62,7 +62,7 @@ overlay 是临时调整：`/profile customize` 收窄当前 profile，`/profile 
 | 对象 | 含义 | 所有权 |
 | --- | --- | --- |
 | `Profile` | 命名工作流定义，选择 prompt/skills/mcp/tools 并声明可选 model | 全局或项目 catalog |
-| `default` | 内建、不可删除的"什么都不声明"profile；overlay 可临时收窄 | `pi-profile` |
+| `default` | 内建、不可删除的"什么都不声明"profile；overlay 可临时收窄 | `pi-profile-switch` |
 | `RuntimeOverlay` | 当前 profile 的临时收窄（skills/mcp/tools） | runtime state |
 | `Selection` | 解析后的选择：可见 skill、MCP allowlist、活动 tools、instructions、model 预设与 warnings | resolver |
 | `pi-mcp-adapter` | MCP server 配置、连接与凭证的所有者；profile 只引用 server 名 | 外部 package |
@@ -124,7 +124,7 @@ MCP 集成锁定为 `pi-mcp-adapter`。它是可选依赖：未安装 adapter �
 }
 ```
 
-profile 只引用 adapter 已配置的 server 名称；命令、地址、OAuth、token 和 timeout 保留在 adapter 管理配置中。`/mcp enable|disable` 修改当前 profile 的 `mcp` 数组并保存到所属 catalog，随后重新发布运行时 allowlist；adapter 自己的 `mcp.json` 永不被 pi-profile 写入。
+profile 只引用 adapter 已配置的 server 名称；命令、地址、OAuth、token 和 timeout 保留在 adapter 管理配置中。`/mcp enable|disable` 修改当前 profile 的 `mcp` 数组并保存到所属 catalog，随后重新发布运行时 allowlist；adapter 自己的 `mcp.json` 永不被 pi-profile-switch 写入。
 
 ### Tools
 
@@ -158,7 +158,7 @@ profile 的 `instructions` 追加到 Pi 已构建的 system prompt 末尾。Pi �
 
 CRUD 只在 TUI mode 提供。RPC、print 和 JSON mode 可以用 `pi --profile <name>` 启动目标 profile，也可以执行 `/profile use|list|status|customize|reset` 与 `/mcp enable|disable`，但不提供交互式向导。
 
-`/profile list` 与 `/profile status` 经 `pi.sendMessage` 发出 `customType: "pi-profile"` 的结构化消息，`details` 携带 `{kind, ...}` 载荷供 RPC 消费者使用。
+`/profile list` 与 `/profile status` 经 `pi.sendMessage` 发出 `customType: "pi-profile-switch"` 的结构化消息，`details` 携带 `{kind, ...}` 载荷供 RPC 消费者使用。
 
 ## 通用规则
 

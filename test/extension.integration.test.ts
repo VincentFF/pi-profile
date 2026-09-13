@@ -16,7 +16,7 @@ import { RpcDriver } from "./helpers/rpc-driver.ts";
  * `session_start`.
  */
 
-const EXTENSION = path.resolve("extensions/pi-profile/index.ts");
+const EXTENSION = path.resolve("extensions/pi-profile-switch/index.ts");
 const PROBE_LOG = "probe.jsonl";
 
 let fixture: PiFixture;
@@ -278,7 +278,7 @@ describe("native Pi behavior with the extension loaded", () => {
 			const rpc = await start(["-e", EXTENSION, "-e", adapter], { model: false });
 			try {
 				await rpc.send({ type: "prompt", message: "/profile status" });
-				const status = await waitForCustomMessage(rpc, "pi-profile");
+				const status = await waitForCustomMessage(rpc, "pi-profile-switch");
 
 				expect(status).toContain("### profile: review (global)");
 				expect(status).toContain("skills: 1 of 2 loaded");
@@ -386,7 +386,7 @@ describe("native Pi behavior with the extension loaded", () => {
 				await waitForNotify(rpc, "profile active: implement");
 
 				await rpc.send({ type: "prompt", message: "/profile status" });
-				const status = await waitForCustomMessage(rpc, "pi-profile");
+				const status = await waitForCustomMessage(rpc, "pi-profile-switch");
 				expect(status).toContain("### profile: implement (global)");
 			} finally {
 				await rpc.close();

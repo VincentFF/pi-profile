@@ -39,7 +39,7 @@ export const PROFILE_FLAG = "profile";
 export function registerProfileFlag(pi: ExtensionAPI): void {
 	pi.registerFlag(PROFILE_FLAG, {
 		type: "string",
-		description: "pi-profile: activate a profile for this run (not saved)",
+		description: "pi-profile-switch: activate a profile for this run (not saved)",
 	});
 }
 

@@ -1,6 +1,6 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
-  "title": "pi-profile profile catalog",
+  "title": "pi-profile-switch profile catalog",
   "description": "Named profile definitions (global ~/.pi/agent/profiles.json or project .pi/profiles.json). Definitions are complete and self-contained: there is no inheritance field, and references are names/globs, never copies. Extensions are not a profile resource (ADR-0007): every installed extension loads natively. The built-in \"default\" profile must not be defined here.",
   "type": "object",
   "required": [

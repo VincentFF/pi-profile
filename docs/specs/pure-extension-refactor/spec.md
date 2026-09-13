@@ -1,4 +1,4 @@
-# pi-profile 纯 extension 重构方案
+# pi-profile-switch 纯 extension 重构方案
 
 Status: done
 
@@ -6,14 +6,14 @@ Status: done
 
 现架构（ADR-0005：子进程宿主 + 生成式 settings）用 `PI_CODING_AGENT_DIR` 把 Pi 指向 per-launch 生成目录，其中只放固定白名单 symlink。agentDir 是 Pi 核心与所有第三方扩展共享的命名空间，两个已证实的兼容性破坏由此产生：
 
-- **Session 隔离**：`PI_CODING_AGENT_SESSION_DIR=<真实>/sessions` 把 session 目录钉在扁平根目录。Pi 只在未显式指定 session 目录时才按项目派生 `<sessionDir>/--<cwd>--/`，因此 pi-profile 的 session 全部平铺在 `sessions/` 根，与原生 pi 的 per-project 目录互相不可见（`pi -r`、`pi -c`、`/resume` 都受影响）。该环境变量还越过用户的 `sessionDir` 设置。
+- **Session 隔离**：`PI_CODING_AGENT_SESSION_DIR=<真实>/sessions` 把 session 目录钉在扁平根目录。Pi 只在未显式指定 session 目录时才按项目派生 `<sessionDir>/--<cwd>--/`，因此 pi-profile-switch 的 session 全部平铺在 `sessions/` 根，与原生 pi 的 per-project 目录互相不可见（`pi -r`、`pi -c`、`/resume` 都受影响）。该环境变量还越过用户的 `sessionDir` 设置。
 - **扩展配置读不到**：白名单外的 agentDir 文件在子进程里不存在。`pi-plan-build.json`、`plans/`、`mcp-cache.json`、`web-push.json` 与全局 `AGENTS.md` 都被静默丢弃：第三方扩展回退默认值，Pi 丢失全局 context file。原子写（临时文件 + rename）的扩展还会把 symlink 替换成临时目录里的本地文件，写入在清理时丢失。
 
 把白名单改成全量镜像仍保留宿主进程、保留与 Pi settings schema 耦合的生成式配置，并且缓存不住原子写；而 products 侧真正需要的隔离对象只有 skills、mcp、tools 三类。
 
 ## Solution
 
-`pi-profile` 变成普通 Pi package：以 `pi.extensions` 入口安装，没有 launcher、没有环境变量改写、没有生成文件。一个 profile 控制五项：`instructions`、`model`/`thinkingLevel`、`skills`（prompt 可见性）、`mcp`、`tools`。extensions 不再是 profile 资源，全部原生加载。
+`pi-profile-switch` 变成普通 Pi package：以 `pi.extensions` 入口安装，没有 launcher、没有环境变量改写、没有生成文件。一个 profile 控制五项：`instructions`、`model`/`thinkingLevel`、`skills`（prompt 可见性）、`mcp`、`tools`。extensions 不再是 profile 资源，全部原生加载。
 
 三个运行时接缝承担全部行为：
 
@@ -37,7 +37,7 @@ Status: done
 | model / thinkingLevel | 生成 `--model` flag | `setModel` / `setThinkingLevel`，遵循显式选择优先 |
 | instructions | `before_agent_start` 追加 | 与 skills 过滤合并到同一个 `before_agent_start` 返回值 |
 | extensions | 生成 settings 白名单 + 依赖闭包 + `alwaysOn` | 不控制，全部原生加载 |
-| sessions / AGENTS.md / packages / trust / prompts / themes | 部分被 agentDir 改写破坏 | 全部原生，pi-profile 不触碰 |
+| sessions / AGENTS.md / packages / trust / prompts / themes | 部分被 agentDir 改写破坏 | 全部原生，pi-profile-switch 不触碰 |
 
 ### 运行时 API 依据（Pi 0.85.1 验证）
 
@@ -194,12 +194,12 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 | `src/switching/list-profiles.ts`、`status.ts`、`profile-crud.ts`、`profile-wizard.ts`、`mcp-toggle.ts` | 保留 | status 去 extension/trust/filter 字段，增 unresolved/pending 与 filter outcome 报告 |
 | `src/switching/resource-crud.ts`、`resource-wizard.ts` | 删除 | `/profile resource` 命令族移除 |
 | `src/switching/tool-references.ts` | 删除 | tool 展开已内置于 resolver；旧的 droppedLiterals 语义与 pending 冲突 |
-| 选择器与编辑向导 | 保留 | 选择器位于 `extensions/pi-profile/index.ts`，向导位于 `src/switching/profile-wizard.ts`；字段更新为 skills/mcp/tools/model/instructions |
+| 选择器与编辑向导 | 保留 | 选择器位于 `extensions/pi-profile-switch/index.ts`，向导位于 `src/switching/profile-wizard.ts`；字段更新为 skills/mcp/tools/model/instructions |
 | `src/skill-selection.ts` | 新增 | 段落重建与替换、失败守卫、一次性 warning |
 | `src/name-matching.ts` | 新增 | 字面量/glob 匹配与 did-you-mean 建议的共享实现（resolver 与 skill-selection 共用） |
 | `src/model-selection.ts` | 新增 | 显式选择检测与预设应用 |
 | `src/startup-selection.ts` | 新增 | `--profile` flag 注册与读取、`parseArgs` 显式声明检测 |
-| `extensions/pi-profile/index.ts` | 重写 | 注册 `/profile` 命令族与 `--profile` flag、`session_start` 应用、`before_agent_start` 过滤与 instructions、MCP 发布 |
+| `extensions/pi-profile-switch/index.ts` | 重写 | 注册 `/profile` 命令族与 `--profile` flag、`session_start` 应用、`before_agent_start` 过滤与 instructions、MCP 发布 |
 | `schemas/profiles.schema.json` | 更新 | v2；`schemas/resources.schema.json` 删除 |
 | `examples/profiles.json` | 更新 | 去 `extensions`；`examples/resources.json` 删除 |
 
@@ -221,19 +221,19 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 | 保证 | 验证方式 |
 | --- | --- |
-| pi-profile 不设置 `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` | 集成测试断言扩展运行环境中两者未定义 |
+| pi-profile-switch 不设置 `PI_CODING_AGENT_DIR` / `PI_CODING_AGENT_SESSION_DIR` | 集成测试断言扩展运行环境中两者未定义 |
 | session 落在 `~/.pi/agent/sessions/--<cwd>--/`，与原生 pi 完全一致 | 集成测试对比原生与带扩展进程的 session 路径 |
 | 第三方扩展在 agentDir 的配置文件可读写 | fixture 中放探针配置文件，探针扩展读取并断言 |
 | 全局 `<agentDir>/AGENTS.md` 进入 system prompt | 集成测试断言 prompt 含 fixture 内容 |
 | 所有已安装 extension 在任意 profile 下加载 | 集成测试断言扩展 count 与原生一致 |
 | `default` profile 下 Pi 行为逐字原生 | 集成测试对比 prompt（除扩展自身注册内容外）与原生一致 |
-| 无 pi-profile 时的 `pi` 行为不变 | 安装状态无 state 文件时扩展不产生任何应用动作 |
+| 无 pi-profile-switch 时的 `pi` 行为不变 | 安装状态无 state 文件时扩展不产生任何应用动作 |
 
 ### 接受的退化
 
 - extensions 不再按 profile 隔离：未选中的扩展代码照常运行，profile 不表达扩展层的能力限制。
 - skills 隔离是模型可见性，不是访问控制：未选中 skill 仍在进程内、仍在 `/skill:` 菜单、仍可被用户调用；其他扩展经 `getSystemPromptOptions()` 仍能看到全量。
-- 项目级 skill 的信任由 Pi 原生承担，pi-profile 不再做 trust 守门。
+- 项目级 skill 的信任由 Pi 原生承担，pi-profile-switch 不再做 trust 守门。
 
 ### 迁移
 
@@ -334,7 +334,7 @@ skill 字面量未解析不阻塞激活的两个理由：其他扩展经 `resour
 
 - Pi 版本基线为 0.85.1；上述 API 依据均在该版本验证。
 - skills 过滤依赖 Pi 的 prompt 段落格式。Pi 升级改变格式时，过滤退化为不过滤并报告 warning，集成测试同时失败以暴露漂移。
-- 本方案使 `pi` 与 `pi-profile` 不再有入口差异：安装一次，所有 Pi 启动都受活动 profile 影响，`pi --profile default` 提供原生基线。
+- 本方案使 `pi` 与 `pi-profile-switch` 不再有入口差异：安装一次，所有 Pi 启动都受活动 profile 影响，`pi --profile default` 提供原生基线。
 
 ## Comments
 

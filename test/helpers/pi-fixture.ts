@@ -3,7 +3,7 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 
 /**
- * Fixture layout convention for pi-profile tests (established by ticket 01):
+ * Fixture layout convention for pi-profile-switch tests (established by ticket 01):
  * one temp root per test holding an isolated Pi agent dir (skills, settings,
  * models, auth) and a project cwd, so no test ever touches the real
  * ~/.pi/agent or the developer's project directory.
@@ -18,7 +18,7 @@ export interface PiFixture {
 }
 
 export async function createPiFixture(): Promise<PiFixture> {
-	const root = await mkdtemp(path.join(tmpdir(), "pi-profile-"));
+	const root = await mkdtemp(path.join(tmpdir(), "pi-profile-switch-"));
 	const cwd = path.join(root, "project");
 	const agentDir = path.join(root, "agent");
 	await mkdir(path.join(cwd, ".pi"), { recursive: true });

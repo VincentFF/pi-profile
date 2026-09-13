@@ -6,14 +6,14 @@ Supersedes [ADR-0001](0001-launcher-based-initial-profile-selection.md) and [ADR
 
 ADR-0005 pointed `PI_CODING_AGENT_DIR` at a per-launch generated directory holding a generated `settings.json` and a fixed allowlist of symlinks (`auth.json`, `models.json`, `models-store.json`, `mcp.json`, `npm/`, `git/`, `bin/`). The agent directory is a shared namespace: Pi core and every installed extension derive configuration, state, context-file, and session paths from it. Two failures followed in production use:
 
-- **Sessions.** The attempt to keep session storage native (`PI_CODING_AGENT_SESSION_DIR=<real>/sessions`) pins the session directory to the flat sessions root. Pi derives the per-project directory (`<sessionDir>/--<cwd>--/`) only when no explicit session directory is set. pi-profile sessions therefore land one level above native sessions, and the two are mutually invisible in `pi -r`, `pi -c`, and `/resume`. The environment variable also overrides a user's `sessionDir` setting, which native Pi honors.
+- **Sessions.** The attempt to keep session storage native (`PI_CODING_AGENT_SESSION_DIR=<real>/sessions`) pins the session directory to the flat sessions root. Pi derives the per-project directory (`<sessionDir>/--<cwd>--/`) only when no explicit session directory is set. pi-profile-switch sessions therefore land one level above native sessions, and the two are mutually invisible in `pi -r`, `pi -c`, and `/resume`. The environment variable also overrides a user's `sessionDir` setting, which native Pi honors.
 - **Extension state.** Any agent-directory file outside the symlink allowlist disappears from the spawned process. `pi-plan-build.json`, `plans/`, `mcp-cache.json`, `web-push.json`, and Pi's global `AGENTS.md` were not linked: third-party configuration silently fell back to defaults, and Pi dropped the global context file. Extensions that save atomically (temporary file plus rename, as `pi-plan-build` does) would additionally replace a symlink inside the ephemeral launch directory, so their writes are lost at cleanup.
 
 Repairing the allowlist into a full mirror of the agent directory keeps the host process, keeps a generated-settings surface coupled to Pi's settings schema, and still loses atomic-save writes.
 
 ## Decision
 
-`pi-profile` is a plain Pi package with no host process. It installs like any other extension through `pi.extensions`. The launcher, `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, generated settings, symlinks, and per-launch runtime directories are removed. A profile controls five things:
+`pi-profile-switch` is a plain Pi package with no host process. It installs like any other extension through `pi.extensions`. The launcher, `PI_CODING_AGENT_DIR`, `PI_CODING_AGENT_SESSION_DIR`, generated settings, symlinks, and per-launch runtime directories are removed. A profile controls five things:
 
 - `instructions`: text appended to Pi's built system prompt.
 - `model` and `thinkingLevel`: a session-start preset, applied only when neither the CLI nor the session history states an explicit choice.

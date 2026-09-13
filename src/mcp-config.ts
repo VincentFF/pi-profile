@@ -2,7 +2,7 @@
  * AdapterConfigDiscovery: reads the MCP server NAMES pi-mcp-adapter would
  * discover from its pi-native config files, without ever managing them.
  *
- * pi-profile never stores MCP connection parameters or credentials
+ * pi-profile-switch never stores MCP connection parameters or credentials
  * (ADR-0002); this module reads only the `mcpServers` key names so an
  * activation can validate a profile's `mcp` references before applying it.
  *

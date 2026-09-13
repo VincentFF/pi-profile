@@ -11,7 +11,7 @@ import path from "node:path";
 import { rm, writeFile } from "node:fs/promises";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
-import piProfileExtension from "../extensions/pi-profile/index.ts";
+import piProfileExtension from "../extensions/pi-profile-switch/index.ts";
 import { RuntimeStateStore } from "../src/runtime-state-store.ts";
 import { fakeApplySurface } from "./helpers/fake-apply.ts";
 import { createPiFixture, type PiFixture } from "./helpers/pi-fixture.ts";
@@ -175,7 +175,7 @@ afterEach(async () => {
 	await rm(fixture.root, { recursive: true, force: true });
 });
 
-describe("pi-profile extension: session_start", () => {
+describe("pi-profile-switch extension: session_start", () => {
 	it("activates the saved profile and applies tools", async () => {
 		await new RuntimeStateStore(fixture.agentDir).write({ activeProfile: "review" });
 		const fake = fakePi(["read", "grep"]);
@@ -222,7 +222,7 @@ describe("pi-profile extension: session_start", () => {
 	});
 });
 
-describe("pi-profile extension: before_agent_start", () => {
+describe("pi-profile-switch extension: before_agent_start", () => {
 	it("filters the skills section to the profile and appends instructions", async () => {
 		await new RuntimeStateStore(fixture.agentDir).write({ activeProfile: "review" });
 		const fake = fakePi(["read"]);
@@ -264,7 +264,7 @@ describe("pi-profile extension: before_agent_start", () => {
 	});
 });
 
-describe("pi-profile extension: commands", () => {
+describe("pi-profile-switch extension: commands", () => {
 	it("lists profiles with the structured payload", async () => {
 		const fake = fakePi(["read"]);
 		piProfileExtension(fake.api);
@@ -273,7 +273,7 @@ describe("pi-profile extension: commands", () => {
 		await fake.commands.get("profile")!.handler("list", ctx);
 
 		const message = fake.messages.at(-1);
-		expect(message?.customType).toBe("pi-profile");
+		expect(message?.customType).toBe("pi-profile-switch");
 		expect(message?.content).toMatch(/review \[global\]/);
 		expect((message?.details as { kind: string }).kind).toBe("list");
 	});
@@ -378,7 +378,7 @@ describe("pi-profile extension: commands", () => {
 	});
 });
 
-describe("pi-profile extension: skills filter visibility", () => {
+describe("pi-profile-switch extension: skills filter visibility", () => {
 	it("warns once when no skill-reading tool is active", async () => {
 		await new RuntimeStateStore(fixture.agentDir).write({ activeProfile: "review" });
 		const fake = fakePi(["edit"]);

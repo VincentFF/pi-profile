@@ -1,5 +1,5 @@
 /**
- * Shared JSON-file reading for pi-profile's file-backed stores (catalog,
+ * Shared JSON-file reading for pi-profile-switch's file-backed stores (catalog,
  * resource registry, runtime state). Each store maps read failures to its
  * own error policy (loud CatalogError/RegistryError vs. quiet state
  * fallback); this helper only classifies the outcome.

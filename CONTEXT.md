@@ -1,6 +1,6 @@
-# pi-profile
+# pi-profile-switch
 
-`pi-profile` is a Pi package that treats profiles as Pi's session-selection mechanism: a profile selects the prompt, model, model visibility of skills, MCP servers, and tools of a running Pi session, and switches that selection in place.
+`pi-profile-switch` is a Pi package that treats profiles as Pi's session-selection mechanism: a profile selects the prompt, model, model visibility of skills, MCP servers, and tools of a running Pi session, and switches that selection in place.
 
 ## Language
 
@@ -35,7 +35,7 @@ _Avoid_: skill filtering if it implies unloading
 Applying a selection to the running Pi: model preset, active tools, MCP allowlist. A failed activation applies nothing.
 
 **pi-mcp-adapter**:
-The optional external Pi package that owns MCP server configuration, connections, and credentials. pi-profile integrates with it but never stores MCP connection details in profiles.
+The optional external Pi package that owns MCP server configuration, connections, and credentials. pi-profile-switch integrates with it but never stores MCP connection details in profiles.
 
 **Project trust**:
-Pi's trust decision for a project directory (`ctx.isProjectTrusted()`). pi-profile never reads an untrusted project's catalog or state files. Pi itself gates project-scoped resources.
+Pi's trust decision for a project directory (`ctx.isProjectTrusted()`). pi-profile-switch never reads an untrusted project's catalog or state files. Pi itself gates project-scoped resources.

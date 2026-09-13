@@ -8,7 +8,7 @@ Status: done
 
 旧模型下，profile 引用 extension 前必须先在 `resources.json` 里注册逻辑 ID，且注册要求手写指向包内部文件的**绝对路径**。这带来三层摩擦：
 
-1. 双文件心智负担：加一个 extension 要动两个文件，用户必须先理解"逻辑 ID"这个 pi-profile 自创概念。
+1. 双文件心智负担：加一个 extension 要动两个文件，用户必须先理解"逻辑 ID"这个 pi-profile-switch 自创概念。
 2. 注册内容脆弱：entry 绝对路径要求用户翻 `node_modules` 找入口，换机器或 home 迁移即断——而这条信息 Pi 自己已经知道（`pi packages` 列表 + 包内 `package.json#pi.extensions`）。
 3. 失败反馈不可行动：字面量 ID 未注册时激活失败但错误文案无修复指引；glob 引用零匹配则完全静默成功，extension 没加载用户毫无察觉。
 

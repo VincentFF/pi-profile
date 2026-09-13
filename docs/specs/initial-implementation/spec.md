@@ -1,4 +1,4 @@
-# pi-profile 初始实现 spec
+# pi-profile-switch 初始实现 spec
 
 Status: ready-for-agent
 
@@ -8,9 +8,9 @@ Pi 是极简 agent：它发现全部可用的 skills、extensions、MCP servers 
 
 ## Solution
 
-`pi-profile` 是一个 Pi package，把 profile 作为 Pi runtime 的资源选择机制。一个 profile 按名称引用已存在的 skills、ResourceRegistry 中的 extension、`pi-mcp-adapter` 已配置的 MCP server 和 Pi 全局 tool name，可选声明 model、thinkingLevel 和 instructions。
+`pi-profile-switch` 是一个 Pi package，把 profile 作为 Pi runtime 的资源选择机制。一个 profile 按名称引用已存在的 skills、ResourceRegistry 中的 extension、`pi-mcp-adapter` 已配置的 MCP server 和 Pi 全局 tool name，可选声明 model、thinkingLevel 和 instructions。
 
-`pi-profile` 启动器在首个 agent turn 前完成初始 profile 解析与资源过滤；对话中通过 `/profile` 命令族切换、查看、临时调整（runtime overlay）和维护 profile 与 resource registry。资源只有一份实现，profile 只持有引用；切换保留 session、不改写历史。原生 `pi` 入口不变，总是以内建 `default` profile（全量资源）启动。
+`pi-profile-switch` 启动器在首个 agent turn 前完成初始 profile 解析与资源过滤；对话中通过 `/profile` 命令族切换、查看、临时调整（runtime overlay）和维护 profile 与 resource registry。资源只有一份实现，profile 只持有引用；切换保留 session、不改写历史。原生 `pi` 入口不变，总是以内建 `default` profile（全量资源）启动。
 
 ## User Stories
 
@@ -85,7 +85,7 @@ Pi 是极简 agent：它发现全部可用的 skills、extensions、MCP servers 
 
 ## Implementation Decisions
 
-宿主架构：子进程 + 生成式 settings（ADR-0005，取代 ADR-0001 的 SDK 宿主方案）。launcher 把 profile 的资源选择编码为 pi-profile 私有的生成 settings，spawn 真实 `pi` 子进程并全量透传用户参数；会话内切换由 pi 内的 pi-profile extension 重写 settings 并调用 Pi 原生 `ctx.reload()` 完成。
+宿主架构：子进程 + 生成式 settings（ADR-0005，取代 ADR-0001 的 SDK 宿主方案）。launcher 把 profile 的资源选择编码为 pi-profile-switch 私有的生成 settings，spawn 真实 `pi` 子进程并全量透传用户参数；会话内切换由 pi 内的 pi-profile-switch extension 重写 settings 并调用 Pi 原生 `ctx.reload()` 完成。
 
 ### 模块（全部新建，greenfield）
 
@@ -95,7 +95,7 @@ Pi 是极简 agent：它发现全部可用的 skills、extensions、MCP servers 
 - **SkillRegistry**：以只读方式调用 Pi SDK 的 `DefaultResourceLoader`（真实 agentDir + cwd）获得 Pi 原生发现结果，输出 skill name → 最终 `SKILL.md`（含 source 与 source scope）；沿用 Pi 同名优先级，不自定义胜出规则；每次启动或 reload 重新解析。
 - **ProfileResolver**：纯函数——输入 profile、registry、skills、可选 MCP server registry、overlay 和 trust 状态，输出不可变 ActivationPlan；展开四类 glob，应用 overlay，合并 `alwaysOn` 与依赖闭包；overlay 不能关闭 `alwaysOn` extension 或其依赖链（传递闭包）；未声明的 model/thinking/instructions 不进入 plan；**trust 守门**：自读真实 `trust.json`（含 `--approve` 一次性输入），不可信项目的 catalog、registry、资源不进入 plan。
 - **SettingsGenerator**：把 ActivationPlan 编码为 per-launch 运行目录——生成的 `settings.json`（agentDir 级与项目级白名单附加路径、`~/.agents` 排除、packages 对象形式 allowlist、非 `default` 时 `defaultProjectTrust: "never"`、已信任项目 settings 按 Pi 合并规则并入）、symlink 组（trust/auth/models/models-store/npm → 真实 agentDir）、环境变量（`PI_CODING_AGENT_DIR`、`PI_CODING_AGENT_SESSION_DIR`）与生成 flags（`--tools`、`--model`）。用户配置永不修改。
-- **pi-profile extension**（在 pi 内，经 `-e` 加载）：注册 `/profile` 命令族、selector 与 CRUD 向导；`/profile use` 保存 state、等待 agent idle、重写生成的 settings 并 `ctx.reload()`（session 保留）；失败时写回上一份已验证 settings 快照并再次 reload；`before_agent_start` 注入 profile instructions；reload 后依据 Pi 实际注册结果设置活动 tools、可选 model 与 thinking；经 `pi.events` 与 adapter 协调 MCP runtime allowlist；CRUD 只在 TUI mode 提供。
+- **pi-profile-switch extension**（在 pi 内，经 `-e` 加载）：注册 `/profile` 命令族、selector 与 CRUD 向导；`/profile use` 保存 state、等待 agent idle、重写生成的 settings 并 `ctx.reload()`（session 保留）；失败时写回上一份已验证 settings 快照并再次 reload；`before_agent_start` 注入 profile instructions；reload 后依据 Pi 实际注册结果设置活动 tools、可选 model 与 thinking；经 `pi.events` 与 adapter 协调 MCP runtime allowlist；CRUD 只在 TUI mode 提供。
 - **McpCoordination**（extension 侧）：发现 adapter 是否安装；经 `pi.events` 发布/读取 server 状态；`/mcp enable|disable` 经 adapter 的 profile-scoped state store 写当前 profile 的 `mcp` 数组（锁定支持该约定的 adapter 版本，ADR-0002）；adapter 未安装且 profile 声明 `mcp` 时激活失败；profile 引用 adapter 未发现的 server 时激活失败。
 - **RuntimeStateStore**：按 source scope 读写 `pi-profile-state.json`（activeProfile、overlay、lastVerifiedProfile）；项目定义的写项目 state，全局定义与 `default` 写全局 state。
 
@@ -104,7 +104,7 @@ Pi 是极简 agent：它发现全部可用的 skills、extensions、MCP servers 
 - **`profiles.json`**（global + project）：`profiles` map；每个 profile 含可选 `label`、`description`、`skills`、`extensions`、`mcp`、`tools`（均支持 glob）、`model`（`provider`/`id`/`thinkingLevel`）、`instructions`；无继承字段。
 - **`resources.json`**（global + project）：`resources` map；条目含 `kind`（固定 `extension`）、`entry`（绝对入口路径）、可选 `dependsOn`、可选 `alwaysOn`；MCP 能力不通过此文件声明。
 - **`pi-profile-state.json`**（global + project）：`activeProfile`、`overlay`（`disabledSkills`/`disabledExtensions`/`disabledMcp`/`tools`）、`lastVerifiedProfile`。
-- **生成的 `settings.json`**（pi-profile 私有运行时产物）：非稳定 interface 面，schema 随 Pi 版本演进，由集成测试守护漂移。
+- **生成的 `settings.json`**（pi-profile-switch 私有运行时产物）：非稳定 interface 面，schema 随 Pi 版本演进，由集成测试守护漂移。
 - 两份 JSON schema 随包发布（`schemas/`），examples 提供样例。
 
 ### 关键交互

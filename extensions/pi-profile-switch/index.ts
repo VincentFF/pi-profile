@@ -52,7 +52,7 @@ import {
 import { buildStatusReport, formatStatusMarkdown } from "../../src/switching/status.ts";
 
 /**
- * pi-profile extension entry (ADR-0007).
+ * pi-profile-switch extension entry (ADR-0007).
  *
  * Installed like any other Pi package: no launcher, no environment override,
  * no generated settings. The agent dir stays Pi's own, so sessions,
@@ -180,7 +180,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 
 	function sendListMessage(entries: ProfileListEntry[]): void {
 		pi.sendMessage({
-			customType: "pi-profile",
+			customType: "pi-profile-switch",
 			content: formatProfileList(entries, current?.selection.name),
 			display: true,
 			details: { kind: "list", profiles: entries },
@@ -368,7 +368,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					: "the system prompt carries no skills section";
 			notify(
 				ctx,
-				`pi-profile: ${cause} — profile "${current.selection.name}" skills are not narrowed this session`,
+				`pi-profile-switch: ${cause} — profile "${current.selection.name}" skills are not narrowed this session`,
 				"warning",
 			);
 		}
@@ -382,7 +382,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("profile", {
-		description: `pi-profile: ${PROFILE_USAGE}`,
+		description: `pi-profile-switch: ${PROFILE_USAGE}`,
 		handler: async (args, ctx) => {
 			const [subcommandRaw, ...rest] = args.trim().split(/\s+/).filter(Boolean);
 			const subcommand = subcommandRaw ?? "";
@@ -459,7 +459,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("mcp", {
-		description: "pi-profile: /mcp enable <server> | /mcp disable <server>",
+		description: "pi-profile-switch: /mcp enable <server> | /mcp disable <server>",
 		handler: async (args, ctx) => {
 			const [action, server] = args.trim().split(/\s+/).filter(Boolean);
 			if (!["enable", "disable"].includes(action ?? "") || server === undefined) {
@@ -511,7 +511,7 @@ async function sendStatus(
 ): Promise<void> {
 	if (current === undefined) {
 		pi.sendMessage({
-			customType: "pi-profile",
+			customType: "pi-profile-switch",
 			content: "no active profile (activation failed or nothing was resolved — a plain Pi session)",
 			display: true,
 			details: { kind: "status", report: undefined },
@@ -541,7 +541,7 @@ async function sendStatus(
 		...(overlay !== undefined ? { overlay } : {}),
 	};
 	pi.sendMessage({
-		customType: "pi-profile",
+		customType: "pi-profile-switch",
 		content: formatStatusMarkdown(report),
 		display: true,
 		details: { kind: "status", report },

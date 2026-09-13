@@ -12,7 +12,7 @@
  *
  * A missing or malformed state file is not an error on read — it simply
  * means "fall back to the default profile". Unexpected I/O errors
- * propagate. A state file written by an older pi-profile is read with its
+ * propagate. A state file written by an older pi-profile-switch is read with its
  * retired fields (`lastVerifiedProfile`, `overlay.disabledExtensions`)
  * ignored; the next write drops them.
  */
