@@ -166,6 +166,47 @@ async function writeState(activeProfile: string): Promise<void> {
 	await writeFile(path.join(fixture.agentDir, "pi-profile-state.json"), JSON.stringify({ activeProfile }));
 }
 
+describe("saved-selection scope", () => {
+	it(
+		"restores the built-in default from a project profile switch",
+		{ timeout: 90_000 },
+		async () => {
+			// A project profile is saved into the project state; switching to
+			// the built-in default must clear it, or the stale project entry
+			// shadows the choice on the next startup.
+			await writeCatalog({ global: {} });
+			await writeFile(
+				path.join(fixture.cwd, ".pi", "profiles.json"),
+				JSON.stringify({ schemaVersion: 1, profiles: { local: { tools: ["read"] } } }),
+			);
+
+			const first = await start(["-e", EXTENSION], { model: false });
+			try {
+				await first.send({ type: "prompt", message: "/profile use local" });
+				await waitForNotify(first, "profile active: local");
+				await first.send({ type: "prompt", message: "/profile use default" });
+				await waitForNotify(first, "profile active: default");
+			} finally {
+				await first.close();
+			}
+
+			const projectState = JSON.parse(
+				await readFile(path.join(fixture.cwd, ".pi", "pi-profile-state.json"), "utf8"),
+			) as { activeProfile?: string };
+			expect(projectState.activeProfile).toBeUndefined();
+
+			const second = await start(["-e", EXTENSION], { model: false });
+			try {
+				await second.send({ type: "prompt", message: "/profile status" });
+				const status = await waitForCustomMessage(second, "pi-profile-switch");
+				expect(status).toContain("### profile: default (builtin)");
+			} finally {
+				await second.close();
+			}
+		},
+	);
+});
+
 describe("native Pi behavior with the extension loaded", () => {
 	it(
 		"seeds the default catalog on the first load and activates the seeded profile on restart",

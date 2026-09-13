@@ -81,6 +81,8 @@ overlay 是临时调整：`/profile customize` 收窄当前 profile，`/profile 
 
 profile 的来源决定 state 写入范围：项目定义写项目 state；全局定义写全局 state；内建 `default` 视为全局定义。若项目 catalog 删除覆盖全局的同名 profile，全局 profile 立即重新出现。
 
+保存的选择只存在于一个 scope。项目 state 的优先级高于全局 state，因此切换到全局或内建 `default` 时必须清掉项目 state 里的旧 `activeProfile`，否则下次启动仍会恢复上一个项目 profile，`default` 看起来"切不回去"。每个 scope 的 `overlay` 不参与这套清理：它属于创建它的那个 profile。
+
 profile 不支持继承。项目同名 profile 是完整替换，不深度合并、不追加数组，也不提供 `extends`。需要变体时用 CRUD 向导复制完整定义后创建新名称。
 
 `model` 与 `instructions` 可选。未声明时不修改 Pi 当前的模型与 system prompt。

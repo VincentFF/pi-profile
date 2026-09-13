@@ -249,7 +249,7 @@ pi [--profile review]
   │
   ├─ 重新读取 catalog/adapter/live view
   ├─ resolve + validate（失败时不改变任何状态）
-  ├─ 持久化选择到目标 profile 的 source scope（清除 overlay）
+  ├─ 持久化选择到目标 profile 的 source scope（清除 overlay）；切到另一个 scope 时清掉其 stale `activeProfile`，保留其 overlay
   ├─ apply（model/tools 立即生效）
   ├─ MCP 选择变化 → 重写 overlay → waitForIdle → ctx.reload()（ADR-0008）
   └─ skills/instructions：下一个 turn 的 prompt 直接带上
@@ -308,3 +308,4 @@ pi-profile-switch/
 | 全局 `<agentDir>/AGENTS.md` 进入 system prompt | probe 扩展断言 prompt 含 fixture 内容 |
 | 所有已安装 extension 在任意 profile 下加载 | 扩展不控制 extension 集合 |
 | `default` profile 逐字原生 | 不过滤、不 setActiveTools、不发布 allowlist |
+| 任意 profile 都能切回 `default`，并在下次启动保持 | 集成测试：项目 profile → `/profile use default` → 重启后为 `default`；单测覆盖跨 scope 清理与 overlay 保留 |

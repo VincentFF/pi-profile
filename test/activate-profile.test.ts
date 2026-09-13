@@ -75,6 +75,82 @@ describe("activateProfile", () => {
 		await expect(readState(fixture.agentDir)).rejects.toThrow();
 	});
 
+	it("clears a project selection when a global profile is activated", async () => {
+		await writeFile(
+			path.join(fixture.cwd, ".pi", "profiles.json"),
+			JSON.stringify({ schemaVersion: 1, profiles: { local: { tools: ["grep"] } } }),
+		);
+		const deps = makeDeps({ projectTrusted: true });
+		await activateProfile("local", deps);
+
+		await activateProfile("review", deps);
+
+		// The saved selection lives in one scope only: the stale project entry
+		// would shadow this global choice on the next startup.
+		expect(await readState(path.join(fixture.cwd, ".pi"))).toEqual({});
+		expect(await readState(fixture.agentDir)).toEqual({ activeProfile: "review" });
+	});
+
+	it("clears a project selection when the built-in default is activated", async () => {
+		await writeFile(
+			path.join(fixture.cwd, ".pi", "profiles.json"),
+			JSON.stringify({ schemaVersion: 1, profiles: { local: { tools: ["grep"] } } }),
+		);
+		const deps = makeDeps({ projectTrusted: true });
+		await activateProfile("local", deps);
+
+		await activateProfile("default", deps);
+
+		expect(await readState(path.join(fixture.cwd, ".pi"))).toEqual({});
+		expect(await readState(fixture.agentDir)).toEqual({ activeProfile: "default" });
+	});
+
+	it("keeps the project overlay that belongs to the project profile", async () => {
+		await writeFile(
+			path.join(fixture.cwd, ".pi", "profiles.json"),
+			JSON.stringify({ schemaVersion: 1, profiles: { local: { tools: ["grep"] } } }),
+		);
+		await writeFile(
+			path.join(fixture.cwd, ".pi", "pi-profile-state.json"),
+			JSON.stringify({ activeProfile: "local", overlay: { disabledSkills: ["git-commit"] } }),
+		);
+		const deps = makeDeps({ projectTrusted: true });
+
+		await activateProfile("review", deps);
+
+		expect(await readState(path.join(fixture.cwd, ".pi"))).toEqual({
+			overlay: { disabledSkills: ["git-commit"] },
+		});
+	});
+
+	it("clears a global selection when a project profile is activated", async () => {
+		await writeFile(
+			path.join(fixture.cwd, ".pi", "profiles.json"),
+			JSON.stringify({ schemaVersion: 1, profiles: { local: { tools: ["grep"] } } }),
+		);
+		const deps = makeDeps({ projectTrusted: true });
+		await activateProfile("review", deps);
+
+		await activateProfile("local", deps);
+
+		expect(await readState(fixture.agentDir)).toEqual({});
+		expect(await readState(path.join(fixture.cwd, ".pi"))).toEqual({ activeProfile: "local" });
+	});
+
+	it("never touches an untrusted project's state file", async () => {
+		await writeFile(
+			path.join(fixture.cwd, ".pi", "pi-profile-state.json"),
+			JSON.stringify({ activeProfile: "local" }),
+		);
+		const deps = makeDeps({ projectTrusted: false });
+
+		await activateProfile("review", deps);
+
+		expect(await readState(fixture.agentDir)).toEqual({ activeProfile: "review" });
+		// Left byte-identical: an untrusted project is not read or written.
+		expect(await readState(path.join(fixture.cwd, ".pi"))).toEqual({ activeProfile: "local" });
+	});
+
 	it("does not persist a transient startup selection", async () => {
 		const deps = makeDeps();
 

@@ -82,6 +82,18 @@ export async function resolveProfileSelection(
 	return resolveSelection({ profile, overlay, live: deps.live, suppressTools });
 }
 
+/** Drops a stale saved selection from the scope that no longer owns it. A
+ *  project state file left behind by a previous project profile shadows the
+ *  new global choice on the next startup (project state wins), so the switch
+ *  path clears it; the scope's overlay stays, because that belongs to the
+ *  profile it was created for. */
+async function clearOtherSelection(stateDir: string): Promise<void> {
+	const store = new RuntimeStateStore(stateDir);
+	if ((await store.read()).activeProfile !== undefined) {
+		await store.update({ otherActiveProfile: undefined });
+	}
+}
+
 /** Activates a profile: resolve, validate, optionally persist, apply. */
 export async function activateProfile(
 	name: string,
@@ -100,10 +112,27 @@ export async function activateProfile(
 	}
 
 	if (options?.persist !== false) {
-		await new RuntimeStateStore(stateDirFor(selection.source, deps)).update({
-			activeProfile: selection.name,
-			overlay: overlay ?? undefined,
-		});
+		// Exactly one scope holds the saved selection: the project state file
+		// for a project profile, the global one otherwise (including the
+		// built-in `default`). A project profile is only reachable in a
+		// trusted project, so an untrusted project is skipped exactly like
+		// its catalog read — its state file stays untouched (ADR-0007).
+		const ownDir = stateDirFor(selection.source, deps);
+		const projectDir = stateDirFor("project", deps);
+		const writable = selection.source !== "project" || deps.projectTrusted;
+		if (writable) {
+			await new RuntimeStateStore(ownDir).update({
+				activeProfile: selection.name,
+				overlay: overlay ?? undefined,
+			});
+			// The scope that owned the previous selection must let go of it,
+			// or the next startup restores it: project state wins over global.
+			// An untrusted project is never read or written here either.
+			const otherDir = selection.source === "project" ? stateDirFor("global", deps) : projectDir;
+			if (otherDir !== ownDir && (otherDir !== projectDir || deps.projectTrusted)) {
+				await clearOtherSelection(otherDir);
+			}
+		}
 	}
 
 	const result = await applySelection({ selection, surface: deps.surface, preset });
