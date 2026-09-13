@@ -1,6 +1,6 @@
 {
   "name": "pi-profile-switch",
-  "version": "0.1.0",
+  "version": "0.2.0",
   "description": "Named profiles for Pi: skills, MCP servers, tools, model, and instructions per workflow — switched in place in the same session.",
   "type": "module",
   "keywords": [
