@@ -98,7 +98,7 @@ describe("launcher integration: named global profiles", () => {
 				expect(commands.some((command) => command.name === "selected-ext" && command.source === "extension")).toBe(true);
 				expect(names).not.toContain("unselected-ext");
 				expect(names).not.toContain("unregistered-ext");
-			} finally {
+			} catch(e) { console.error("STDERR:", rpc.stderr); throw e; } finally {
 				await rpc.close();
 			}
 
@@ -125,7 +125,7 @@ describe("launcher integration: named global profiles", () => {
 				const names = await rpc.skillCommandNames();
 				expect(names).toContain("skill:alpha-skill");
 				expect(names).not.toContain("skill:beta-skill");
-			} finally {
+			} catch(e) { console.error("STDERR:", rpc.stderr); throw e; } finally {
 				await rpc.close();
 			}
 		},
@@ -144,7 +144,7 @@ describe("launcher integration: named global profiles", () => {
 			});
 			try {
 				expect(await first.skillCommandNames()).toEqual(["skill:research-web"]);
-			} finally {
+			} catch(e) { console.error("STDERR:", rpc.stderr); throw e; } finally {
 				await first.close();
 			}
 
@@ -156,7 +156,7 @@ describe("launcher integration: named global profiles", () => {
 			});
 			try {
 				expect(await second.skillCommandNames()).toEqual(["skill:research-docs", "skill:research-web"]);
-			} finally {
+			} catch(e) { console.error("STDERR:", rpc.stderr); throw e; } finally {
 				await second.close();
 			}
 		},
@@ -191,7 +191,7 @@ describe("launcher integration: named global profiles", () => {
 				expect(model?.provider).toBe("testprov");
 				expect(model?.id).toBe("test-model");
 				expect(state.data?.thinkingLevel).toBe("high");
-			} finally {
+			} catch(e) { console.error("STDERR:", rpc.stderr); throw e; } finally {
 				await rpc.close();
 			}
 		},
@@ -246,7 +246,7 @@ describe("launcher integration: named global profiles", () => {
 				// but before_agent_start has already fired by then.
 				await rpc.send({ type: "prompt", message: "hello" }, 15_000).catch(() => undefined);
 				await new Promise((resolve) => setTimeout(resolve, 2_000));
-			} finally {
+			} catch(e) { console.error("STDERR:", rpc.stderr); throw e; } finally {
 				await rpc.close();
 			}
 
@@ -319,7 +319,7 @@ describe("launcher integration: named global profiles", () => {
 			});
 			try {
 				await rpc.commandNames();
-			} finally {
+			} catch(e) { console.error("STDERR:", rpc.stderr); throw e; } finally {
 				await rpc.close();
 			}
 

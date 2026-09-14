@@ -73,7 +73,10 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		const result = await generateRuntimeDir(plan, { agentDir: fixture.agentDir, discovery });
 		const settings = await generatedSettings(result.runtimeDir);
 
-		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md")]);
+		expect(settings.skills).toEqual([
+			path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"),
+			`-${path.join(result.runtimeDir, "skills", "beta-skill", "SKILL.md")}`,
+		]);
 	});
 
 	it("force-excludes unselected ~/.agents skills while keeping selected ones auto-discovered", async () => {
@@ -194,18 +197,26 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		expect(settings.extensions ?? []).toEqual([]);
 	});
 
-	it("generates --tools and --model/--thinking flags only when declared", async () => {
+	it("generates default model and tools in settings.json only when declared", async () => {
 		const withBoth = await generateRuntimeDir(
 			selectionPlan({ tools: ["read", "grep"], model: { provider: "openai", id: "gpt-5.4", thinkingLevel: "high" } }),
 			{ agentDir: fixture.agentDir, discovery: { skills: [], packages: [] } },
 		);
-		expect(withBoth.flags).toEqual(["--tools", "read,grep", "--model", "openai/gpt-5.4:high"]);
+		const settings = JSON.parse(await readFile(path.join(withBoth.runtimeDir, "settings.json"), "utf8"));
+		expect(settings.defaultTools).toEqual(["read", "grep"]);
+		expect(settings.defaultProvider).toBe("openai");
+		expect(settings.defaultModel).toBe("gpt-5.4");
+		expect(settings.defaultThinkingLevel).toBe("high");
 
 		const bare = await generateRuntimeDir(selectionPlan({}), {
 			agentDir: fixture.agentDir,
 			discovery: { skills: [], packages: [] },
 		});
-		expect(bare.flags).toEqual([]);
+		const bareSettings = JSON.parse(await readFile(path.join(bare.runtimeDir, "settings.json"), "utf8"));
+		expect(bareSettings.defaultTools).toBeUndefined();
+		expect(bareSettings.defaultProvider).toBeUndefined();
+		expect(bareSettings.defaultModel).toBeUndefined();
+		expect(bareSettings.defaultThinkingLevel).toBeUndefined();
 	});
 
 	it("writes the launch plan file for the in-pi extension (profile, instructions)", async () => {
@@ -219,8 +230,8 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		expect(plan.instructions).toBe("Be picky.");
 	});
 
-	it("carries the mcp allowlist into the launch plan and links the adapter's global config", async () => {
-		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { github: {} } }));
+	it("filters the MCP servers into an instance mcp.json when mcps is declared", async () => {
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { github: {}, missing: {} } }));
 
 		const result = await generateRuntimeDir(selectionPlan({ mcp: ["github"] }), {
 			agentDir: fixture.agentDir,
@@ -229,8 +240,19 @@ describe("generateRuntimeDir (named profile selection)", () => {
 
 		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
 		expect(plan.mcp).toEqual(["github"]);
-		// The adapter resolves its global config from PI_CODING_AGENT_DIR; the
-		// link keeps it pointing at the real file (pi-profile never writes it).
+		
+		const mcpInstance = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
+		expect(mcpInstance.mcpServers).toEqual({ github: {} });
+	});
+
+	it("symlinks the real mcp.json when no mcp allowlist is declared", async () => {
+		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { github: {} } }));
+
+		const result = await generateRuntimeDir(selectionPlan({ mcp: undefined }), {
+			agentDir: fixture.agentDir,
+			discovery: { skills: [], packages: [] },
+		});
+
 		expect(await realpath(path.join(result.runtimeDir, "mcp.json"))).toBe(
 			await realpath(path.join(fixture.agentDir, "mcp.json")),
 		);

@@ -17,6 +17,7 @@
 
 import path from "node:path";
 
+import { resolveGlobalProfilesPath } from "./workspace.ts";
 import { isRecord, readJsonFile } from "./json-file.ts";
 
 export const PROFILE_SCHEMA_VERSION = 1;
@@ -150,7 +151,7 @@ export class ProfileCatalog {
 	 * CatalogError. Project entries replace same-name global entries.
 	 */
 	static async load(agentDir: string, options?: { projectDir?: string }): Promise<ProfileCatalog> {
-		const globalProfiles = await loadCatalogFile(path.join(agentDir, "profiles.json"));
+		const globalProfiles = await loadCatalogFile(resolveGlobalProfilesPath(agentDir));
 		const profiles = new Map<string, CatalogEntry>();
 		for (const [name, definition] of globalProfiles) {
 			profiles.set(name, { source: "global", definition });

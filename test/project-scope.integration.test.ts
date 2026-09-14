@@ -146,10 +146,9 @@ describe("launcher integration: project scope and trust", () => {
 
 			// The generated settings merged the trusted project's unmanaged keys
 			// and still suppress project auto-discovery.
-			const runtimeRoot = path.join(fixture.agentDir, "pi-profile", "runtime");
-			const launches = await readdir(runtimeRoot);
+			const runtimeDir = path.join(fixture.profileSwitchDir, "instances", "impl", "agent");
 			const generated = JSON.parse(
-				await readFile(path.join(runtimeRoot, launches.sort().at(-1)!, "settings.json"), "utf8"),
+				await readFile(path.join(runtimeDir, "settings.json"), "utf8"),
 			);
 			expect(generated.projectManagedKey).toBe("from-project");
 			expect(generated.defaultProjectTrust).toBe("never");

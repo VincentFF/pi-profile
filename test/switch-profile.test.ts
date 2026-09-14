@@ -169,7 +169,11 @@ describe("switchProfile", () => {
 
 		await switchProfile(undefined, deps(), { reloadCurrent: true });
 
+		const runtimeDir = deps().runtimeDir;
 		const settings = JSON.parse(await readFile(path.join(runtimeDir, "settings.json"), "utf8"));
-		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "beta-skill", "SKILL.md")]);
+		expect(settings.skills).toEqual([
+			path.join(fixture.agentDir, "skills", "beta-skill", "SKILL.md"),
+			`-${path.join(runtimeDir, "skills", "alpha-skill", "SKILL.md")}`,
+		]);
 	});
 });

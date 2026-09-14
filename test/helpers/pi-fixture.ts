@@ -15,15 +15,23 @@ export interface PiFixture {
 	cwd: string;
 	/** Isolated global agent dir (stands in for ~/.pi/agent). */
 	agentDir: string;
+	/** Isolated profile switch dir. */
+	profileSwitchDir: string;
 }
 
 export async function createPiFixture(): Promise<PiFixture> {
 	const root = await mkdtemp(path.join(tmpdir(), "pi-profile-"));
 	const cwd = path.join(root, "project");
 	const agentDir = path.join(root, "agent");
+	const profileSwitchDir = path.join(root, ".pi-profile-switch");
 	await mkdir(path.join(cwd, ".pi"), { recursive: true });
 	await mkdir(agentDir, { recursive: true });
-	return { root, cwd, agentDir };
+	await mkdir(profileSwitchDir, { recursive: true });
+	
+	// Set the environment variable so all code picks up the test workspace.
+	process.env.PI_PROFILE_SWITCH_DIR = profileSwitchDir;
+
+	return { root, cwd, agentDir, profileSwitchDir };
 }
 
 /** Registers a skill in the fixture agent dir's global skills directory. */

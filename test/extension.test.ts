@@ -11,15 +11,19 @@ import { fakeEventBus, installFakeAdapter, type FakeEventBus } from "./helpers/f
 
 let root: string;
 let savedAgentDir: string | undefined;
+let savedSwitchDir: string | undefined;
 
 beforeEach(async () => {
 	root = await mkdtemp(path.join(tmpdir(), "pi-profile-ext-"));
 	savedAgentDir = process.env.PI_CODING_AGENT_DIR;
+	savedSwitchDir = process.env.PI_PROFILE_SWITCH_DIR;
 	process.env.PI_CODING_AGENT_DIR = root;
+	process.env.PI_PROFILE_SWITCH_DIR = root;
 });
 
 afterEach(async () => {
 	process.env.PI_CODING_AGENT_DIR = savedAgentDir;
+	process.env.PI_PROFILE_SWITCH_DIR = savedSwitchDir;
 	await rm(root, { recursive: true, force: true });
 });
 

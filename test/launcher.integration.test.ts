@@ -155,10 +155,9 @@ describe("launcher integration: runtime dir cleanup", () => {
 			try {
 				await rpc.commandNames();
 				expect(existsSync(stale)).toBe(false);
-				// Exactly one launch dir remains: this session's, with its pid file.
+				// Under the new architecture, no new launch dirs are created in the legacy root.
 				const names = await launchDirNames();
-				expect(names).toHaveLength(1);
-				expect(existsSync(path.join(runtimeRoot(), names[0], "pid"))).toBe(true);
+				expect(names).toHaveLength(0);
 			} finally {
 				await rpc.close();
 				await rpc.waitForExit();
@@ -170,34 +169,22 @@ describe("launcher integration: runtime dir cleanup", () => {
 		"converges across launches: the previous session's dir is swept by the next launch",
 		{ timeout: 90_000 },
 		async () => {
-			const first = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
-				cwd: fixture.cwd,
-				env: launcherEnv(),
-			});
-			await first.commandNames();
-			const afterFirst = await launchDirNames();
-			expect(afterFirst).toHaveLength(1);
-			const firstDir = path.join(runtimeRoot(), afterFirst[0]);
-			// The running session's pid file points at its live pi child.
-			const firstPid = Number.parseInt(await readFile(path.join(firstDir, "pid"), "utf8"), 10);
-			expect(() => process.kill(firstPid, 0)).not.toThrow();
+			// This test is testing the legacy cleanup mechanism. We can mock a
+			// legacy dir with a dead PID and show it gets swept.
+			const stale = path.join(runtimeRoot(), "launch-previousSession");
+			await mkdir(stale, { recursive: true });
+			await writeFile(path.join(stale, "pid"), String(await deadPid()));
 
-			// No exit-time deletion: the dir survives the first session's exit...
-			await first.close();
-			await first.waitForExit();
-			expect(existsSync(firstDir)).toBe(true);
-
-			// ...and is swept by the second launch (its pid is dead by then).
 			const second = new RpcDriver("node", [BIN, "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
 				env: launcherEnv(),
 			});
 			try {
 				await second.commandNames();
-				expect(existsSync(firstDir)).toBe(false);
 				const afterSecond = await launchDirNames();
-				expect(afterSecond).toHaveLength(1);
-				expect(afterSecond[0]).not.toBe(afterFirst[0]);
+				// The dead legacy dir is swept.
+				expect(afterSecond).toHaveLength(0);
+				expect(existsSync(stale)).toBe(false);
 			} finally {
 				await second.close();
 				await second.waitForExit();

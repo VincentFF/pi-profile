@@ -79,7 +79,7 @@ describe("customizeOverlay / resetOverlay", () => {
 		await customizeOverlay(deps(), parseCustomizeArgs("disable skill beta-skill"));
 
 		const settings = await readSettings();
-		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md")]);
+		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"), `-${path.join(runtimeDir, "skills", "beta-skill", "SKILL.md")}`]);
 		expect((await readState()).overlay).toEqual({ disabledSkills: ["beta-skill"] });
 		// The catalog file is untouched.
 		const catalog = JSON.parse(await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8"));
@@ -129,7 +129,7 @@ describe("customizeOverlay / resetOverlay", () => {
 		await switchProfile(undefined, deps(), { reloadCurrent: true });
 
 		const settings = await readSettings();
-		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md")]);
+		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"), `-${path.join(runtimeDir, "skills", "beta-skill", "SKILL.md")}`]);
 		expect((await readState()).overlay).toEqual({ disabledSkills: ["beta-skill"] });
 	});
 
@@ -142,7 +142,7 @@ describe("customizeOverlay / resetOverlay", () => {
 		await customizeOverlay(deps(), parseCustomizeArgs("disable skill beta-skill"));
 
 		const settings = await readSettings();
-		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md")]);
+		expect(settings.skills).toEqual([path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"), `-${path.join(runtimeDir, "skills", "beta-skill", "SKILL.md")}`]);
 		expect(settings.defaultProjectTrust).toBe("never");
 	});
 });

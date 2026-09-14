@@ -38,11 +38,12 @@
  */
 
 import { existsSync } from "node:fs";
-import { mkdir, mkdtemp, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
 import type { ActivationPlan } from "./profile-resolver.ts";
+import { getInstancesRootDir } from "./workspace.ts";
 import { isRecord } from "./json-file.ts";
 import type { SkillEntry } from "./skill-registry.ts";
 
@@ -83,15 +84,8 @@ export interface GeneratedRuntime {
 	flags: string[];
 }
 
-/** State files that must keep pointing at the user's real agent dir.
- *  mcp.json is pi-mcp-adapter's global config: adapter-managed state that
- *  pi-profile never writes, but the adapter must still find it (its global
- *  config path derives from PI_CODING_AGENT_DIR). */
-const STATE_FILE_LINKS = ["trust.json", "auth.json", "models.json", "models-store.json", "mcp.json"] as const;
-
-/** State directories that must keep pointing at the real agent dir: package
- *  install roots (npm/git) and Pi's managed binaries (bin). */
-const STATE_DIR_LINKS = ["npm", "git", "bin"] as const;
+/** Files managed by pi-profile-switch; excluded from auto-symlinking. */
+const EXCLUDED_SYMLINKS = ["settings.json", "mcp.json", "APPEND_SYSTEM.md", "pi-profile.json"] as const;
 
 /** Resource dirs rooted at the real agent dir, re-included for the default
  *  profile because PI_CODING_AGENT_DIR moves the discovery root. */
@@ -145,6 +139,7 @@ function buildSelectionSettings(
 	userSettings: Record<string, unknown>,
 	agentDir: string,
 	discovery: DiscoveryContext,
+	runtimeDir: string,
 ): Record<string, unknown> {
 	const settings = { ...userSettings };
 
@@ -166,9 +161,16 @@ function buildSelectionSettings(
 	}
 	for (const skill of discovery.skills) {
 		if (skill.origin === "package") continue;
-		if (!isUnderPath(skill.filePath, homeAgentsSkillsDir())) continue;
 		if (selectedPaths.has(skill.filePath)) continue;
-		skillEntries.push(`-${skill.filePath}`);
+		
+		// If the skill is in the real agentDir, Pi will discover it via the symlink.
+		// We must exclude the symlink path so Pi actually excludes it.
+		if (isUnderPath(skill.filePath, agentDir)) {
+			const rel = path.relative(agentDir, skill.filePath);
+			skillEntries.push(`-${path.join(runtimeDir, rel)}`);
+		} else {
+			skillEntries.push(`-${skill.filePath}`);
+		}
 	}
 	settings.skills = skillEntries;
 
@@ -227,6 +229,20 @@ function buildSelectionSettings(
 		}
 	}
 
+	// --- profile defaults (Ticket 04) ---
+	if (plan.model !== undefined) {
+		settings.defaultProvider = plan.model.provider;
+		settings.defaultModel = plan.model.id;
+		if (plan.model.thinkingLevel !== undefined) {
+			settings.defaultThinkingLevel = plan.model.thinkingLevel;
+		} else {
+			delete settings.defaultThinkingLevel;
+		}
+	}
+	if (plan.tools !== undefined) {
+		settings.defaultTools = plan.tools;
+	}
+
 	// Project auto-discovery is suppressed entirely; selected project
 	// resources enter additively through the trust-gated resolver.
 	settings.defaultProjectTrust = "never";
@@ -260,6 +276,7 @@ export interface RuntimeFileOptions {
 async function computeSettings(
 	plan: ActivationPlan,
 	options: RuntimeFileOptions,
+	runtimeDir: string,
 ): Promise<Record<string, unknown>> {
 	const { agentDir } = options;
 	const userSettingsPath = path.join(agentDir, "settings.json");
@@ -298,7 +315,7 @@ async function computeSettings(
 		const { packages: _stripped, ...mergeable } = options.projectSettings;
 		base = deepMergeSettings(base, mergeable);
 	}
-	return buildSelectionSettings(plan, base, agentDir, options.discovery ?? { skills: [], packages: [] });
+	return buildSelectionSettings(plan, base, agentDir, options.discovery ?? { skills: [], packages: [] }, runtimeDir);
 }
 
 /** Resolved name sets, carried in the launch plan for glob-delta reporting. */
@@ -319,7 +336,7 @@ export async function writeRuntimeFiles(
 	plan: ActivationPlan,
 	options: RuntimeFileOptions,
 ): Promise<void> {
-	const settings = await computeSettings(plan, options);
+	const settings = await computeSettings(plan, options, runtimeDir);
 	await writeFile(path.join(runtimeDir, "settings.json"), `${JSON.stringify(settings, null, 2)}\n`);
 
 	// The launch plan feeds the in-pi extension: instructions injection,
@@ -364,6 +381,51 @@ export async function writeRuntimeFiles(
 	} else if (await exists(trustLink)) {
 		await rm(trustLink);
 	}
+
+	// MCP Servers generation (Ticket 04)
+	const mcpTarget = path.join(options.agentDir, "mcp.json");
+	const mcpInstancePath = path.join(runtimeDir, "mcp.json");
+	if (plan.mcp === undefined) {
+		// No restrictions, symlink
+		if (await exists(mcpTarget)) {
+			try { await rm(mcpInstancePath); } catch {}
+			await symlink(mcpTarget, mcpInstancePath);
+		}
+	} else {
+		// Filter MCP servers
+		try { await rm(mcpInstancePath); } catch {}
+		if (await exists(mcpTarget)) {
+			try {
+				const mcpContent = await readFile(mcpTarget, "utf8");
+				let mcpParsed = JSON.parse(mcpContent);
+				if (isRecord(mcpParsed) && isRecord(mcpParsed.mcpServers)) {
+					const filteredServers: Record<string, unknown> = {};
+					for (const serverName of plan.mcp) {
+						if (mcpParsed.mcpServers[serverName] !== undefined) {
+							filteredServers[serverName] = mcpParsed.mcpServers[serverName];
+						}
+					}
+					mcpParsed.mcpServers = filteredServers;
+					await writeFile(mcpInstancePath, JSON.stringify(mcpParsed, null, 2));
+				} else {
+					// Malformed or empty, write empty
+					await writeFile(mcpInstancePath, JSON.stringify({ mcpServers: {} }, null, 2));
+				}
+			} catch {
+				await writeFile(mcpInstancePath, JSON.stringify({ mcpServers: {} }, null, 2));
+			}
+		} else {
+			await writeFile(mcpInstancePath, JSON.stringify({ mcpServers: {} }, null, 2));
+		}
+	}
+
+	// Instructions generation (Ticket 04)
+	const appendSystemPath = path.join(runtimeDir, "APPEND_SYSTEM.md");
+	if (plan.instructions !== undefined && plan.instructions.trim() !== "") {
+		await writeFile(appendSystemPath, plan.instructions);
+	} else {
+		try { await rm(appendSystemPath); } catch {}
+	}
 }
 
 export async function generateRuntimeDir(
@@ -371,40 +433,44 @@ export async function generateRuntimeDir(
 	options: GenerateOptions,
 ): Promise<GeneratedRuntime> {
 	const { agentDir } = options;
-	const runtimeRoot = path.join(agentDir, "pi-profile", "runtime");
-	await mkdir(runtimeRoot, { recursive: true });
-	const runtimeDir = await mkdtemp(path.join(runtimeRoot, "launch-"));
+	const runtimeDir = path.join(getInstancesRootDir(), plan.profile, "agent");
+	await mkdir(runtimeDir, { recursive: true });
+	
 
 	await writeRuntimeFiles(runtimeDir, plan, options);
 
-	// Keep auth/model/adapter state in the real agent dir, so the spawned pi
-	// shares credentials, model catalogs, and MCP config with native pi.
-	// (trust.json is handled by writeRuntimeFiles — default only.)
-	for (const name of STATE_FILE_LINKS) {
-		if (name === "trust.json") continue;
-		const target = path.join(agentDir, name);
-		if (await exists(target)) {
-			await symlink(target, path.join(runtimeDir, name));
+	// Full-fidelity symlink mirroring (Ticket 02).
+	// Keep auth/model/adapter/sessions/extensions state in the real agent dir,
+	// so the spawned pi shares credentials, model catalogs, workflows, subagents,
+	// and MCP config with native pi.
+	try {
+		const entries = await readdir(agentDir);
+		for (const name of entries) {
+			if (EXCLUDED_SYMLINKS.includes(name as any)) continue;
+			// trust.json is handled by writeRuntimeFiles (default only).
+			if (name === "trust.json") continue;
+
+			const target = path.join(agentDir, name);
+			const linkPath = path.join(runtimeDir, name);
+			
+			// If link exists, it might be dangling or pointing to the wrong place, but mkdtemp ensures it's fresh.
+			// Wait, the instance directory is stable now! We need to rm it if it exists to refresh it, or skip if valid.
+			// The easiest is to try to rm the link/file first, then recreate.
+			try { await rm(linkPath, { recursive: true, force: true }); } catch {}
+			
+			// Create symlink
+			try {
+				const info = await stat(target);
+				await symlink(target, linkPath, info.isDirectory() ? "dir" : "file");
+			} catch (err) {
+				// Ignore broken source links or unreadable files
+			}
 		}
-	}
-	for (const name of STATE_DIR_LINKS) {
-		const target = path.join(agentDir, name);
-		if (await exists(target)) {
-			await symlink(target, path.join(runtimeDir, name), "dir");
-		}
+	} catch (err) {
+		// Ignore if agentDir doesn't exist
 	}
 
 	const flags: string[] = [];
-	if (plan.filter === "selection") {
-		if (plan.tools !== undefined) {
-			flags.push("--tools", plan.tools.join(","));
-		}
-		if (plan.model !== undefined) {
-			// Pi's native shorthand: --model <provider/id[:thinking]>.
-			const modelFlag = `${plan.model.provider}/${plan.model.id}`;
-			flags.push("--model", plan.model.thinkingLevel !== undefined ? `${modelFlag}:${plan.model.thinkingLevel}` : modelFlag);
-		}
-	}
 
 	return {
 		runtimeDir,

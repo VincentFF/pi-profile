@@ -61,7 +61,7 @@ beforeEach(async () => {
 		JSON.stringify({ mcpServers: { github: {}, linear: {} } }),
 	);
 	await writeFile(
-		path.join(fixture.agentDir, "profiles.json"),
+		path.join(fixture.profileSwitchDir, "profiles.json"),
 		JSON.stringify({
 			schemaVersion: 1,
 			profiles: {
@@ -116,7 +116,7 @@ describe("/mcp enable|disable against a real spawned pi", () => {
 		await untilAllowlist((entry) => entry.profile === "review" && entry.servers.join() === "github,linear");
 
 		// Catalog updated; other profiles untouched.
-		const profiles = JSON.parse(await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8"));
+		const profiles = JSON.parse(await readFile(path.join(fixture.profileSwitchDir, "profiles.json"), "utf8"));
 		expect(profiles.profiles.review.mcp).toEqual(["github", "linear"]);
 		expect(profiles.profiles.impl.mcp).toEqual(["linear"]);
 

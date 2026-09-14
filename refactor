@@ -1,0 +1,22 @@
+这是一个为pi agent写的 profile 插件，它是个套在pi之上的薄壳。
+
+我希望这个薄壳能达到的目的：
+为每一个不同的profile定制 extensions, skills, tools, mcps, instruction, default model。
+这是为了方便用户自定义不同的profile来满足不同的工作，每一个profile能够按需提供不同的能力。
+
+除了以上能力要求外，我还需要它兼容原生pi，这同样包括了兼容原生pi的其它插件。
+
+目前我的想法是：
+1. 为每一个profile fork一个完整的pi实例，同样为它提供完整的pi的配置环境：~/.pi。
+2. 这个 ~/.pi 不应该是进行完整复制，而是创建一个软链接。这样能够更干净和便捷，而且能够达到与pi的配置完全一样。
+3. 但是为了达到 extensions, skills, tools, mcps, instruction, default model，需要安装profile的配置来修改每个pi启动实例的setting文件，这样才能决定启动那些能力。
+
+我目前的思考，认为这个项目就该这么简单。
+
+但是当前项目的实现有些问题：
+- 1. 没有为每个启动的实例进行完整的  ~/.pi link,导致对pi extension的兼容性出了问题
+- 2. pi-profile-switch 的session管理目前独立的，这点不符合期盼，我还是希望能延用 pi 的session管理，这样会让pi与pi-profile的工作能连续。
+- 3. pi-profile-switch 目前的实例管理放在 ~/.pi 之内，当前的要求明确提出后，我认为应该放在 ~/.pi-profile-switch 之内
+
+这是我当前看到的项目问题，请你检查和思考后，给我一个完整的重构方案。
+直接调用skill生产spec和ticket

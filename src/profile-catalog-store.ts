@@ -28,15 +28,20 @@ import {
 
 export class ProfileCatalogStore {
 	readonly #filePath: string;
+	readonly #fallbackPath?: string;
 
-	constructor(catalogPath: string) {
+	constructor(catalogPath: string, fallbackPath?: string) {
 		this.#filePath = catalogPath;
+		this.#fallbackPath = fallbackPath;
 	}
 
 	/** Validated definitions: missing file → empty; malformed → CatalogError
 	 *  (catalog errors never pass silently, even on the write path). */
 	async readDefinitions(): Promise<Map<string, ProfileDefinition>> {
-		const result = await readJsonFile(this.#filePath);
+		let result = await readJsonFile(this.#filePath);
+		if (!result.ok && result.reason === "missing" && this.#fallbackPath) {
+			result = await readJsonFile(this.#fallbackPath);
+		}
 		if (!result.ok) {
 			if (result.reason === "missing") return new Map();
 			throw new CatalogError(`invalid JSON in ${this.#filePath}`);

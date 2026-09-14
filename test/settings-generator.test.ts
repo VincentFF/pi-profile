@@ -66,8 +66,8 @@ describe("generateRuntimeDir (default profile)", () => {
 		expect(result.flags).toEqual([]);
 	});
 
-	it("places the runtime dir under the agent dir's pi-profile runtime root", async () => {
+	it("places the runtime dir under the instances root", async () => {
 		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
-		expect(result.runtimeDir.startsWith(path.join(fixture.agentDir, "pi-profile", "runtime"))).toBe(true);
+		expect(result.runtimeDir.startsWith(path.join(fixture.profileSwitchDir, "instances", "default", "agent"))).toBe(true);
 	});
 });
