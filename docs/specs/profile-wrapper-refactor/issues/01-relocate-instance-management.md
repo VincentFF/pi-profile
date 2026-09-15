@@ -5,7 +5,7 @@ Establish `~/.pi-profile-switch` as the dedicated root directory for all profile
 
 **Blocked by:** None (can start immediately)
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Resolves global workspace directory to `~/.pi-profile-switch` (honoring custom test environment root overrides if configured).
 - [ ] Global profile catalog loads from `~/.pi-profile-switch/profiles.json`, falling back to `~/.pi/agent/profiles.json` if the former does not exist.

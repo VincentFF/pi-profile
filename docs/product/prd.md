@@ -21,16 +21,16 @@ Pi 是一个极简 agent；`pi-profile` 只完成 profile 选择这一必要需�
 - 用户直接拥有并维护自己的 profile。
 - profile 中的 `skills`、`extensions`、`tools` 和 `mcp` 默认都可自由调整。
 - 不增加白名单、审批层或额外定制开关。
-- 只有影响 Pi 正常运行或安全边界的行为才受限制，例如 `alwaysOn` extension。
+- 只有影响 Pi 正常运行或安全边界的行为才受限制，例如项目 trust 守门。
 - 配置语义保持直接：临时调整走 runtime overlay；持久调整写当前 profile 所属文件。
 
 ## 产品目标
 
 - 用命名 profile 组织 Pi 的工作方式，例如 `review`、`implement`、`research` 与 `restricted`。
-- 让 profile 引用 Pi 已发现的 skills、resource registry 中声明的 extension，以及 `pi-mcp-adapter` 已配置的 MCP server。
+- 让 profile 引用 Pi 已发现的 skills 与 extensions，以及 `pi-mcp-adapter` 已配置的 MCP server。
 - 在不重启 Pi 进程的情况下切换 profile。资源图变化时执行 reload。
 - 保持 Pi 的默认行为：profile 未显式控制的行为仍由 Pi 原有 settings、discovery 和会话状态决定。
-- 提供 TUI 中的 profile 与 resource registry CRUD。
+- 提供 TUI 中的 profile CRUD。
 - 支持全局与可信项目两种 catalog；项目定义可覆盖同名全局定义。
 - 让 `pi-profile` 启动器在第一个 agent turn 前加载目标 profile，而不是先向模型暴露全量资源。
 
@@ -76,20 +76,18 @@ overlay 是临时调整。它不修改 profile 定义；`/profile reset` 删除 
 | `default`           | 内建、不可删除的全量 profile；overlay 可临时限制其范围             | `pi-profile`       |
 | `RuntimeOverlay`    | 当前 profile 的临时资源与 tool 覆盖                                | runtime state      |
 | `SkillRegistry`     | Pi 当前完整 discovery 结果中的 skill 名到最终 `SKILL.md` 的映射    | resolver           |
-| `ResourceRegistry`  | extension 的可引用视图：隐式发现（已安装包、散装文件）+ 显式 ID、依赖和常驻标记         | 全局或项目 catalog（显式层） |
+| `ExtensionDiscovery` | extension 的可引用视图：纯发现（已安装包、散装文件），无注册层（ADR-0007） | resolver（只读）       |
 | `McpServerRegistry` | `pi-mcp-adapter` 发现的 MCP server 名称与状态                      | `pi-mcp-adapter`   |
 | `ActivationPlan`    | 解析后的技能、extension、MCP server、tools 与指令集合              | resolver           |
 
 ## 配置范围
 
-| 文件                                | 用途                             | 覆盖规则                                  |
-| ----------------------------------- | -------------------------------- | ----------------------------------------- |
-| `~/.pi/agent/profiles.json`         | 全局 profile catalog             | 全局基础定义                              |
-| `.pi/profiles.json`                 | 项目 profile catalog             | 同名完整替换全局 profile；可新增名称      |
-| `~/.pi/agent/resources.json`        | 全局 extension registry（可选，override 层） | 同名 ID 覆盖隐式发现条目                  |
-| `.pi/resources.json`                | 项目 extension registry（可选，override 层） | 同名 ID 覆盖全局与隐式条目                |
-| `~/.pi/agent/pi-profile-state.json` | 全局 runtime state               | 保存全局来源 profile 的活动选择与 overlay |
-| `.pi/pi-profile-state.json`         | 项目 runtime state               | 保存项目来源 profile 的活动选择与 overlay |
+| 文件                                          | 用途                             | 覆盖规则                                  |
+| --------------------------------------------- | -------------------------------- | ----------------------------------------- |
+| `~/.pi-profile-switch/profiles.json`          | 全局 profile catalog             | 全局基础定义；legacy fallback 读取 `~/.pi/agent/profiles.json` |
+| `.pi/profiles.json`                           | 项目 profile catalog             | 同名完整替换全局 profile；可新增名称      |
+| `~/.pi-profile-switch/pi-profile-state.json`  | 全局 runtime state               | 保存全局来源 profile 的活动选择与 overlay；legacy fallback 读取 `~/.pi/agent` |
+| `.pi/pi-profile-state.json`                   | 项目 runtime state               | 保存项目来源 profile 的活动选择与 overlay |
 
 项目目录只在 Pi 已信任项目后读取和写入。
 
@@ -103,7 +101,7 @@ profile 不支持继承。项目同名 profile 是完整替换，不深度合并
 
 ## 资源引用
 
-skills、resource ID、MCP server name 和 tool name 都支持 glob。glob 在每次启动或 reload 时重新展开；新匹配项自动进入 profile，`/profile status` 显示本次解析相对上次的增减。零匹配的 glob 不阻塞激活，但作为 unmatched 警告出现在启动输出与 `/profile status` 中（tool glob 除外：扩展贡献的 tool 在启动前不可知）。
+skills、extension 引用、MCP server name 和 tool name 都支持 glob。glob 在每次启动或 reload 时重新展开；新匹配项自动进入 profile，`/profile status` 显示本次解析相对上次的增减。零匹配的 glob 不阻塞激活，但作为 unmatched 警告出现在启动输出与 `/profile status` 中（tool glob 除外：扩展贡献的 tool 在启动前不可知）。
 
 ### Skills
 
@@ -121,14 +119,13 @@ skill 使用 Pi 的 skill name 作为逻辑身份：
 
 ### Extensions
 
-extension 引用遵循发现优先（ADR-0006）：已安装包与标准目录散装文件**无需注册**即可引用，`resources.json` 只用于覆盖与标准位置外的 extension。
+extension 引用遵循纯发现与过滤（ADR-0007）：已安装包与标准目录散装文件**无需注册**即可引用；不存在 `resources.json`、`alwaysOn` 或 `dependsOn` 概念。
 
-一个引用按以下顺序解析：
+引用形式：
 
-1. **registry ID**：`resources.json` 显式条目（覆盖一切同名的隐式条目）。
-2. **包名或源别名**：已配置 user 包的 `package.json#pi.extensions` 声明入口；`"pi-mcp-adapter"` 或 `"npm:pi-mcp-adapter"` 均可。多入口包以包名选中全部入口，单入口可按 `<包名>:<相对路径>` 选中。
-3. **散装文件 stem**：`~/.pi/agent/extensions/conventions.ts` 引用为 `"conventions"`；已信任项目的 `.pi/extensions` 同理，同名覆盖全局。
-4. **磁盘路径**：绝对路径或 `~/` 路径直接引用一次性 extension，无需任何注册。
+1. **包名或源别名**：已配置 user 包的 `package.json#pi.extensions` 声明入口；`"pi-mcp-adapter"` 或 `"npm:pi-mcp-adapter"` 均可。多入口包以包名选中全部入口，单入口可按 `<包名>:<相对路径>` 选中。
+2. **散装文件 stem**：`~/.pi/agent/extensions/conventions.ts` 引用为 `"conventions"`；已信任项目的 `.pi/extensions` 同理，同名覆盖全局。
+3. **glob 与磁盘路径**：glob 动态匹配；绝对路径或 `~/` 路径直接引用一次性 extension。
 
 ```json
 {
@@ -136,18 +133,7 @@ extension 引用遵循发现优先（ADR-0006）：已安装包与标准目录�
 }
 ```
 
-未匹配的字面量引用激活失败，错误列出已发现候选、相近名提示与最小注册示例。glob 零匹配不阻塞激活，但会在启动警告与 `/profile status` 中可见。
-
-显式注册保留完整表达力：稳定 ID、`alwaysOn`、`dependsOn`、对隐式条目的覆盖（`entry` 可省略以继承发现到的入口）：
-
-```json
-{
-  "resources": {
-    "pi-web-access": { "kind": "extension", "alwaysOn": true },
-    "team-conventions": { "kind": "extension", "entry": "/home/you/team/extensions/conventions.ts" }
-  }
-}
-```
+散装文件与包名 ID 碰撞时散装胜出并记录 warning（包仍可经 source 别名选中）。未匹配的字面量引用激活失败，错误列出已发现候选与相近名提示；相对路径引用报错（需用绝对路径或 `~/`）。glob 零匹配不阻塞激活，但会在启动警告与 `/profile status` 中可见。
 
 ### MCP
 
@@ -163,7 +149,7 @@ profile 只引用 adapter 已配置的 MCP server 名称：
 
 server 的命令、地址、OAuth、token 和 timeout 保留在 `pi-mcp-adapter` 管理的 MCP 配置中。`profiles.json` 不保存 MCP 连接参数或凭证。
 
-用户执行 `/mcp enable <server>` 或 `/mcp disable <server>` 时，修改当前 profile 的 `mcp` 数组并保存到该 profile 所属 catalog。锁定版本的 adapter 通过其 profile-scoped state store 执行该修改，不写入 adapter 默认的 `.pi/mcp.json` 覆盖状态。
+用户执行 `/mcp enable <server>` 或 `/mcp disable <server>` 时，修改当前 profile 的 `mcp` 数组并保存到该 profile 所属 catalog——该数组即 profile-scoped 持久存储（adapter 不提供此 API）；pi-profile 不写入 adapter 默认的 `.pi/mcp.json` 覆盖状态。
 
 `/profile use` 切换 profile 时，`pi-profile` 向 adapter 应用新 profile 的 runtime server allowlist；不调用 adapter 的持久化 enable/disable 实现。
 
@@ -184,9 +170,7 @@ profile 使用 Pi 的全局 tool name：
 ## 常驻与选择
 
 - `default` 包含所有 Pi 可发现资源。
-- `ResourceRegistry` 中 `alwaysOn: true` 的 extension 在所有 profile 中加载，例如安全 gate 或审计 extension。
-- 非 `default` profile 不加载未被 profile 或依赖闭包选中的 extension（发现到的未选中项同样不加载）。
-- profile 声明的 resource 的 `dependsOn` 由 resolver 递归加入 ActivationPlan。
+- 非 `default` profile 不加载未被 profile 选中的 extension（发现到的未选中项同样不加载）。
 - profile 不人为排序 extension。Pi 的隐式加载顺序决定 handlers、同名 tool override 和 command 后缀。
 - 同名 tool 或 command 不阻止激活。`/profile status` 显示冲突、实际加载顺序和最终胜出结果。
 
@@ -203,11 +187,7 @@ profile 使用 Pi 的全局 tool name：
 | `/profile create`               | 选择 global 或 project catalog 后创建 profile                                   |
 | `/profile edit <name>`          | 编辑 profile；编辑活动 profile 时保存后立即重新激活                             |
 | `/profile delete <name>`        | 删除 profile；删除活动 profile 前必须先选择替代 profile                         |
-| `/profile resource list`        | 列出 resource registry 条目                                                     |
-| `/profile resource create`      | 创建 extension resource 条目                                                    |
-| `/profile resource edit <id>`   | 编辑 resource registry 条目                                                     |
-| `/profile resource delete <id>` | 删除未被 profile 或 resource 依赖引用的条目                                     |
-| `/profile reload`               | 重新扫描 registry、catalog、adapter MCP server 和所有引用资源后激活当前 profile |
+| `/profile reload`               | 重新扫描 catalog、adapter MCP server 和所有引用资源后激活当前 profile           |
 
 CRUD 只在 TUI mode 提供。RPC、print 和 JSON mode 可以通过 `pi-profile <profile> -- <Pi 参数>` 启动目标 profile，但不提供交互式 catalog 编辑。
 
@@ -238,8 +218,8 @@ profile 的 `instructions` 追加到 Pi 已构建的 system prompt 末尾。Pi �
 ### Profile 与资源维护
 
 - skills 是共享实现，不复制到 profile 目录。
-- extension 的发现优先于注册：已安装包与标准目录散装文件直接可引用；resource registry 只承担覆盖与标准位置外 extension 的 ID 注册。
-- profile 使用包名、散装文件名、路径、resource ID、MCP server name、tool name 和 skill name 引用能力，不引用实现副本。
+- extension 纯发现与过滤：已安装包与标准目录散装文件直接可引用，无注册层。
+- profile 使用包名、散装文件名、路径、MCP server name、tool name 和 skill name 引用能力，不引用实现副本。
 - profile 不保存 MCP server 地址、启动命令、OAuth 配置或凭证；这些配置由 `pi-mcp-adapter` 管理。
 - glob 是动态引用；每次 reload 都可能扩展或缩小实际能力集。
 - profile 不支持多 profile 叠加；临时差异使用 runtime overlay。
@@ -258,14 +238,12 @@ profile 的 `instructions` 追加到 Pi 已构建的 system prompt 末尾。Pi �
 ### Unit tests
 
 - Pi discovery 结果到 `SkillRegistry` 的同名优先级解析。
-- project profile、resource registry 覆盖和删除后的全局回退。
-- skills、resource ID、MCP server name 和 tool name 的 glob 展开与 reload 差异。
+- project profile 覆盖与删除后的全局回退。
+- skills、extension 引用、MCP server name 和 tool name 的 glob 展开与 reload 差异。
 - extension 的发现优先引用：包名/别名、散装文件 stem、绝对路径均无需注册；多入口包的包级与入口级选择。
-- 显式 registry 条目省略 `entry` 时继承隐式入口；无隐式匹配时大声失败。
 - 散装文件与包名 ID 碰撞：散装胜出、记录 warning、包经别名可选。
-- 未知 extension 字面量的错误含候选列表、did-you-mean 与注册示例；零匹配 glob 进入 `unmatched` 警告面。
-- overlay 可以调整当前 profile 声明的资源引用，但不能关闭 `alwaysOn` extension 或其直接依赖。
-- resource dependency 闭包与循环检测。
+- 未知 extension 字面量的错误含候选列表与相近名提示；零匹配 glob 进入 `unmatched` 警告面。
+- overlay 可以调整当前 profile 声明的任意资源引用（无 `alwaysOn` 限制）。
 - `default` 的全量资源 plan。
 - profile 未声明 model、thinking 和 instructions 时保持 Pi 当前状态。
 - profile 引用了 adapter 未发现的 MCP server 名称时激活失败。

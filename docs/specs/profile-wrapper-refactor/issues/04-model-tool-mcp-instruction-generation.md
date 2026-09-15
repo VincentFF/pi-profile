@@ -9,7 +9,7 @@ Generators for the instance-specific configuration files:
 
 **Blocked by:** 02: Full-fidelity symlink mirroring of `~/.pi/agent`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Generates `settings.json` with `defaultProvider`, `defaultModel`, and `defaultThinkingLevel` when specified by profile.
 - [ ] Generates `settings.json` with `defaultTools` when specified by profile.
