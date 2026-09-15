@@ -1,4 +1,4 @@
-# pi-profile
+# pi-profile-switch
 
 [English](README.md) | [中文](README.zh-CN.md)
 
@@ -9,7 +9,7 @@ Use a lean read-only profile for code review, a full-powered one for implementat
 ## Install
 
 ```bash
-npm install -g pi-profile
+npm install -g pi-profile-switch
 ```
 
 Requires [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent) (installed automatically as a peer dependency).
@@ -46,7 +46,7 @@ Define profiles in `~/.pi-profile-switch/profiles.json` (global, fallback to `~/
 
 Profiles **reference** resources by name — they never copy them. Installed packages and files in standard locations are discovered automatically; no registration needed. Full schema with more examples: [`examples/profiles.json`](examples/profiles.json).
 
-On install, pi-profile seeds `~/.pi-profile-switch/profiles.json` with a starter **`ask`** profile — read-only Q&A and code exploration (`read`/`grep`/`find`/`ls`, no skills, extensions, or MCP). It assumes nothing about your setup; edit or delete it freely.
+On install, pi-profile-switch seeds `~/.pi-profile-switch/profiles.json` with a starter **`ask`** profile — read-only Q&A and code exploration (`read`/`grep`/`find`/`ls`, no skills, extensions, or MCP). It assumes nothing about your setup; edit or delete it freely.
 
 ## Commands
 

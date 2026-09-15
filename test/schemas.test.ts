@@ -4,13 +4,13 @@
  * (schema-valid files parse; the parser's rejections are schema-invalid).
  */
 
-import { mkdtemp, readFile, rm, writeFile } from "node:fs/promises";
-import { tmpdir } from "node:os";
+import { readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import Ajv2020Module from "ajv/dist/2020.js";
 import { describe, expect, it } from "vitest";
 
 import { ProfileCatalog } from "../src/profile-catalog.ts";
+import { createPiFixture } from "./helpers/pi-fixture.ts";
 
 const Ajv2020 = Ajv2020Module.default;
 
@@ -49,16 +49,20 @@ describe("shipped JSON schemas", () => {
 	});
 
 	it("schema-valid catalogs load through the runtime parsers", async () => {
-		const dir = await mkdtemp(path.join(tmpdir(), "pi-profile-schema-"));
+		// The fixture pins PI_PROFILE_SWITCH_DIR so the parser reads the
+		// catalog written below, not a real ~/.pi-profile-switch catalog
+		// that would shadow it (resolveGlobalProfilesPath prefers the
+		// profile-switch dir whenever a catalog exists there).
+		const fixture = await createPiFixture();
 		try {
 			await writeFile(
-				path.join(dir, "profiles.json"),
+				path.join(fixture.agentDir, "profiles.json"),
 				await readFile(path.resolve("examples/profiles.json"), "utf8"),
 			);
-			const catalog = await ProfileCatalog.load(dir);
+			const catalog = await ProfileCatalog.load(fixture.agentDir);
 			expect(catalog.resolve("review")?.definition.label).toBe("Code review");
 		} finally {
-			await rm(dir, { recursive: true, force: true });
+			await rm(fixture.root, { recursive: true, force: true });
 		}
 	});
 });

@@ -1,6 +1,6 @@
 # TUI 手动验收清单
 
-PRD 的 8 步验收流程，全新用户可复现。前置条件：已安装 `pi` 与 `pi-profile`（`npm i -g pi-profile` 或本仓库 `npm link`），有一个可用的模型 provider 配置；可选：已安装 `pi-mcp-adapter` 并在其配置中有名为 `atlassian` 的 server（步骤 6–8 需要；两个 profile 的 `mcp` 数组都在准备阶段声明该 server——`/mcp disable` 只从数组移除，没有数组时是无操作）。没有 adapter 时换成任意已发现的 server 名，并相应修改两个数组。
+PRD 的 8 步验收流程，全新用户可复现。前置条件：已安装 `pi` 与 `pi-profile-switch`（`npm i -g pi-profile-switch` 或本仓库 `npm link`），有一个可用的模型 provider 配置；可选：已安装 `pi-mcp-adapter` 并在其配置中有名为 `atlassian` 的 server（步骤 6–8 需要；两个 profile 的 `mcp` 数组都在准备阶段声明该 server——`/mcp disable` 只从数组移除，没有数组时是无操作）。没有 adapter 时换成任意已发现的 server 名，并相应修改两个数组。
 
 ## 准备
 

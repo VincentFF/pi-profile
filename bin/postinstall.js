@@ -2,7 +2,7 @@
 /**
  * postinstall: seed the global catalog with the default profiles file.
  *
- * Runs at package install time (`npm install pi-profile` / `pi install`).
+ * Runs at package install time (`npm install pi-profile-switch` / `pi install`).
  * Idempotent and conservative:
  * - Writes `defaults/profiles.json` to the profile-switch dir ONLY when no
  *   catalog exists there yet (COPYFILE_EXCL; an existing file — including
