@@ -11,8 +11,12 @@
     "pi"
   ],
   "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/VincentFF/pi-profile-switch.git"
+  },
   "bin": {
-    "pi-profile": "./bin/pi-profile.js"
+    "pi-profile": "bin/pi-profile.js"
   },
   "pi": {
     "extensions": [
