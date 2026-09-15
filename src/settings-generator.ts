@@ -185,8 +185,12 @@ function buildSelectionSettings(
 		
 		// If the skill is in the real agentDir, Pi will discover it via the symlink.
 		// We must exclude the symlink path so Pi actually excludes it.
+		// Lexical paths only: Pi matches `-` exclusions against the raw
+		// discovered path without resolving symlinks. Resolving realpaths here
+		// escapes runtimeDir whenever an agentDir skill is a symlink to outside
+		// the agent dir, and the exclusion then silently matches nothing.
 		if (isUnderPath(skill.filePath, agentDir)) {
-			const rel = path.relative(tryRealpath(agentDir), tryRealpath(skill.filePath));
+			const rel = path.relative(agentDir, skill.filePath);
 			skillEntries.push(`-${path.join(runtimeDir, rel)}`);
 		} else {
 			skillEntries.push(`-${skill.filePath}`);

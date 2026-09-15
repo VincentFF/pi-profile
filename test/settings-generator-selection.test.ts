@@ -1,5 +1,5 @@
 import { existsSync } from "node:fs";
-import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
+import { mkdir, readFile, realpath, rm, symlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
@@ -76,6 +76,29 @@ describe("generateRuntimeDir (named profile selection)", () => {
 		expect(settings.skills).toEqual([
 			path.join(fixture.agentDir, "skills", "alpha-skill", "SKILL.md"),
 			`-${path.join(result.runtimeDir, "skills", "beta-skill", "SKILL.md")}`,
+		]);
+	});
+
+	it("force-excludes agent dir skills that are symlinks to outside the agent dir", async () => {
+		// Pi matches `-` exclusions against the raw discovered path without
+		// resolving symlinks. The exclusion must therefore name the runtime
+		// mirror path, not the symlink target — otherwise it matches nothing
+		// and the skill leaks into the session (the agentDir skills of a
+		// dotfiles-managed skill library are symlinks in real setups).
+		const libraryDir = path.join(fixture.root, "skill-library", "linked-skill");
+		await mkdir(libraryDir, { recursive: true });
+		await writeFile(path.join(libraryDir, "SKILL.md"), "---\nname: linked-skill\n---\n");
+		await mkdir(path.join(fixture.agentDir, "skills"), { recursive: true });
+		await symlink(libraryDir, path.join(fixture.agentDir, "skills", "linked-skill"), "dir");
+
+		const plan = selectionPlan({ skills: [] });
+		const discovery: DiscoveryContext = { skills: [agentDirSkill("linked-skill")], packages: [] };
+
+		const result = await generateRuntimeDir(plan, { agentDir: fixture.agentDir, discovery });
+		const settings = await generatedSettings(result.runtimeDir);
+
+		expect(settings.skills).toEqual([
+			`-${path.join(result.runtimeDir, "skills", "linked-skill", "SKILL.md")}`,
 		]);
 	});
 
