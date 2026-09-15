@@ -343,7 +343,7 @@ export interface ResolvedNames {
 	skills: string[];
 	extensions: string[];
 	tools?: string[];
-	mcp?: string[];
+	mcps?: string[];
 }
 
 /** Writes settings.json + pi-profile.json into an existing runtime dir and
@@ -375,7 +375,7 @@ export async function writeRuntimeFiles(
 				...(plan.model !== undefined ? { model: plan.model } : {}),
 				...(plan.tools !== undefined ? { tools: plan.tools } : {}),
 				...(plan.toolReferences !== undefined ? { toolReferences: plan.toolReferences } : {}),
-				...(plan.mcp !== undefined ? { mcp: plan.mcp } : {}),
+				...(plan.mcps !== undefined ? { mcps: plan.mcps } : {}),
 				// The resolved sets feed /profile status (absolute paths) and the
 				// glob-delta diff against the previous activation.
 				resolved: {
@@ -405,7 +405,7 @@ export async function writeRuntimeFiles(
 	// MCP Servers generation (Ticket 04)
 	const mcpTarget = path.join(options.agentDir, "mcp.json");
 	const mcpInstancePath = path.join(runtimeDir, "mcp.json");
-	if (plan.mcp === undefined) {
+	if (plan.mcps === undefined) {
 		// No restrictions, symlink
 		if (await exists(mcpTarget)) {
 			try { await rm(mcpInstancePath); } catch {}
@@ -420,7 +420,7 @@ export async function writeRuntimeFiles(
 				let mcpParsed = JSON.parse(mcpContent);
 				if (isRecord(mcpParsed) && isRecord(mcpParsed.mcpServers)) {
 					const filteredServers: Record<string, unknown> = {};
-					for (const serverName of plan.mcp) {
+					for (const serverName of plan.mcps) {
 						if (mcpParsed.mcpServers[serverName] !== undefined) {
 							filteredServers[serverName] = mcpParsed.mcpServers[serverName];
 						}

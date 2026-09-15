@@ -141,7 +141,7 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 
 ### `profiles.json` / `pi-profile-state.json`
 
-核心字段：profile 的 `skills`/`extensions`/`mcp`/`tools`（glob）、可选 `model`（`provider`/`id`/`thinkingLevel`）与 `instructions`；state 的 `activeProfile`/`overlay`/`lastVerifiedProfile`。系统 100% 沿用 Pi 原生扩展发现与过滤机制，无需 `resources.json`。
+核心字段：profile 的 `skills`/`extensions`/`mcps`/`tools`（glob）、可选 `defaultProvider`/`defaultModel`/`defaultThinkingLevel` 与 `instructions`；state 的 `activeProfile`/`overlay`/`lastVerifiedProfile`。系统 100% 沿用 Pi 原生扩展发现与过滤机制，无需 `resources.json`。
 
 ### 生成的 `settings.json`（pi-profile 私有运行时产物，非用户配置）
 

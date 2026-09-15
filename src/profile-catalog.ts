@@ -30,15 +30,19 @@ export interface ProfileModel {
 }
 
 /** A profile definition as stored in a catalog file. All fields optional:
- *  undeclared fields leave Pi's behavior untouched (PRD default-first rule). */
+ *  undeclared fields leave Pi's behavior untouched (PRD default-first rule).
+ *  Model fields mirror Pi's settings.json keys (defaultProvider/defaultModel/
+ *  defaultThinkingLevel) for direct compatibility. */
 export interface ProfileDefinition {
 	label?: string;
 	description?: string;
 	skills?: string[];
 	extensions?: string[];
-	mcp?: string[];
+	mcps?: string[];
 	tools?: string[];
-	model?: ProfileModel;
+	defaultProvider?: string;
+	defaultModel?: string;
+	defaultThinkingLevel?: string;
 	instructions?: string;
 }
 
@@ -90,17 +94,16 @@ export function parseProfileDefinition(name: string, raw: unknown): ProfileDefin
 	if (label !== undefined) definition.label = label;
 	const description = readOptionalString(raw.description, "description", name);
 	if (description !== undefined) definition.description = description;
-	for (const field of ["skills", "extensions", "mcp", "tools"] as const) {
+	for (const field of ["skills", "extensions", "mcps", "tools"] as const) {
 		const entries = readStringArray(raw[field], field, name);
 		if (entries !== undefined) definition[field] = entries;
 	}
-	if (raw.model !== undefined) {
-		if (!isRecord(raw.model) || typeof raw.model.provider !== "string" || typeof raw.model.id !== "string") {
-			throw new CatalogError(`profile "${name}": "model" must be an object with string "provider" and "id"`);
-		}
-		const thinkingLevel = readOptionalString(raw.model.thinkingLevel, "model.thinkingLevel", name);
-		definition.model = { provider: raw.model.provider, id: raw.model.id, ...(thinkingLevel ? { thinkingLevel } : {}) };
-	}
+	const defaultProvider = readOptionalString(raw.defaultProvider, "defaultProvider", name);
+	if (defaultProvider !== undefined) definition.defaultProvider = defaultProvider;
+	const defaultModel = readOptionalString(raw.defaultModel, "defaultModel", name);
+	if (defaultModel !== undefined) definition.defaultModel = defaultModel;
+	const defaultThinkingLevel = readOptionalString(raw.defaultThinkingLevel, "defaultThinkingLevel", name);
+	if (defaultThinkingLevel !== undefined) definition.defaultThinkingLevel = defaultThinkingLevel;
 	const instructions = readOptionalString(raw.instructions, "instructions", name);
 	if (instructions !== undefined) definition.instructions = instructions;
 	return definition;

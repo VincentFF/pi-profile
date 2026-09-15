@@ -76,7 +76,7 @@ export const CUSTOMIZE_USAGE =
 const DISABLED_FIELDS = {
 	skill: "disabledSkills",
 	extension: "disabledExtensions",
-	mcp: "disabledMcp",
+	mcp: "disabledMcps",
 } as const;
 
 /** Parses `/profile customize` arguments into an overlay mutation.

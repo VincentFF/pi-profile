@@ -31,7 +31,7 @@ async function seed(): Promise<void> {
 		path.join(fixture.agentDir, "profiles.json"),
 		JSON.stringify({
 			schemaVersion: 1,
-			profiles: { review: { mcp: ["github"] }, impl: { mcp: ["linear"] } },
+			profiles: { review: { mcps: ["github"] }, impl: { mcps: ["linear"] } },
 		}),
 	);
 	await writeFile(
@@ -41,14 +41,14 @@ async function seed(): Promise<void> {
 }
 
 const activeMcp = async (name: string) =>
-	(await ProfileCatalog.load(fixture.agentDir)).resolve(name)?.definition.mcp;
+	(await ProfileCatalog.load(fixture.agentDir)).resolve(name)?.definition.mcps;
 
 describe("setMcpServerEnabled", () => {
 	it("enable appends a discovered server to the active profile only", async () => {
 		await seed();
 		const result = await setMcpServerEnabled(input({ name: "review", source: "global" }), "linear", true);
 
-		expect(result.mcp).toEqual(["github", "linear"]);
+		expect(result.mcps).toEqual(["github", "linear"]);
 		expect(await activeMcp("review")).toEqual(["github", "linear"]);
 		// Other profiles untouched.
 		expect(await activeMcp("impl")).toEqual(["linear"]);
@@ -67,12 +67,12 @@ describe("setMcpServerEnabled", () => {
 		// "stale" is in the profile but not in mcp.json — disable must clean it.
 		await writeFile(
 			path.join(fixture.agentDir, "profiles.json"),
-			JSON.stringify({ schemaVersion: 1, profiles: { review: { mcp: ["github", "stale"] }, impl: {} } }),
+			JSON.stringify({ schemaVersion: 1, profiles: { review: { mcps: ["github", "stale"] }, impl: {} } }),
 		);
 
 		const result = await setMcpServerEnabled(input({ name: "review", source: "global" }), "stale", false);
 
-		expect(result.mcp).toEqual(["github"]);
+		expect(result.mcps).toEqual(["github"]);
 		expect(await activeMcp("review")).toEqual(["github"]);
 	});
 
@@ -88,7 +88,7 @@ describe("setMcpServerEnabled", () => {
 		const before = await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8");
 		const result = await setMcpServerEnabled(input({ name: "review", source: "global" }), "github", true);
 
-		expect(result.mcp).toEqual(["github"]);
+		expect(result.mcps).toEqual(["github"]);
 		expect(await readFile(path.join(fixture.agentDir, "profiles.json"), "utf8")).toBe(before);
 	});
 

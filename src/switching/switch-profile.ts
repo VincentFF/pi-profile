@@ -159,7 +159,7 @@ export async function switchProfile(
 					skills: previousPlan.resolved.skills.map((skill) => skill.name),
 					extensions: previousPlan.resolved.extensions.map((entry) => entry.id),
 					...(previousPlan.tools !== undefined ? { tools: previousPlan.tools } : {}),
-					...(previousPlan.mcp !== undefined ? { mcp: previousPlan.mcp } : {}),
+					...(previousPlan.mcps !== undefined ? { mcps: previousPlan.mcps } : {}),
 				}
 			: undefined;
 	await writeRuntimeFiles(deps.runtimeDir, resolved.plan, {

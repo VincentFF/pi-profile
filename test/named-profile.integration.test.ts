@@ -171,7 +171,7 @@ describe("launcher integration: named global profiles", () => {
 					},
 				}),
 			);
-			await writeCatalog({ focused: { model: { provider: "testprov", id: "test-model", thinkingLevel: "high" } } });
+			await writeCatalog({ focused: { defaultProvider: "testprov", defaultModel: "test-model", defaultThinkingLevel: "high" } });
 
 			const rpc = new RpcDriver("node", [BIN, "focused", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
@@ -254,7 +254,7 @@ describe("launcher integration: named global profiles", () => {
 		"fails activation before spawn when the declared model is unauthenticated",
 		{ timeout: 30_000 },
 		async () => {
-			await writeCatalog({ broken: { model: { provider: "anthropic", id: "claude-sonnet-4-5" } } });
+			await writeCatalog({ broken: { defaultProvider: "anthropic", defaultModel: "claude-sonnet-4-5" } });
 			const { execFile } = await import("node:child_process");
 
 			const failure = await new Promise<{ code: number; stderr: string }>((resolve) => {

@@ -39,7 +39,7 @@ export class MissingMcpAdapterError extends Error {
 	constructor(profile: string) {
 		super(
 			`profile "${profile}" declares MCP servers but pi-mcp-adapter is not active. ` +
-				`Select the adapter in the profile's extensions (e.g. via its npm package) or remove the "mcp" declaration.`,
+				`Select the adapter in the profile's extensions (e.g. via its npm package) or remove the "mcps" declaration.`,
 		);
 		this.name = "MissingMcpAdapterError";
 	}

@@ -36,7 +36,7 @@ export interface RuntimeState {
 export interface RuntimeOverlay {
 	disabledSkills?: string[];
 	disabledExtensions?: string[];
-	disabledMcp?: string[];
+	disabledMcps?: string[];
 	/** Replaces the profile's tool references when set. */
 	tools?: string[];
 }
@@ -44,7 +44,7 @@ export interface RuntimeOverlay {
 function parseOverlay(value: unknown): RuntimeOverlay | undefined {
 	if (!isRecord(value)) return undefined;
 	const overlay: RuntimeOverlay = {};
-	for (const key of ["disabledSkills", "disabledExtensions", "disabledMcp", "tools"] as const) {
+	for (const key of ["disabledSkills", "disabledExtensions", "disabledMcps", "tools"] as const) {
 		const list = value[key];
 		if (Array.isArray(list) && list.every((entry) => typeof entry === "string")) {
 			overlay[key] = list;

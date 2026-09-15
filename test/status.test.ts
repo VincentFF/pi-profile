@@ -13,7 +13,7 @@ const basePlan = {
 		extensions: [{ id: "linter", entry: "/agent/extensions/linter.ts" }],
 	},
 	tools: ["read", "grep"],
-	mcp: ["github"],
+	mcps: ["github"],
 };
 
 describe("buildStatusReport", () => {
@@ -44,7 +44,7 @@ describe("buildStatusReport", () => {
 		const report = buildStatusReport({
 			plan: {
 				...basePlan,
-				previousResolved: { skills: ["code-review", "old-skill"], extensions: ["linter"], tools: ["read", "bash"], mcp: [] },
+				previousResolved: { skills: ["code-review", "old-skill"], extensions: ["linter"], tools: ["read", "bash"], mcps: [] },
 			},
 			discoveredMcpServers: ["github"],
 			commands: [],

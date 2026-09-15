@@ -49,7 +49,7 @@ export interface LaunchPlanFile {
 	model?: { provider: string; id: string; thinkingLevel?: string };
 	tools?: string[];
 	toolReferences?: string[];
-	mcp?: string[];
+	mcps?: string[];
 	switchedFrom?: string;
 	persistSelection?: boolean;
 	clearOverlay?: boolean;
@@ -63,7 +63,7 @@ export interface LaunchPlanFile {
 		skills: string[];
 		extensions: string[];
 		tools?: string[];
-		mcp?: string[];
+		mcps?: string[];
 	};
 }
 
@@ -138,7 +138,7 @@ export async function applyLaunchPlan(input: {
 	}
 
 	// --- mcp coordination (ticket 04 contract) ---
-	if (plan.mcp !== undefined && plan.mcp.length > 0) {
+	if (plan.mcps !== undefined && plan.mcps.length > 0) {
 		if (!probeAdapterPresence(surface.events)) {
 			const error = new MissingMcpAdapterError(plan.profile);
 			surface.notify?.(error.message, "error");
@@ -147,7 +147,7 @@ export async function applyLaunchPlan(input: {
 		surface.events.emit(MCP_ALLOWLIST_EVENT, {
 			version: MCP_ALLOWLIST_VERSION,
 			profile: plan.profile,
-			servers: plan.mcp,
+			servers: plan.mcps,
 		});
 	}
 
@@ -181,7 +181,7 @@ function buildSwitchSummary(plan: LaunchPlanFile): string {
 	const parts = [
 		`profile switched: ${plan.switchedFrom} → ${plan.profile}`,
 		plan.tools !== undefined ? `tools: [${plan.tools.join(", ")}]` : undefined,
-		plan.mcp !== undefined && plan.mcp.length > 0 ? `mcp: [${plan.mcp.join(", ")}]` : undefined,
+		plan.mcps !== undefined && plan.mcps.length > 0 ? `mcp: [${plan.mcps.join(", ")}]` : undefined,
 		plan.model !== undefined ? `model: ${plan.model.provider}/${plan.model.id}` : undefined,
 	].filter((part): part is string => part !== undefined);
 	return parts.join("; ");

@@ -30,6 +30,16 @@ import { minimatch } from "minimatch";
 
 import type { DiscoveredExtensions } from "./extension-discovery.ts";
 import type { ProfileDefinition, ProfileModel, ProfileSource, ResolvedProfile } from "./profile-catalog.ts";
+
+/** Extracts a ProfileModel from flat definition keys, if declared. */
+function extractModel(definition: ProfileDefinition): ProfileModel | undefined {
+	if (definition.defaultProvider === undefined || definition.defaultModel === undefined) return undefined;
+	return {
+		provider: definition.defaultProvider,
+		id: definition.defaultModel,
+		...(definition.defaultThinkingLevel !== undefined ? { thinkingLevel: definition.defaultThinkingLevel } : {}),
+	};
+}
 import type { RuntimeOverlay } from "./runtime-state-store.ts";
 import type { SkillEntry } from "./skill-registry.ts";
 
@@ -68,8 +78,8 @@ export interface ActivationPlan {
 	/** Declared instructions; appended to Pi's system prompt by the extension. */
 	instructions?: string;
 	/** Expanded MCP server allowlist for pi-mcp-adapter coordination;
-	 *  undefined when the profile declares no `mcp` (no coordination). */
-	mcp?: string[];
+	 *  undefined when the profile declares no `mcps` (no coordination). */
+	mcps?: string[];
 	/** Glob references (skills/extensions/MCP) that matched nothing this
 	 *  resolution — surfaced as warnings so zero-match typos are never silent.
 	 *  Tool globs are excluded: extension-contributed tools are unknowable
@@ -156,14 +166,14 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 	const definition: ProfileDefinition = profile.definition;
 	const unmatched: string[] = [];
 
-	let mcp: string[] | undefined;
-	if (definition.mcp !== undefined && definition.mcp.length > 0) {
+	let mcps: string[] | undefined;
+	if (definition.mcps !== undefined && definition.mcps.length > 0) {
 		if (input.discoveredMcpServers === undefined) {
 			throw new ActivationError(
 				`profile "${profile.name}" declares MCP servers but no adapter server discovery is available`,
 			);
 		}
-		mcp = expandReferences(definition.mcp, input.discoveredMcpServers, (name) => name, "MCP server", {
+		mcps = expandReferences(definition.mcps, input.discoveredMcpServers, (name) => name, "MCP server", {
 			onZeroMatch: (reference) => unmatched.push(`mcp:${reference}`),
 		});
 	}
@@ -208,15 +218,15 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 			const disabled = new Set(overlay.disabledExtensions);
 			planExtensions = planExtensions.filter((entry) => !disabled.has(entry.id));
 		}
-		if (overlay.disabledMcp !== undefined && overlay.disabledMcp.length > 0) {
-			const active = new Set(mcp ?? []);
-			for (const name of overlay.disabledMcp) {
+		if (overlay.disabledMcps !== undefined && overlay.disabledMcps.length > 0) {
+			const active = new Set(mcps ?? []);
+			for (const name of overlay.disabledMcps) {
 				if (!active.has(name)) {
 					throw new ActivationError(`profile "${profile.name}": overlay disables unknown MCP server "${name}"`);
 				}
 			}
-			const disabled = new Set(overlay.disabledMcp);
-			mcp = (mcp ?? []).filter((name) => !disabled.has(name));
+			const disabled = new Set(overlay.disabledMcps);
+			mcps = (mcps ?? []).filter((name) => !disabled.has(name));
 		}
 		if (overlay.tools !== undefined) {
 			toolReferences = overlay.tools;
@@ -231,8 +241,9 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 	}
 
 	let model: ProfileModel | undefined;
-	if (definition.model !== undefined) {
-		const declared = definition.model;
+	const declaredModel = extractModel(definition);
+	if (declaredModel !== undefined) {
+		const declared = declaredModel;
 		if (declared.thinkingLevel !== undefined && !VALID_THINKING_LEVELS.has(declared.thinkingLevel)) {
 			throw new ActivationError(
 				`profile "${profile.name}": invalid thinkingLevel ${JSON.stringify(declared.thinkingLevel)}`,
@@ -257,7 +268,7 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		...(tools !== undefined && toolReferences !== undefined ? { tools, toolReferences: [...toolReferences] } : {}),
 		...(model !== undefined ? { model } : {}),
 		...(definition.instructions !== undefined ? { instructions: definition.instructions } : {}),
-		...(mcp !== undefined ? { mcp } : {}),
+		...(mcps !== undefined ? { mcps } : {}),
 		...(unmatched.length > 0 ? { unmatched } : {}),
 	};
 }

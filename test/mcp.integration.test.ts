@@ -80,7 +80,7 @@ describe("launcher integration: mcp coordination", () => {
 		{ timeout: 30_000 },
 		async () => {
 			await writeMcpConfig({ github: { url: "https://x" } });
-			await writeCatalog({ review: { mcp: ["github"] } });
+			await writeCatalog({ review: { mcps: ["github"] } });
 
 			const failure = await runLauncher(["review", "--", "--mode", "rpc"]);
 			expect(failure.code).toBe(2);
@@ -94,7 +94,7 @@ describe("launcher integration: mcp coordination", () => {
 		async () => {
 			await installFakeAdapter();
 			await writeMcpConfig({ github: {} });
-			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcp: ["typo-server"] } });
+			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcps: ["typo-server"] } });
 
 			const failure = await runLauncher(["review", "--", "--mode", "rpc"]);
 			expect(failure.code).toBe(2);
@@ -109,7 +109,7 @@ describe("launcher integration: mcp coordination", () => {
 			const marker = await installFakeAdapter();
 			const globalConfig = { github: { url: "https://x" }, linear: { command: "mcp-linear" } };
 			await writeMcpConfig(globalConfig);
-			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcp: ["github"] } });
+			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcps: ["github"] } });
 
 			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,

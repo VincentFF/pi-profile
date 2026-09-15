@@ -48,9 +48,9 @@
           "items": {
             "type": "string"
           },
-          "description": "Resource-registry IDs or globs. alwaysOn entries and their dependency closure join every profile."
+          "description": "Extension names or globs. Package names, source aliases, loose-file stems, glob patterns, or direct file paths, resolved against discovered extensions."
         },
-        "mcp": {
+        "mcps": {
           "type": "array",
           "items": {
             "type": "string"
@@ -64,24 +64,17 @@
           },
           "description": "Tool names or globs expanded against Pi's live registry (including extension tools)."
         },
-        "model": {
-          "type": "object",
-          "additionalProperties": false,
-          "required": [
-            "provider",
-            "id"
-          ],
-          "properties": {
-            "provider": {
-              "type": "string"
-            },
-            "id": {
-              "type": "string"
-            },
-            "thinkingLevel": {
-              "type": "string"
-            }
-          }
+        "defaultProvider": {
+          "type": "string",
+          "description": "Startup provider for this profile (e.g. \"anthropic\", \"openai\"). Mirrors Pi's settings.defaultProvider."
+        },
+        "defaultModel": {
+          "type": "string",
+          "description": "Startup model ID for this profile. Mirrors Pi's settings.defaultModel."
+        },
+        "defaultThinkingLevel": {
+          "type": "string",
+          "description": "Startup thinking level for this profile. Mirrors Pi's settings.defaultThinkingLevel."
         },
         "instructions": {
           "type": "string",

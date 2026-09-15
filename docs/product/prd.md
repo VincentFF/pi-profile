@@ -157,7 +157,7 @@ profile 只引用 adapter 已配置的 MCP server 名称：
 
 ```json
 {
-  "mcp": ["github-ro", "atlassian"]
+  "mcps": ["github-ro", "atlassian"]
 }
 ```
 

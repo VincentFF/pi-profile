@@ -131,12 +131,12 @@ export async function resolveInitialProfile(
 			overlay !== undefined &&
 			((overlay.disabledSkills?.length ?? 0) > 0 ||
 				(overlay.disabledExtensions?.length ?? 0) > 0 ||
-				(overlay.disabledMcp?.length ?? 0) > 0 ||
+				(overlay.disabledMcps?.length ?? 0) > 0 ||
 				overlay.tools !== undefined);
 		if (!narrowed) {
 			return { plan: defaultPlan(), warnings };
 		}
-		if ((overlay.disabledMcp?.length ?? 0) > 0) {
+		if ((overlay.disabledMcps?.length ?? 0) > 0) {
 			throw new ActivationError(
 				"the default profile has no MCP allowlist to narrow — use the adapter's own /mcp commands instead",
 			);
@@ -163,13 +163,13 @@ export async function resolveInitialProfile(
 		skills: discovery.skills,
 		extensions: discovery.extensions,
 		validateModel: (model) => checkDeclaredModel(context.agentDir, model),
-		discoveredMcpServers: profile.definition.mcp?.length
+		discoveredMcpServers: profile.definition.mcps?.length
 			? await discoverAdapterServerNames(context.agentDir, projectDir)
 			: undefined,
 		overlay: options?.overlay,
 	});
 	warnings.push(...discovery.extensions.warnings(), ...unmatchedWarnings(plan));
-	if (plan.mcp !== undefined && !plan.extensions.some(isAdapterExtension)) {
+	if (plan.mcps !== undefined && !plan.extensions.some(isAdapterExtension)) {
 		// Fail before spawn: without the adapter in the active extension set
 		// nobody applies the allowlist, and the declared servers would either
 		// silently do nothing or leak through unfiltered.

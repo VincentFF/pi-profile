@@ -196,11 +196,11 @@ describe("resolveInitialProfile", () => {
 				path.join(fixture.agentDir, "mcp.json"),
 				JSON.stringify({ mcpServers: { github: {}, linear: {} } }),
 			);
-			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcp: ["github"] } });
+			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcps: ["github"] } });
 
 			const { plan } = await resolveInitialProfile("review", context());
 
-			expect(plan.mcp).toEqual(["github"]);
+			expect(plan.mcps).toEqual(["github"]);
 		});
 
 		it("fails before spawn when the adapter is absent from the active extension set", async () => {
@@ -208,7 +208,7 @@ describe("resolveInitialProfile", () => {
 				path.join(fixture.agentDir, "mcp.json"),
 				JSON.stringify({ mcpServers: { github: {} } }),
 			);
-			await writeCatalog({ review: { mcp: ["github"] } });
+			await writeCatalog({ review: { mcps: ["github"] } });
 
 			await expect(resolveInitialProfile("review", context())).rejects.toThrow(/pi-mcp-adapter is not active/);
 		});
@@ -219,7 +219,7 @@ describe("resolveInitialProfile", () => {
 				path.join(fixture.agentDir, "mcp.json"),
 				JSON.stringify({ mcpServers: { github: {} } }),
 			);
-			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcp: ["typo-server"] } });
+			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcps: ["typo-server"] } });
 
 			await expect(resolveInitialProfile("review", context())).rejects.toThrow(/unknown MCP server: "typo-server"/);
 		});

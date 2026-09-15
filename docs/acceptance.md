@@ -21,8 +21,8 @@ cat > ~/.pi/agent/profiles.json <<'EOF'
 {
   "schemaVersion": 1,
   "profiles": {
-    "review": { "skills": ["git-commit"], "mcp": ["atlassian"] },
-    "implement": { "skills": ["git-commit"], "mcp": ["atlassian"] }
+    "review": { "skills": ["git-commit"], "mcps": ["atlassian"] },
+    "implement": { "skills": ["git-commit"], "mcps": ["atlassian"] }
   }
 }
 EOF

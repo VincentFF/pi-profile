@@ -426,7 +426,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				}
 				// Notify BEFORE the reload: this context is stale afterwards.
 				notify(
-					`${action}d MCP server "${server}" in profile "${plan.profile}" (mcp: [${result.mcp.join(", ")}]); reloading`,
+					`${action}d MCP server "${server}" in profile "${plan.profile}" (mcps: [${result.mcps.join(", ")}]); reloading`,
 					"info",
 				);
 				const switched = await switchProfile(plan.profile, {

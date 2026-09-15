@@ -11,7 +11,7 @@
       "extensions": [
         "pi-mcp-adapter"
       ],
-      "mcp": [
+      "mcps": [
         "github"
       ],
       "tools": [
@@ -30,15 +30,13 @@
       "extensions": [
         "pi-mcp-adapter"
       ],
-      "mcp": [
+      "mcps": [
         "github",
         "linear"
       ],
-      "model": {
-        "provider": "deepseek",
-        "id": "deepseek-v4-pro",
-        "thinkingLevel": "high"
-      }
+      "defaultProvider": "deepseek",
+      "defaultModel": "deepseek-v4-pro",
+      "defaultThinkingLevel": "high"
     }
   }
 }

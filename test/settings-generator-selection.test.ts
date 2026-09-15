@@ -233,13 +233,13 @@ describe("generateRuntimeDir (named profile selection)", () => {
 	it("filters the MCP servers into an instance mcp.json when mcps is declared", async () => {
 		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { github: {}, missing: {} } }));
 
-		const result = await generateRuntimeDir(selectionPlan({ mcp: ["github"] }), {
+		const result = await generateRuntimeDir(selectionPlan({ mcps: ["github"] }), {
 			agentDir: fixture.agentDir,
 			discovery: { skills: [], packages: [] },
 		});
 
 		const plan = JSON.parse(await readFile(path.join(result.runtimeDir, "pi-profile.json"), "utf8"));
-		expect(plan.mcp).toEqual(["github"]);
+		expect(plan.mcps).toEqual(["github"]);
 		
 		const mcpInstance = JSON.parse(await readFile(path.join(result.runtimeDir, "mcp.json"), "utf8"));
 		expect(mcpInstance.mcpServers).toEqual({ github: {} });
@@ -248,7 +248,7 @@ describe("generateRuntimeDir (named profile selection)", () => {
 	it("symlinks the real mcp.json when no mcp allowlist is declared", async () => {
 		await writeFile(path.join(fixture.agentDir, "mcp.json"), JSON.stringify({ mcpServers: { github: {} } }));
 
-		const result = await generateRuntimeDir(selectionPlan({ mcp: undefined }), {
+		const result = await generateRuntimeDir(selectionPlan({ mcps: undefined }), {
 			agentDir: fixture.agentDir,
 			discovery: { skills: [], packages: [] },
 		});

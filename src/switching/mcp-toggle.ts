@@ -1,7 +1,7 @@
 /**
  * McpToggle: persistent, profile-scoped `/mcp enable|disable` (ticket 10).
  *
- * The profile's `mcp` array in its OWNING catalog is the profile-scoped
+ * The profile's `mcps` array in its OWNING catalog is the profile-scoped
  * state store (ticket 04 established that pi-mcp-adapter@2.33.0 has no
  * allowlist/profile-state API — ADR-0002's assumed store does not exist;
  * pi-profile owns the contract). Runtime effect flows through the standard
@@ -28,7 +28,7 @@ export async function setMcpServerEnabled(
 	input: { realAgentDir: string; cwd: string; profile: { name: string; source: string } },
 	server: string,
 	enabled: boolean,
-): Promise<{ mcp: string[]; changed: boolean }> {
+): Promise<{ mcps: string[]; changed: boolean }> {
 	if (input.profile.name === DEFAULT_PROFILE_NAME || input.profile.source === "builtin") {
 		throw new CatalogError(
 			`the built-in default profile has no catalog entry — create a named profile (/profile create) to toggle MCP servers`,
@@ -56,16 +56,16 @@ export async function setMcpServerEnabled(
 		throw new CatalogError(`profile "${input.profile.name}" not found in the ${scope} catalog`);
 	}
 
-	const current = definition.mcp ?? [];
+	const current = definition.mcps ?? [];
 	if (enabled === current.includes(server)) {
-		return { mcp: current, changed: false }; // already in the requested state
+		return { mcps: current, changed: false }; // already in the requested state
 	}
 	const next = enabled ? [...current, server] : current.filter((name) => name !== server);
 	// Drop the key entirely when empty (exactOptionalPropertyTypes; a
-	// written `mcp: undefined` would also misrepresent the definition).
+	// written `mcps: undefined` would also misrepresent the definition).
 	const rest = { ...definition };
-	delete rest.mcp;
-	const updated: ProfileDefinition = next.length > 0 ? { ...rest, mcp: next } : rest;
+	delete rest.mcps;
+	const updated: ProfileDefinition = next.length > 0 ? { ...rest, mcps: next } : rest;
 	await catalogStore(input, scope).upsert(input.profile.name, updated);
-	return { mcp: next, changed: true };
+	return { mcps: next, changed: true };
 }

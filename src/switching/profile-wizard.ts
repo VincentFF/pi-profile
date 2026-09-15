@@ -38,7 +38,7 @@ function parseList(raw: string): string[] {
 }
 
 /** "provider/id[/thinkingLevel]" → ProfileModel; empty/undefined → none. */
-function parseModel(raw: string): ProfileDefinition["model"] | undefined {
+function parseModel(raw: string): { defaultProvider: string; defaultModel: string; defaultThinkingLevel?: string } | undefined {
 	const trimmed = raw.trim();
 	if (trimmed.length === 0) return undefined;
 	const [provider, id, thinkingLevel] = trimmed.split("/").map((part) => part.trim());
@@ -46,8 +46,8 @@ function parseModel(raw: string): ProfileDefinition["model"] | undefined {
 		return undefined;
 	}
 	return thinkingLevel !== undefined && thinkingLevel.length > 0
-		? { provider, id, thinkingLevel }
-		: { provider, id };
+		? { defaultProvider: provider, defaultModel: id, defaultThinkingLevel: thinkingLevel }
+		: { defaultProvider: provider, defaultModel: id };
 }
 
 async function captureDefinition(
@@ -69,7 +69,7 @@ async function captureDefinition(
 	const listFields = [
 		["skills", "skills (comma-separated names or globs, empty = none)"],
 		["extensions", "extensions (names or globs, empty = none)"],
-		["mcp", "mcp servers (names or globs, empty = none)"],
+		["mcps", "mcp servers (names or globs, empty = none)"],
 		["tools", "tools (names or globs, empty = pi default set)"],
 	] as const;
 	for (const [field, prompt] of listFields) {
@@ -94,16 +94,20 @@ async function captureDefinition(
 	else if (existing?.instructions !== undefined) definition.instructions = existing.instructions;
 
 	const currentModel =
-		existing?.model !== undefined
-			? `${existing.model.provider}/${existing.model.id}${existing.model.thinkingLevel !== undefined ? `/${existing.model.thinkingLevel}` : ""}`
+		existing?.defaultProvider !== undefined && existing?.defaultModel !== undefined
+			? `${existing.defaultProvider}/${existing.defaultModel}${existing.defaultThinkingLevel !== undefined ? `/${existing.defaultThinkingLevel}` : ""}`
 			: undefined;
 	const modelRaw = await ui.input("model provider/id[/thinking] (empty = none)", currentModel);
 	if (modelRaw === undefined) return undefined;
 	const model = parseModel(modelRaw);
 	if (model !== undefined) {
-		definition.model = model;
-	} else if (existing?.model !== undefined && modelRaw.trim().length === 0) {
-		definition.model = existing.model;
+		definition.defaultProvider = model.defaultProvider;
+		definition.defaultModel = model.defaultModel;
+		if (model.defaultThinkingLevel !== undefined) definition.defaultThinkingLevel = model.defaultThinkingLevel;
+	} else if (existing?.defaultProvider !== undefined && modelRaw.trim().length === 0) {
+		definition.defaultProvider = existing.defaultProvider;
+		definition.defaultModel = existing.defaultModel;
+		if (existing.defaultThinkingLevel !== undefined) definition.defaultThinkingLevel = existing.defaultThinkingLevel;
 	}
 
 	return definition;

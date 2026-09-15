@@ -148,7 +148,7 @@ describe("resolveProfile", () => {
 
 	it("carries a declared model after successful validation", async () => {
 		const plan = await resolveProfile({
-			profile: profile("review", { model: { provider: "openai", id: "gpt-5.4", thinkingLevel: "high" } }),
+			profile: profile("review", { defaultProvider: "openai", defaultModel: "gpt-5.4", defaultThinkingLevel: "high" }),
 			skills: [],
 			extensions: await extensionsWith(),
 			validateModel: async () => undefined,
@@ -160,7 +160,7 @@ describe("resolveProfile", () => {
 	it("fails activation when the declared model is missing or unauthenticated", async () => {
 		await expect(
 			resolveProfile({
-				profile: profile("review", { model: { provider: "openai", id: "gpt-5.4" } }),
+				profile: profile("review", { defaultProvider: "openai", defaultModel: "gpt-5.4" }),
 				skills: [],
 				extensions: await extensionsWith(),
 				validateModel: async () => "No API key found for \"openai\"",
@@ -171,7 +171,7 @@ describe("resolveProfile", () => {
 	it("fails activation on an invalid thinking level", async () => {
 		await expect(
 			resolveProfile({
-				profile: profile("review", { model: { provider: "openai", id: "gpt-5.4", thinkingLevel: "extreme" } }),
+				profile: profile("review", { defaultProvider: "openai", defaultModel: "gpt-5.4", defaultThinkingLevel: "extreme" }),
 				skills: [],
 				extensions: await extensionsWith(),
 				validateModel: async () => undefined,
@@ -181,19 +181,19 @@ describe("resolveProfile", () => {
 
 	it("expands mcp references against the discovered adapter server names", async () => {
 		const plan = await resolveProfile({
-			profile: profile("review", { mcp: ["github", "internal-*"] }),
+			profile: profile("review", { mcps: ["github", "internal-*"] }),
 			skills: [],
 			extensions: await extensionsWith(),
 			discoveredMcpServers: ["github", "internal-docs", "internal-ci", "other"],
 		});
 
-		expect(plan.mcp).toEqual(["github", "internal-docs", "internal-ci"]);
+		expect(plan.mcps).toEqual(["github", "internal-docs", "internal-ci"]);
 	});
 
 	it("fails activation on a literal mcp reference the adapter never discovered", async () => {
 		await expect(
 			resolveProfile({
-				profile: profile("review", { mcp: ["github-ro"] }),
+				profile: profile("review", { mcps: ["github-ro"] }),
 				skills: [],
 				extensions: await extensionsWith(),
 				discoveredMcpServers: ["github"],
@@ -204,7 +204,7 @@ describe("resolveProfile", () => {
 	it("fails activation when mcp is declared without adapter server discovery", async () => {
 		await expect(
 			resolveProfile({
-				profile: profile("review", { mcp: ["github"] }),
+				profile: profile("review", { mcps: ["github"] }),
 				skills: [],
 				extensions: await extensionsWith(),
 			}),
@@ -273,14 +273,14 @@ describe("overlay application (ticket 06)", () => {
 
 	it("narrows mcp servers and replaces tool references", async () => {
 		const plan = await resolveProfile({
-			profile: profile("review", { mcp: ["github", "linear"], tools: ["read", "bash"] }),
+			profile: profile("review", { mcps: ["github", "linear"], tools: ["read", "bash"] }),
 			skills: [],
 			extensions: await extensionsWith(),
 			discoveredMcpServers: ["github", "linear"],
-			overlay: { disabledMcp: ["linear"], tools: ["read"] },
+			overlay: { disabledMcps: ["linear"], tools: ["read"] },
 		});
 
-		expect(plan.mcp).toEqual(["github"]);
+		expect(plan.mcps).toEqual(["github"]);
 		expect(plan.tools).toEqual(["read"]);
 		expect(plan.toolReferences).toEqual(["read"]);
 	});
@@ -288,11 +288,11 @@ describe("overlay application (ticket 06)", () => {
 	it("rejects disabling an MCP server the profile does not resolve", async () => {
 		await expect(
 			resolveProfile({
-				profile: profile("review", { mcp: ["github"] }),
+				profile: profile("review", { mcps: ["github"] }),
 				skills: [],
 				extensions: await extensionsWith(),
 				discoveredMcpServers: ["github"],
-				overlay: { disabledMcp: ["ghost-server"] },
+				overlay: { disabledMcps: ["ghost-server"] },
 			}),
 		).rejects.toThrow(/overlay disables unknown MCP server "ghost-server"/);
 	});

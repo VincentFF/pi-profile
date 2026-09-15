@@ -34,8 +34,11 @@ const reviewProfile = {
 	description: "Code review workflow",
 	skills: ["code-review", "git-commit"],
 	extensions: ["review-guard"],
+	mcps: ["github"],
 	tools: ["read", "grep"],
-	model: { provider: "openai", id: "gpt-5.4", thinkingLevel: "high" },
+	defaultProvider: "openai",
+	defaultModel: "gpt-5.4",
+	defaultThinkingLevel: "high",
 	instructions: "Be picky.",
 };
 
@@ -105,7 +108,10 @@ describe("ProfileCatalog (global catalog)", () => {
 		const resolved = catalog.resolve("review");
 
 		expect(resolved?.definition.skills).toBeUndefined();
-		expect(resolved?.definition.model).toBeUndefined();
+		expect(resolved?.definition.mcps).toBeUndefined();
+		expect(resolved?.definition.defaultProvider).toBeUndefined();
+		expect(resolved?.definition.defaultModel).toBeUndefined();
+		expect(resolved?.definition.defaultThinkingLevel).toBeUndefined();
 		expect(resolved?.definition.instructions).toBeUndefined();
 	});
 

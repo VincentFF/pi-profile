@@ -95,7 +95,8 @@ describe("duplicateProfile", () => {
 			label: "Code review",
 			skills: ["r*"],
 			extensions: ["linter"],
-			model: { provider: "deepseek", id: "deepseek-v4-pro" },
+			defaultProvider: "deepseek",
+			defaultModel: "deepseek-v4-pro",
 			instructions: "Be terse.",
 		});
 		await duplicateProfile(input(), "global", "review", "review-strict");

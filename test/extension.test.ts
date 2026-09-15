@@ -183,7 +183,7 @@ describe("pi-profile extension", () => {
 	});
 
 	it("publishes the mcp allowlist at session start when the adapter answers", async () => {
-		await writeLaunchPlan({ profile: "review", source: "global", mcp: ["github"] });
+		await writeLaunchPlan({ profile: "review", source: "global", mcps: ["github"] });
 		const pi = fakePi();
 		installFakeAdapter(pi.events);
 		piProfileExtension(pi as never);
@@ -195,7 +195,7 @@ describe("pi-profile extension", () => {
 	});
 
 	it("fails loudly at session start when the plan declares mcp but the adapter is absent", async () => {
-		await writeLaunchPlan({ profile: "review", source: "global", mcp: ["github"] });
+		await writeLaunchPlan({ profile: "review", source: "global", mcps: ["github"] });
 		const pi = fakePi();
 		piProfileExtension(pi as never);
 
@@ -249,7 +249,7 @@ describe("pi-profile extension", () => {
 				source: "global",
 				agentDir: root,
 				resolved: { skills: [{ name: "code-review", filePath: "/x/SKILL.md" }], extensions: [] },
-				mcp: ["github"],
+				mcps: ["github"],
 			});
 			const pi = fakePi();
 			piProfileExtension(pi as never);
@@ -399,7 +399,7 @@ describe("pi-profile extension", () => {
 			await writeLaunchPlan({ profile: "review", source: "global", agentDir: root });
 			await writeFile(
 				path.join(root, "profiles.json"),
-				JSON.stringify({ schemaVersion: 1, profiles: { review: { mcp: ["github"] } } }),
+				JSON.stringify({ schemaVersion: 1, profiles: { review: { mcps: ["github"] } } }),
 			);
 			await writeFile(path.join(root, "mcp.json"), JSON.stringify({ mcpServers: { github: {}, linear: {} } }));
 		};
@@ -414,7 +414,7 @@ describe("pi-profile extension", () => {
 			await pi.commands.get("mcp")?.handler("enable linear" as never, ctx as never);
 
 			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
-			expect(catalog.profiles.review.mcp).toEqual(["github", "linear"]);
+			expect(catalog.profiles.review.mcps).toEqual(["github", "linear"]);
 			expect(ctx.notifications.some((entry) => entry.message.includes("enabled MCP server"))).toBe(true);
 			// Adapter config untouched.
 			expect(JSON.parse(await readFile(path.join(root, "mcp.json"), "utf8"))).toEqual({
@@ -437,11 +437,11 @@ describe("pi-profile extension", () => {
 			// Stale: in the profile but not in mcp.json.
 			await writeFile(
 				path.join(root, "profiles.json"),
-				JSON.stringify({ schemaVersion: 1, profiles: { review: { mcp: ["github", "stale"] } } }),
+				JSON.stringify({ schemaVersion: 1, profiles: { review: { mcps: ["github", "stale"] } } }),
 			);
 			await pi.commands.get("mcp")?.handler("disable stale" as never, fakeCtx() as never);
 			const catalog = JSON.parse(await readFile(path.join(root, "profiles.json"), "utf8"));
-			expect(catalog.profiles.review.mcp).toEqual(["github"]);
+			expect(catalog.profiles.review.mcps).toEqual(["github"]);
 		});
 
 		it("fails clearly when the adapter is absent or the profile is default", async () => {

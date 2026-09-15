@@ -34,7 +34,7 @@ describe("runProfileCreateWizard", () => {
 				"", // description
 				"review, debug-*", // skills
 				"linter", // extensions
-				"github", // mcp
+				"github", // mcps
 				"read, grep", // tools
 				"Be terse.", // instructions
 				"deepseek/deepseek-v4-pro/high", // model
@@ -50,10 +50,12 @@ describe("runProfileCreateWizard", () => {
 				label: "Strict review",
 				skills: ["review", "debug-*"],
 				extensions: ["linter"],
-				mcp: ["github"],
+				mcps: ["github"],
 				tools: ["read", "grep"],
 				instructions: "Be terse.",
-				model: { provider: "deepseek", id: "deepseek-v4-pro", thinkingLevel: "high" },
+				defaultProvider: "deepseek",
+				defaultModel: "deepseek-v4-pro",
+				defaultThinkingLevel: "high",
 			},
 		});
 	});
@@ -90,7 +92,8 @@ describe("runProfileEditWizard", () => {
 					label: "Code review",
 					skills: ["review"],
 					instructions: "Be terse.",
-					model: { provider: "deepseek", id: "deepseek-v4-pro" },
+					defaultProvider: "deepseek",
+					defaultModel: "deepseek-v4-pro",
 				},
 			},
 		});
@@ -102,7 +105,8 @@ describe("runProfileEditWizard", () => {
 				label: "Code review",
 				skills: ["review"],
 				instructions: "Be terse.",
-				model: { provider: "deepseek", id: "deepseek-v4-pro" },
+				defaultProvider: "deepseek",
+				defaultModel: "deepseek-v4-pro",
 			},
 		});
 	});
@@ -116,7 +120,8 @@ describe("runProfileEditWizard", () => {
 
 		expect(result?.definition.label).toBe("New label");
 		expect(result?.definition.skills).toEqual(["a", "b"]);
-		expect(result?.definition.model).toEqual({ provider: "openai", id: "gpt-5" });
+		expect(result?.definition.defaultProvider).toBe("openai");
+		expect(result?.definition.defaultModel).toBe("gpt-5");
 	});
 });
 

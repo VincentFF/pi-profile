@@ -56,7 +56,7 @@ function currentNames(plan: LaunchPlanFile): string[] {
 		...(plan.resolved?.skills ?? []).map((skill) => `skill:${skill.name}`),
 		...(plan.resolved?.extensions ?? []).map((entry) => `extension:${entry.id}`),
 		...(plan.tools ?? []).map((tool) => `tool:${tool}`),
-		...(plan.mcp ?? []).map((server) => `mcp:${server}`),
+		...(plan.mcps ?? []).map((server) => `mcp:${server}`),
 	];
 	return names.sort();
 }
@@ -70,7 +70,7 @@ export function buildStatusReport(input: {
 }): StatusReport {
 	const { plan } = input;
 
-	const enabled = plan.mcp ?? [];
+	const enabled = plan.mcps ?? [];
 	const discovered = new Set(input.discoveredMcpServers);
 	const mcp = {
 		enabled,
@@ -85,7 +85,7 @@ export function buildStatusReport(input: {
 				...plan.previousResolved.skills.map((name) => `skill:${name}`),
 				...plan.previousResolved.extensions.map((id) => `extension:${id}`),
 				...(plan.previousResolved.tools ?? []).map((name) => `tool:${name}`),
-				...(plan.previousResolved.mcp ?? []).map((name) => `mcp:${name}`),
+				...(plan.previousResolved.mcps ?? []).map((name) => `mcp:${name}`),
 			].sort(),
 		);
 		const after = new Set(currentNames(plan));
@@ -144,7 +144,7 @@ export function formatStatusMarkdown(report: StatusReport): string {
 		const parts = [
 			...(report.overlay.disabledSkills ?? []).map((name) => `-skill:${name}`),
 			...(report.overlay.disabledExtensions ?? []).map((id) => `-extension:${id}`),
-			...(report.overlay.disabledMcp ?? []).map((name) => `-mcp:${name}`),
+			...(report.overlay.disabledMcps ?? []).map((name) => `-mcp:${name}`),
 			...(report.overlay.tools !== undefined ? [`tools=[${report.overlay.tools.join(", ")}]`] : []),
 		];
 		lines.push(`overlay: ${parts.length > 0 ? parts.join(" ") : "(empty)"}`);

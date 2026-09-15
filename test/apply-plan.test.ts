@@ -106,7 +106,7 @@ describe("applyLaunchPlan", () => {
 	});
 
 	it("publishes the mcp allowlist when the adapter answers the probe", async () => {
-		await writePlan({ profile: "review", source: "global", mcp: ["github"] });
+		await writePlan({ profile: "review", source: "global", mcps: ["github"] });
 		const surface = fakeSurface();
 		installFakeAdapter(surface.events);
 
@@ -117,7 +117,7 @@ describe("applyLaunchPlan", () => {
 	});
 
 	it("fails loudly when the plan declares mcp but the adapter is absent", async () => {
-		await writePlan({ profile: "review", source: "global", mcp: ["github"] });
+		await writePlan({ profile: "review", source: "global", mcps: ["github"] });
 		const surface = fakeSurface();
 
 		await expect(applyLaunchPlan({ runtimeDir, cwd: root, reason: "reload", surface })).rejects.toThrow(

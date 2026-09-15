@@ -24,7 +24,10 @@ describe("ProfileCatalogStore", () => {
 			label: "Code review",
 			skills: ["review*"],
 			extensions: ["linter"],
-			model: { provider: "deepseek", id: "deepseek-v4-pro", thinkingLevel: "high" },
+			mcps: ["github"],
+			defaultProvider: "deepseek",
+			defaultModel: "deepseek-v4-pro",
+			defaultThinkingLevel: "high",
 			instructions: "Be terse.",
 		});
 
@@ -33,7 +36,10 @@ describe("ProfileCatalogStore", () => {
 			label: "Code review",
 			skills: ["review*"],
 			extensions: ["linter"],
-			model: { provider: "deepseek", id: "deepseek-v4-pro", thinkingLevel: "high" },
+			mcps: ["github"],
+			defaultProvider: "deepseek",
+			defaultModel: "deepseek-v4-pro",
+			defaultThinkingLevel: "high",
 			instructions: "Be terse.",
 		});
 		const catalog = await ProfileCatalog.load(fixture.agentDir);

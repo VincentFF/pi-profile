@@ -58,8 +58,8 @@ beforeEach(async () => {
 		JSON.stringify({
 			schemaVersion: 1,
 			profiles: {
-				review: { skills: ["review"], extensions: ["pi-mcp-adapter"], mcp: ["github"] },
-				impl: { skills: ["impl"], extensions: ["pi-mcp-adapter"], mcp: ["linear"] },
+				review: { skills: ["review"], extensions: ["pi-mcp-adapter"], mcps: ["github"] },
+				impl: { skills: ["impl"], extensions: ["pi-mcp-adapter"], mcps: ["linear"] },
 			},
 		}),
 	);
@@ -110,8 +110,8 @@ describe("/mcp enable|disable against a real spawned pi", () => {
 
 		// Catalog updated; other profiles untouched.
 		const profiles = JSON.parse(await readFile(path.join(fixture.profileSwitchDir, "profiles.json"), "utf8"));
-		expect(profiles.profiles.review.mcp).toEqual(["github", "linear"]);
-		expect(profiles.profiles.impl.mcp).toEqual(["linear"]);
+		expect(profiles.profiles.review.mcps).toEqual(["github", "linear"]);
+		expect(profiles.profiles.impl.mcps).toEqual(["linear"]);
 
 		await driver.send({ type: "prompt", message: "/mcp disable github" }, 60_000);
 		await untilAllowlist((entry) => entry.profile === "review" && entry.servers.join() === "linear");
