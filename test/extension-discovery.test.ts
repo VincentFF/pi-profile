@@ -3,6 +3,7 @@ import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import {
+	discoverExtensions,
 	discoverImplicitExtensions,
 	packageNameFromSource,
 	type ImplicitExtensionDiscovery,
@@ -158,5 +159,87 @@ describe("discoverImplicitExtensions", () => {
 
 	it("an empty discovery result is a valid input", () => {
 		expect(EMPTY.packages).toEqual([]);
+	});
+});
+
+describe("DiscoveredExtensions (pure discovery & selection)", () => {
+	it("selects extensions by package name, alias, and loose file stem", async () => {
+		const pkg = await addPackage("pi-mcp-adapter", { extensions: ["./index.ts"] });
+		const loose = await addLoose(path.join(fixture.agentDir, "extensions"), "conventions.ts");
+
+		const extensions = await discoverExtensions({
+			agentDir: fixture.agentDir,
+			packages: [pkg],
+		});
+
+		const selection = await extensions.select(["pi-mcp-adapter", "conventions"]);
+		expect(selection.unmatched).toEqual([]);
+		expect(selection.entries.map((e) => e.id).sort()).toEqual(["conventions", "pi-mcp-adapter"]);
+
+		// Also selectable by source alias
+		const aliasSelection = await extensions.select(["npm:pi-mcp-adapter"]);
+		expect(aliasSelection.entries.map((e) => e.id)).toEqual(["pi-mcp-adapter"]);
+	});
+
+	it("selects multi-entry packages as a whole and by individual entry", async () => {
+		const pkg = await addPackage("multi-ext", { extensions: ["./a.ts", "./b.ts"] });
+		const extensions = await discoverExtensions({ agentDir: fixture.agentDir, packages: [pkg] });
+
+		const all = await extensions.select(["multi-ext"]);
+		expect(all.entries.map((e) => e.id).sort()).toEqual(["multi-ext:a.ts", "multi-ext:b.ts"]);
+
+		const single = await extensions.select(["multi-ext:a.ts"]);
+		expect(single.entries.map((e) => e.id)).toEqual(["multi-ext:a.ts"]);
+	});
+
+	it("expands glob patterns and records unmatched globs", async () => {
+		const pkg = await addPackage("pi-mcp-adapter", { extensions: ["./index.ts"] });
+		await addLoose(path.join(fixture.agentDir, "extensions"), "pi-guard.ts");
+		await addLoose(path.join(fixture.agentDir, "extensions"), "other.ts");
+
+		const extensions = await discoverExtensions({ agentDir: fixture.agentDir, packages: [pkg] });
+
+		const selection = await extensions.select(["pi-*", "nonexistent-*"]);
+		expect(selection.entries.map((e) => e.id).sort()).toEqual(["pi-guard", "pi-mcp-adapter"]);
+		expect(selection.unmatched).toEqual(["nonexistent-*"]);
+	});
+
+	it("resolves absolute and home-relative paths directly, rejecting relative paths", async () => {
+		const absFile = await addLoose(path.join(fixture.root, "external"), "custom.ts");
+		const extensions = await discoverExtensions({ agentDir: fixture.agentDir, packages: [] });
+
+		const selection = await extensions.select([absFile]);
+		expect(selection.entries).toEqual([{ id: absFile, entry: absFile, origin: "path" }]);
+
+		await expect(extensions.select(["./relative/path.ts"])).rejects.toThrow(/relative path/);
+		await expect(extensions.select(["/nonexistent/ext.ts"])).rejects.toThrow(/extension path not found/);
+	});
+
+	it("fails on unknown literal with candidates and did-you-mean, never mentioning resources.json", async () => {
+		await addPackage("pi-mcp-adapter", { extensions: ["./index.ts"] });
+		const extensions = await discoverExtensions({ agentDir: fixture.agentDir, packages: [] });
+
+		try {
+			await extensions.select(["pi-mcp-adaptr"]);
+			expect.unreachable("should have thrown");
+		} catch (err) {
+			const msg = (err as Error).message;
+			expect(msg).toContain("unknown extension");
+			expect(msg).not.toContain("resources.json");
+		}
+	});
+
+	it("resolves local file over package name collision, keeping package selectable by source", async () => {
+		const pkg = await addPackage("my-tool", { extensions: ["./index.ts"] });
+		const localFile = await addLoose(path.join(fixture.agentDir, "extensions"), "my-tool.ts");
+
+		const extensions = await discoverExtensions({ agentDir: fixture.agentDir, packages: [pkg] });
+		expect(extensions.warnings().some((w) => w.includes("my-tool"))).toBe(true);
+
+		const localSelection = await extensions.select(["my-tool"]);
+		expect(localSelection.entries).toEqual([{ id: "my-tool", entry: localFile, origin: "local" }]);
+
+		const pkgSelection = await extensions.select(["npm:my-tool"]);
+		expect(pkgSelection.entries[0]?.entry).toContain("node_modules");
 	});
 });

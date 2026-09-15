@@ -31,10 +31,10 @@ beforeEach(async () => {
 
 	// Fake adapter: path named like the package, answers probes, records
 	// every published allowlist.
-	const dir = path.join(fixture.agentDir, "extensions", "pi-mcp-adapter");
-	await mkdir(dir, { recursive: true });
+	const extFile = path.join(fixture.agentDir, "extensions", "pi-mcp-adapter.ts");
+	await mkdir(path.dirname(extFile), { recursive: true });
 	await writeFile(
-		path.join(dir, "index.ts"),
+		extFile,
 		[
 			`import { appendFileSync } from "node:fs";`,
 			`import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";`,
@@ -50,13 +50,6 @@ beforeEach(async () => {
 		].join("\n"),
 	);
 	await writeFile(
-		path.join(fixture.agentDir, "resources.json"),
-		JSON.stringify({
-			schemaVersion: 1,
-			resources: { "mcp-adapter": { kind: "extension", entry: path.join(dir, "index.ts") } },
-		}),
-	);
-	await writeFile(
 		path.join(fixture.agentDir, "mcp.json"),
 		JSON.stringify({ mcpServers: { github: {}, linear: {} } }),
 	);
@@ -65,8 +58,8 @@ beforeEach(async () => {
 		JSON.stringify({
 			schemaVersion: 1,
 			profiles: {
-				review: { skills: ["review"], extensions: ["mcp-adapter"], mcp: ["github"] },
-				impl: { skills: ["impl"], extensions: ["mcp-adapter"], mcp: ["linear"] },
+				review: { skills: ["review"], extensions: ["pi-mcp-adapter"], mcp: ["github"] },
+				impl: { skills: ["impl"], extensions: ["pi-mcp-adapter"], mcp: ["linear"] },
 			},
 		}),
 	);

@@ -21,8 +21,6 @@ import {
 	runProfileDuplicateWizard,
 	runProfileEditWizard,
 } from "../../src/switching/profile-wizard.ts";
-import { deleteRegistryEntry, listRegistryEntries, upsertRegistryEntry } from "../../src/switching/resource-crud.ts";
-import { runResourceWizard } from "../../src/switching/resource-wizard.ts";
 import { probeAdapterPresence } from "../../src/mcp-coordination.ts";
 import { setMcpServerEnabled } from "../../src/switching/mcp-toggle.ts";
 import { buildStatusReport, formatStatusMarkdown } from "../../src/switching/status.ts";
@@ -48,8 +46,7 @@ import { getGlobalStateDir } from "../../src/workspace.ts";
  *   observability surface (ticket 07). Status combines the active launch
  *   plan, the stored overlay, fresh MCP discovery, and Pi's actual command
  *   registrations (the winner evidence for same-name conflicts).
- * - `/profile create|edit|delete|duplicate` and `/profile resource
- *   create|edit|delete`: catalog/registry CRUD wizards (tickets 08/09).
+ * - `/profile create|edit|delete|duplicate`: catalog CRUD wizards (ticket 09).
  *   CRUD is TUI-only (ticket 11): gated on `ctx.mode === "tui"` with a
  *   mode-aware refusal. Mutations apply via the standard reload path;
  *   mutation success is notified BEFORE the reload — the command context
@@ -112,7 +109,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	});
 
 	pi.registerCommand("profile", {
-		description: "pi-profile: /profile [use|reload|customize|reset|list|status|resource|create|edit|delete|duplicate]",
+		description: "pi-profile: /profile [use|reload|customize|reset|list|status|create|edit|delete|duplicate]",
 		handler: async (args, ctx) => {
 			const [subcommandRaw, ...rest] = args.trim().split(/\s+/).filter(Boolean);
 			const subcommand = subcommandRaw ?? ""; // bare /profile → selector
@@ -127,7 +124,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					// stale context after reload — see above
 				}
 			};
-			const usage = `usage: /profile [use <name> | reload | ${CUSTOMIZE_USAGE} | reset | list | status | resource ... | create | edit <name> | delete <name> | duplicate]`;
+			const usage = `usage: /profile [use <name> | reload | ${CUSTOMIZE_USAGE} | reset | list | status | create | edit <name> | delete <name> | duplicate]`;
 			if (subcommand === "use" && rest.length === 0) {
 				notify("usage: /profile use <name>", "error");
 				return;
@@ -141,7 +138,6 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					"reset",
 					"list",
 					"status",
-					"resource",
 					"create",
 					"edit",
 					"delete",
@@ -155,14 +151,6 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 			}
 			if (["edit", "delete"].includes(subcommand) && rest[0] === undefined) {
 				notify(`usage: /profile ${subcommand} <name>`, "error");
-				return;
-			}
-			if (subcommand === "resource" && !["list", "create", "edit", "delete"].includes(rest[0] ?? "")) {
-				notify("usage: /profile resource list|create|edit <id>|delete <id>", "error");
-				return;
-			}
-			if (subcommand === "resource" && ["edit", "delete"].includes(rest[0] ?? "") && rest[1] === undefined) {
-				notify(`usage: /profile resource ${rest[0]} <id>`, "error");
 				return;
 			}
 			try {
@@ -211,76 +199,6 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 					const result = await resetOverlay(deps);
 					for (const warning of result.warnings) notify(warning, "warning");
 					notify(`overlay cleared: ${result.profile}`, "info");
-					return;
-				}
-				// Resource-registry CRUD (ticket 08): mutations land in the
-				// chosen scope file, then apply through the standard
-				// rewrite-settings-and-reload path.
-				if (subcommand === "resource") {
-					const [action, targetId] = rest as [string, string?];
-					const listing = await listRegistryEntries({ realAgentDir: plan.agentDir, cwd: ctx.cwd });
-					if (action === "list") {
-						const lines = listing.map(
-							(entry) =>
-								`${entry.id} [${entry.source}]${entry.shadowsGlobal ? " (shadows global)" : ""} → ${entry.entry}` +
-								`${entry.alwaysOn ? " alwaysOn" : ""}${entry.dependsOn.length > 0 ? ` dependsOn=[${entry.dependsOn.join(", ")}]` : ""}`,
-						);
-						pi.sendMessage({
-							customType: "pi-profile",
-							content: lines.length > 0 ? lines.join("\n") : "no resources registered",
-							display: true,
-						});
-						return;
-					}
-					if (ctx.mode !== "tui") {
-						notify(`/profile resource ${action} requires TUI mode (current mode: ${ctx.mode})`, "error");
-						return;
-					}
-					if (action === "delete") {
-						const id = targetId as string;
-						const matches = listing.filter((entry) => entry.id === id);
-						if (matches.length === 0) {
-							notify(`resource "${id}" not found`, "error");
-							return;
-						}
-						// An entry present in both scopes needs an explicit scope
-						// choice — the project override and the global base are
-						// independent records.
-						const scope =
-							matches.length === 1
-								? matches[0]?.source
-								: ((await ctx.ui.select(`delete "${id}" from which registry?`, ["global", "project"])) as
-										| "global"
-										| "project"
-										| undefined);
-						if (scope === undefined) return;
-						const confirmed = await ctx.ui.confirm("delete resource?", `delete "${id}" from the ${scope} registry`);
-						if (!confirmed) return;
-						await deleteRegistryEntry({ realAgentDir: plan.agentDir, cwd: ctx.cwd }, scope, id);
-						// Notify BEFORE the reload: this context is stale
-						// afterwards, so post-reload messages never arrive.
-						notify(`deleted resource "${id}" (${scope}); reloading`, "info");
-						const result = await switchProfile(plan.profile, deps, { reloadCurrent: true });
-						for (const warning of result.warnings) notify(warning, "warning");
-						return;
-					}
-					// create | edit → wizard
-					const existing =
-						action === "edit" ? listing.find((entry) => entry.id === targetId) : undefined;
-					if (action === "edit" && existing === undefined) {
-						notify(`resource "${targetId ?? ""}" not found`, "error");
-						return;
-					}
-					const { projectTrusted: trustedForWizard } = await readTrustInputs({ agentDir: plan.agentDir, cwd: ctx.cwd });
-					const wizard = await runResourceWizard(ctx.ui, { projectTrusted: trustedForWizard, existing });
-					if (wizard === undefined) return; // cancelled
-					await upsertRegistryEntry({ realAgentDir: plan.agentDir, cwd: ctx.cwd }, wizard.scope, wizard.entry);
-					notify(
-						`${action === "create" ? "created" : "updated"} resource "${wizard.entry.id}" (${wizard.scope}); reloading`,
-						"info",
-					);
-					const result = await switchProfile(plan.profile, deps, { reloadCurrent: true });
-					for (const warning of result.warnings) notify(warning, "warning");
 					return;
 				}
 				// Profile catalog CRUD (ticket 09): TUI-only wizards; mutations

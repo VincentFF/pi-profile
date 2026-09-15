@@ -19,7 +19,6 @@ import { isAdapterExtension, MissingMcpAdapterError } from "../mcp-coordination.
 import { ProfileCatalog, type ResolvedProfile } from "../profile-catalog.ts";
 import { ActivationError, defaultPlan, resolveProfile, type ActivationPlan } from "../profile-resolver.ts";
 import { resolveProjectTrust } from "../project-trust.ts";
-import { ResourceRegistry } from "../resource-registry.ts";
 import { RuntimeStateStore, type RuntimeOverlay } from "../runtime-state-store.ts";
 import { getGlobalStateDir } from "../workspace.ts";
 import { discoverLauncherResources, type LauncherDiscovery } from "./discovery.ts";
@@ -148,36 +147,28 @@ export async function resolveInitialProfile(
 			definition: { skills: ["*"], extensions: ["*"] },
 		};
 		const discovery = await discoverLauncherResources({ ...context, projectTrusted });
-		const resources = await ResourceRegistry.load(context.agentDir, {
-			projectDir,
-			implicit: discovery.implicitExtensions,
-		});
 		const plan = await resolveProfile({
 			profile: synthetic,
 			skills: discovery.skills,
-			resources,
+			extensions: discovery.extensions,
 			overlay,
 		});
-		warnings.push(...resources.warnings(), ...unmatchedWarnings(plan));
+		warnings.push(...discovery.extensions.warnings(), ...unmatchedWarnings(plan));
 		return { plan, discovery, projectSettings, warnings };
 	}
 
 	const discovery = await discoverLauncherResources({ ...context, projectTrusted });
-	const resources = await ResourceRegistry.load(context.agentDir, {
-		projectDir,
-		implicit: discovery.implicitExtensions,
-	});
 	const plan = await resolveProfile({
 		profile,
 		skills: discovery.skills,
-		resources,
+		extensions: discovery.extensions,
 		validateModel: (model) => checkDeclaredModel(context.agentDir, model),
 		discoveredMcpServers: profile.definition.mcp?.length
 			? await discoverAdapterServerNames(context.agentDir, projectDir)
 			: undefined,
 		overlay: options?.overlay,
 	});
-	warnings.push(...resources.warnings(), ...unmatchedWarnings(plan));
+	warnings.push(...discovery.extensions.warnings(), ...unmatchedWarnings(plan));
 	if (plan.mcp !== undefined && !plan.extensions.some(isAdapterExtension)) {
 		// Fail before spawn: without the adapter in the active extension set
 		// nobody applies the allowlist, and the declared servers would either

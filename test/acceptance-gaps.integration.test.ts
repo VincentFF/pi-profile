@@ -65,19 +65,9 @@ async function conflictingExtension(name: string): Promise<string> {
 
 describe("PRD acceptance gap coverage", () => {
 	it("same-name command conflicts resolve per Pi's load order (first wins, :N suffixes)", async () => {
-		const a = await conflictingExtension("aaa-first");
-		const b = await conflictingExtension("bbb-second");
-		await writeFile(
-			path.join(fixture.agentDir, "resources.json"),
-			JSON.stringify({
-				schemaVersion: 1,
-				resources: {
-					"ext-a": { kind: "extension", entry: a },
-					"ext-b": { kind: "extension", entry: b },
-				},
-			}),
-		);
-		await writeCatalog({ duo: { extensions: ["ext-a", "ext-b"] } });
+		await conflictingExtension("aaa-first");
+		await conflictingExtension("bbb-second");
+		await writeCatalog({ duo: { extensions: ["aaa-first", "bbb-second"] } });
 		await start("duo");
 
 		interface CommandInfo {

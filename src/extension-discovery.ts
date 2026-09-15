@@ -21,6 +21,8 @@
 import { readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
+import { minimatch } from "minimatch";
+
 import { isRecord } from "./json-file.ts";
 import type { ConfiguredPackageRoot } from "./settings-generator.ts";
 
@@ -51,7 +53,27 @@ export interface ImplicitExtensionDiscovery {
 	warnings: string[];
 }
 
-const LOOSE_FILE_PATTERN = /\.(ts|js)$/;
+export class ExtensionError extends Error {
+	constructor(message: string) {
+		super(message);
+		this.name = "ExtensionError";
+	}
+}
+
+export interface SelectedExtension {
+	id: string;
+	entry: string;
+	origin?: "package" | "local" | "path";
+}
+
+export interface SelectExtensionsResult {
+	entries: SelectedExtension[];
+	unmatched: string[];
+}
+
+function toPosix(filePath: string): string {
+	return filePath.split(path.sep).join("/");
+}
 
 async function exists(filePath: string): Promise<boolean> {
 	try {
@@ -60,6 +82,161 @@ async function exists(filePath: string): Promise<boolean> {
 		return false;
 	}
 }
+
+function looksLikePath(reference: string): boolean {
+	return (
+		reference.startsWith("/") ||
+		reference.startsWith("~/") ||
+		reference.startsWith("./") ||
+		reference.startsWith("../") ||
+		/\.(ts|js)$/.test(reference)
+	);
+}
+
+export class DiscoveredExtensions {
+	readonly #packages: readonly DiscoveredPackage[];
+	readonly #local: readonly DiscoveredLocalExtension[];
+	readonly #warnings: string[];
+	readonly #entries: ReadonlyMap<string, { id: string; entry: string; packageName?: string; origin: "package" | "local" }>;
+
+	constructor(packages: readonly DiscoveredPackage[], local: readonly DiscoveredLocalExtension[], warnings: string[]) {
+		this.#packages = packages;
+		this.#local = local;
+		this.#warnings = [...warnings];
+
+		const entries = new Map<string, { id: string; entry: string; packageName?: string; origin: "package" | "local" }>();
+		for (const loc of local) {
+			entries.set(loc.id, { id: loc.id, entry: loc.entry, origin: "local" });
+		}
+		for (const pkg of packages) {
+			for (const entryPath of pkg.entries) {
+				const id = pkg.entries.length === 1 ? pkg.name : `${pkg.name}:${toPosix(path.relative(pkg.root, entryPath))}`;
+				if (entries.has(id)) {
+					this.#warnings.push(
+						`extension id "${id}" is provided by both a local file and package "${pkg.source}"; the local file wins — reference the package as "${pkg.source}"`,
+					);
+					continue;
+				}
+				entries.set(id, { id, entry: entryPath, packageName: pkg.name, origin: "package" });
+			}
+		}
+		this.#entries = entries;
+	}
+
+	get(id: string): { id: string; entry: string; origin: "package" | "local" } | undefined {
+		return this.#entries.get(id);
+	}
+
+	list(): SelectedExtension[] {
+		return [...this.#entries.values()].map((e) => ({ id: e.id, entry: e.entry, origin: e.origin }));
+	}
+
+	warnings(): string[] {
+		return [...this.#warnings];
+	}
+
+	selectableNames(): string[] {
+		const names = new Set(this.#entries.keys());
+		for (const pkg of this.#packages) names.add(pkg.name);
+		return [...names].sort();
+	}
+
+	#packageByNameOrAlias(reference: string): DiscoveredPackage | undefined {
+		return this.#packages.find((pkg) => pkg.name === reference || pkg.source === reference);
+	}
+
+	#packageEntries(pkg: DiscoveredPackage): SelectedExtension[] {
+		return pkg.entries.map((entryPath) => {
+			const id = pkg.entries.length === 1 ? pkg.name : `${pkg.name}:${toPosix(path.relative(pkg.root, entryPath))}`;
+			const existing = this.#entries.get(id);
+			if (existing !== undefined && existing.entry === entryPath) return existing;
+			return { id, entry: entryPath, origin: "package" };
+		});
+	}
+
+	#unknownMessage(reference: string, names: string[]): string {
+		const lines = [
+			`unknown extension: "${reference}" — no installed package, extension file, or path matches it.`,
+		];
+		if (names.length > 0) {
+			const shown = names.slice(0, 10);
+			lines.push(`discovered: ${shown.join(", ")}${names.length > shown.length ? ` (+${names.length - shown.length} more)` : ""}`);
+		}
+		const suggestion = names.find(
+			(name) =>
+				name.toLowerCase().includes(reference.toLowerCase()) || reference.toLowerCase().includes(name.toLowerCase()),
+		);
+		if (suggestion !== undefined) {
+			lines.push(`did you mean "${suggestion}"?`);
+		}
+		return lines.join("\n");
+	}
+
+	async select(references: string[]): Promise<SelectExtensionsResult> {
+		const byPath = new Map<string, SelectedExtension>();
+		const unmatched: string[] = [];
+		const names = this.selectableNames();
+
+		const add = (entry: SelectedExtension): void => {
+			if (!byPath.has(entry.entry)) byPath.set(entry.entry, entry);
+		};
+
+		for (const reference of references) {
+			if (reference.includes("*") || reference.includes("?")) {
+				let matched = 0;
+				for (const name of names) {
+					if (!minimatch(name, reference)) continue;
+					matched += 1;
+					const pkg = this.#packageByNameOrAlias(name);
+					const entry = this.#entries.get(name);
+					if (pkg !== undefined && pkg.name === name) {
+						for (const pkgEntry of this.#packageEntries(pkg)) add(pkgEntry);
+					}
+					if (entry !== undefined) add(entry);
+				}
+				if (matched === 0) unmatched.push(reference);
+				continue;
+			}
+
+			const entry = this.#entries.get(reference);
+			if (entry !== undefined) {
+				add(entry);
+				continue;
+			}
+			const pkg = this.#packageByNameOrAlias(reference);
+			if (pkg !== undefined) {
+				const pkgEntries = this.#packageEntries(pkg);
+				if (pkgEntries.length === 0) {
+					throw new ExtensionError(
+						`package "${reference}" declares no extension entries (its pi.extensions files are missing or shadowed by local files)`,
+					);
+				}
+				for (const pkgEntry of pkgEntries) add(pkgEntry);
+				continue;
+			}
+			if (looksLikePath(reference)) {
+				if (reference.startsWith("./") || reference.startsWith("../")) {
+					throw new ExtensionError(
+						`extension reference "${reference}" is a relative path; profiles take absolute paths (or ~/...) — catalogs live in both global and project scope, so a relative base would be ambiguous`,
+					);
+				}
+				const resolved = reference.startsWith("~/")
+					? path.join(process.env.HOME ?? "", reference.slice(1))
+					: path.resolve(reference);
+				if (!(await exists(resolved))) {
+					throw new ExtensionError(`extension path not found: ${resolved}`);
+				}
+				add({ id: resolved, entry: resolved, origin: "path" });
+				continue;
+			}
+			throw new ExtensionError(this.#unknownMessage(reference, names));
+		}
+
+		return { entries: [...byPath.values()], unmatched };
+	}
+}
+
+const LOOSE_FILE_PATTERN = /\.(ts|js)$/;
 
 /** Derives a package name from its source string when package.json is
  *  unreadable: strips the npm:/git:/github: prefix and any version spec
@@ -158,4 +335,13 @@ export async function discoverImplicitExtensions(options: {
 	}
 
 	return { packages, local: [...merged.values()], warnings };
+}
+
+export async function discoverExtensions(options: {
+	agentDir: string;
+	packages: ConfiguredPackageRoot[];
+	projectDir?: string;
+}): Promise<DiscoveredExtensions> {
+	const raw = await discoverImplicitExtensions(options);
+	return new DiscoveredExtensions(raw.packages, raw.local, raw.warnings);
 }

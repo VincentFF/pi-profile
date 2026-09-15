@@ -41,10 +41,10 @@ async function writeMcpConfig(servers: Record<string, unknown>): Promise<void> {
  *  any published allowlist to a marker file. */
 async function installFakeAdapter(): Promise<string> {
 	const marker = path.join(fixture.root, "ALLOWLIST.json");
-	const dir = path.join(fixture.agentDir, "extensions", "pi-mcp-adapter");
-	await mkdir(dir, { recursive: true });
+	const extFile = path.join(fixture.agentDir, "extensions", "pi-mcp-adapter.ts");
+	await mkdir(path.dirname(extFile), { recursive: true });
 	await writeFile(
-		path.join(dir, "index.ts"),
+		extFile,
 		[
 			`import { writeFileSync } from "node:fs";`,
 			`import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";`,
@@ -58,13 +58,6 @@ async function installFakeAdapter(): Promise<string> {
 			`}`,
 			"",
 		].join("\n"),
-	);
-	await writeFile(
-		path.join(fixture.agentDir, "resources.json"),
-		JSON.stringify({
-			schemaVersion: 1,
-			resources: { "mcp-adapter": { kind: "extension", entry: path.join(dir, "index.ts") } },
-		}),
 	);
 	return marker;
 }
@@ -101,7 +94,7 @@ describe("launcher integration: mcp coordination", () => {
 		async () => {
 			await installFakeAdapter();
 			await writeMcpConfig({ github: {} });
-			await writeCatalog({ review: { extensions: ["mcp-adapter"], mcp: ["typo-server"] } });
+			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcp: ["typo-server"] } });
 
 			const failure = await runLauncher(["review", "--", "--mode", "rpc"]);
 			expect(failure.code).toBe(2);
@@ -116,7 +109,7 @@ describe("launcher integration: mcp coordination", () => {
 			const marker = await installFakeAdapter();
 			const globalConfig = { github: { url: "https://x" }, linear: { command: "mcp-linear" } };
 			await writeMcpConfig(globalConfig);
-			await writeCatalog({ review: { extensions: ["mcp-adapter"], mcp: ["github"] } });
+			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcp: ["github"] } });
 
 			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
@@ -152,7 +145,7 @@ describe("launcher integration: mcp coordination", () => {
 		async () => {
 			const marker = await installFakeAdapter();
 			await writeMcpConfig({ github: {} });
-			await writeCatalog({ plain: { extensions: ["mcp-adapter"] } });
+			await writeCatalog({ plain: { extensions: ["pi-mcp-adapter"] } });
 
 			const rpc = new RpcDriver("node", [BIN, "plain", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,

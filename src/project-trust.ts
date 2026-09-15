@@ -76,7 +76,7 @@ export function resolveProjectTrust(input: ProjectTrustInput): boolean {
  *  native list doesn't know them: a committed catalog/state file would
  *  otherwise inject profile definitions (and instructions) unguarded. */
 function hasPiProfileProjectFiles(cwd: string): boolean {
-	return ["profiles.json", "resources.json", "pi-profile-state.json"].some((name) =>
+	return ["profiles.json", "pi-profile-state.json"].some((name) =>
 		existsSync(path.join(cwd, ".pi", name)),
 	);
 }

@@ -90,49 +90,40 @@ describe("launcher integration: runtime overlay", () => {
 	);
 
 	it(
-		"an overlay cannot disable an alwaysOn extension or its dependency chain",
+		"an overlay can disable a resolved extension",
 		{ timeout: 60_000 },
 		async () => {
 			const extensionsDir = path.join(fixture.agentDir, "extensions");
-			const gate = path.join(extensionsDir, "security-gate.ts");
-			const support = path.join(extensionsDir, "gate-support.ts");
+			const extFile = path.join(extensionsDir, "my-ext.ts");
 			await mkdir(extensionsDir, { recursive: true });
-			await writeFile(gate, "export default function () {}\n");
-			await writeFile(support, "export default function () {}\n");
 			await writeFile(
-				path.join(fixture.agentDir, "resources.json"),
-				JSON.stringify({
-					schemaVersion: 1,
-					resources: {
-						"security-gate": { kind: "extension", entry: gate, alwaysOn: true, dependsOn: ["gate-support"] },
-						"gate-support": { kind: "extension", entry: support },
-					},
-				}),
+				extFile,
+				[
+					`import type { ExtensionAPI } from "@earendil-works/pi-coding-agent";`,
+					`export default function (pi: ExtensionAPI) {`,
+					`\tpi.registerCommand("my-ext-cmd", { description: "from my-ext", handler: async () => {} });`,
+					`}`,
+					"",
+				].join("\n"),
 			);
-			await writeCatalog({ review: { skills: [] } });
+			await writeCatalog({ review: { extensions: ["my-ext"] } });
 
 			const rpc = new RpcDriver("node", [BIN, "review", "--", "--mode", "rpc"], {
 				cwd: fixture.cwd,
 				env: launcherEnv(),
 			});
 			try {
-				const gateAttempt = await rpc.send(
-					{ type: "prompt", message: "/profile customize disable extension security-gate" },
-					60_000,
-				);
-				expect(gateAttempt.success).toBe(true); // the command handled the error
-				const chainAttempt = await rpc.send(
-					{ type: "prompt", message: "/profile customize disable extension gate-support" },
-					60_000,
-				);
-				expect(chainAttempt.success).toBe(true);
+				const commands = await rpc.commandNames();
+				expect(commands.some((c) => c.name === "my-ext-cmd")).toBe(true);
 
-				// Both rejected at resolution: no overlay in state.
-				const { existsSync } = await import("node:fs");
-				const statePath = path.join(fixture.agentDir, "pi-profile-state.json");
-				if (existsSync(statePath)) {
-					expect((await readState()).overlay).toBeUndefined();
-				}
+				const disableAttempt = await rpc.send(
+					{ type: "prompt", message: "/profile customize disable extension my-ext" },
+					60_000,
+				);
+				expect(disableAttempt.success).toBe(true);
+
+				const state = (await readState()) as { overlay?: { disabledExtensions?: string[] } };
+				expect(state.overlay?.disabledExtensions).toEqual(["my-ext"]);
 			} finally {
 				await rpc.close();
 			}

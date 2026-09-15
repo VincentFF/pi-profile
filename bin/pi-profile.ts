@@ -13,6 +13,7 @@
  */
 import { getAgentDir } from "@earendil-works/pi-coding-agent";
 
+import { ExtensionError } from "../src/extension-discovery.ts";
 import { parseLauncherArgs } from "../src/launcher/args.ts";
 import { UnknownProfileError, resolveInitialProfile } from "../src/launcher/initial-profile.ts";
 import { sweepStaleRuntimeDirs } from "../src/launcher/runtime-cleanup.ts";
@@ -21,7 +22,6 @@ import { McpConfigError } from "../src/mcp-config.ts";
 import { MissingMcpAdapterError } from "../src/mcp-coordination.ts";
 import { CatalogError } from "../src/profile-catalog.ts";
 import { ActivationError } from "../src/profile-resolver.ts";
-import { RegistryError } from "../src/resource-registry.ts";
 import { generateRuntimeDir } from "../src/settings-generator.ts";
 
 try {
@@ -56,10 +56,10 @@ try {
 	const isUsageError =
 		error instanceof UnknownProfileError ||
 		error instanceof ActivationError ||
+		error instanceof ExtensionError ||
 		error instanceof MissingMcpAdapterError ||
 		error instanceof McpConfigError ||
-		error instanceof CatalogError ||
-		error instanceof RegistryError;
+		error instanceof CatalogError;
 	console.error(error instanceof Error ? `pi-profile: ${error.message}` : error);
 	process.exitCode = isUsageError ? 2 : 1;
 }

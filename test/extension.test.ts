@@ -5,8 +5,6 @@ import { afterEach, beforeEach, describe, expect, it } from "vitest";
 
 import piProfileExtension from "../extensions/pi-profile/index.ts";
 import { MCP_ALLOWLIST_EVENT } from "../src/mcp-coordination.ts";
-import { ResourceRegistry } from "../src/resource-registry.ts";
-import { runResourceWizard } from "../src/switching/resource-wizard.ts";
 import { fakeEventBus, installFakeAdapter, type FakeEventBus } from "./helpers/fake-event-bus.ts";
 
 let root: string;
@@ -466,116 +464,14 @@ describe("pi-profile extension", () => {
 		});
 	});
 
-	describe("resource CRUD (ticket 08)", () => {
-		it("/profile resource create runs the wizard, writes the global registry, and reloads", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-			const ctx = fakeCtx({
-				hasUI: true,
-				selectAnswers: ["global"],
-				inputAnswers: ["linter", "/x/linter.ts", "base, tools"],
-				confirmAnswers: [true],
-			});
-
-			await pi.commands.get("profile")?.handler("resource create" as never, ctx as never);
-
-			const registry = await ResourceRegistry.load(root);
-			expect(registry.get("linter")).toEqual({
-				id: "linter",
-				kind: "extension",
-				entry: "/x/linter.ts",
-				dependsOn: ["base", "tools"],
-				alwaysOn: true,
-				origin: "explicit",
-			});
-			expect(ctx.notifications.some((entry) => entry.message.includes('created resource "linter"'))).toBe(true);
-		});
-
-		it("/profile resource delete surfaces the referrer guard as an error", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			await writeFile(
-				path.join(root, "resources.json"),
-				JSON.stringify({ schemaVersion: 1, resources: { linter: { kind: "extension", entry: "/x.ts" } } }),
-			);
-			await writeFile(
-				path.join(root, "profiles.json"),
-				JSON.stringify({ schemaVersion: 1, profiles: { review: { extensions: ["linter"] } } }),
-			);
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-			const ctx = fakeCtx({ hasUI: true, confirmAnswers: [true] });
-
-			await pi.commands.get("profile")?.handler("resource delete linter" as never, ctx as never);
-
-			expect(ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("referenced by"))).toBe(
-				true,
-			);
-			// Not deleted.
-			expect((await ResourceRegistry.load(root)).get("linter")).toBeDefined();
-		});
-
-		it("/profile resource mutations are TUI-only, with a mode-aware message", async () => {
-			await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
-			const pi = fakePi();
-			piProfileExtension(pi as never);
-			for (const args of ["resource create", "resource edit x", "resource delete x"]) {
-				const ctx = fakeCtx({ mode: "print" });
-				await pi.commands.get("profile")?.handler(args as never, ctx as never);
-				expect(
-					ctx.notifications.some(
-						(entry) => entry.level === "error" && entry.message.includes("TUI mode") && entry.message.includes("print"),
-					),
-				).toBe(true);
-			}
-		});
-	});
-});
-
-describe("runResourceWizard", () => {
-	it("captures id, entry, dependsOn, alwaysOn; cancel at any step aborts", async () => {
-		const ui = {
-			select: async () => "project",
-			input: async (title: string) => (title.includes("dependsOn") ? "a, b" : title.includes("id") ? "res" : "/e.ts"),
-			confirm: async () => false,
-		};
-		const result = await runResourceWizard(ui, { projectTrusted: true });
-		expect(result).toEqual({ scope: "project", entry: { id: "res", entry: "/e.ts", dependsOn: ["a", "b"], alwaysOn: false } });
-
-		const cancelling = { select: async () => undefined, input: async () => "x", confirm: async () => true };
-		expect(await runResourceWizard(cancelling, { projectTrusted: true })).toBeUndefined();
-	});
-
-	it("hides the project scope when untrusted and prefills on edit", async () => {
-		const offered: string[][] = [];
-		const placeholders: Array<string | undefined> = [];
-		const ui = {
-			select: async (_t: string, options: string[]) => {
-				offered.push(options);
-				return options[0];
-			},
-			input: async (_t: string, placeholder?: string) => {
-				placeholders.push(placeholder);
-				return placeholder ?? "/new.ts";
-			},
-			confirm: async () => true,
-		};
-		expect(await runResourceWizard(ui, { projectTrusted: false })).toMatchObject({ scope: "global" });
-		expect(offered[0]).toEqual(["global"]);
-
-		const edit = await runResourceWizard(ui, {
-			projectTrusted: true,
-			existing: {
-				id: "linter",
-				kind: "extension",
-				entry: "/old.ts",
-				dependsOn: ["base"],
-				alwaysOn: false,
-				source: "global",
-				shadowsGlobal: false,
-			},
-		});
-		expect(edit?.entry.id).toBe("linter"); // id fixed on edit
-		expect(edit?.entry.entry).toBe("/old.ts");
+	it("/profile resource is rejected as an unknown subcommand", async () => {
+		await writeLaunchPlan({ profile: "default", source: "builtin", agentDir: root });
+		const pi = fakePi();
+		piProfileExtension(pi as never);
+		const ctx = fakeCtx();
+		await pi.commands.get("profile")?.handler("resource list" as never, ctx as never);
+		expect(
+			ctx.notifications.some((entry) => entry.level === "error" && entry.message.includes("usage: /profile")),
+		).toBe(true);
 	});
 });

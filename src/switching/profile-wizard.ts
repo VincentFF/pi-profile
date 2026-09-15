@@ -68,7 +68,7 @@ async function captureDefinition(
 
 	const listFields = [
 		["skills", "skills (comma-separated names or globs, empty = none)"],
-		["extensions", "extensions (resource ids, empty = none)"],
+		["extensions", "extensions (names or globs, empty = none)"],
 		["mcp", "mcp servers (names or globs, empty = none)"],
 		["tools", "tools (names or globs, empty = pi default set)"],
 	] as const;

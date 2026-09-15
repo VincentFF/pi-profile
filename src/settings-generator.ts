@@ -92,6 +92,7 @@ export const MANAGED_INSTANCE_FILES = new Set([
 	"pi-profile.json",
 	"trust.json",
 	"pid",
+	"extensions",
 ]);
 
 /** Resource dirs rooted at the real agent dir, re-included for the default

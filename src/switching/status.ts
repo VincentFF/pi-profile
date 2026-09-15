@@ -31,7 +31,7 @@ export interface StatusReport {
 	source: string;
 	overlay?: RuntimeOverlay;
 	skills: Array<{ name: string; filePath: string }>;
-	extensions: Array<{ id: string; entry: string }>;
+	extensions: Array<{ id: string; entry: string; origin?: string }>;
 	tools?: string[];
 	mcp: { enabled: string[]; disabled: string[]; missing: string[] };
 	/** Glob delta versus the previous activation (prefixed names). */
@@ -158,7 +158,8 @@ export function formatStatusMarkdown(report: StatusReport): string {
 	if (report.extensions.length > 0) {
 		lines.push("extensions:");
 		for (const extension of report.extensions) {
-			lines.push(`  ${extension.id} → ${extension.entry}`);
+			const originTag = extension.origin !== undefined ? ` [${extension.origin}]` : "";
+			lines.push(`  ${extension.id}${originTag} → ${extension.entry}`);
 		}
 	}
 	if (report.tools !== undefined) {

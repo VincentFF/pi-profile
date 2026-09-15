@@ -119,12 +119,8 @@ describe("launcher integration: project scope and trust", () => {
 		async () => {
 			await addProjectSkill("proj-skill");
 			await addProjectSkill("proj-unselected");
-			const entry = await addProjectExtension("proj-ext");
+			await addProjectExtension("proj-ext");
 			await writeProjectCatalog({ impl: { skills: ["proj-skill"], extensions: ["proj-ext"] } });
-			await writeFile(
-				path.join(fixture.cwd, ".pi", "resources.json"),
-				JSON.stringify({ schemaVersion: 1, resources: { "proj-ext": { kind: "extension", entry } } }),
-			);
 			await writeFile(
 				path.join(fixture.cwd, ".pi", "settings.json"),
 				JSON.stringify({ projectManagedKey: "from-project" }),

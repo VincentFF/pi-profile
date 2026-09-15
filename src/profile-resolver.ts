@@ -28,8 +28,8 @@
 
 import { minimatch } from "minimatch";
 
+import type { DiscoveredExtensions } from "./extension-discovery.ts";
 import type { ProfileDefinition, ProfileModel, ProfileSource, ResolvedProfile } from "./profile-catalog.ts";
-import { ResourceRegistry, type ResourceEntry } from "./resource-registry.ts";
 import type { RuntimeOverlay } from "./runtime-state-store.ts";
 import type { SkillEntry } from "./skill-registry.ts";
 
@@ -55,8 +55,8 @@ export interface ActivationPlan {
 	filter: "none" | "selection";
 	/** Selected skills with their resolved SKILL.md paths. Empty for default. */
 	skills: SkillEntry[];
-	/** Selected extensions incl. alwaysOn and dependency closure. Empty for default. */
-	extensions: Array<{ id: string; entry: string }>;
+	/** Selected extensions. Empty for default. */
+	extensions: Array<{ id: string; entry: string; origin?: "package" | "local" | "path" }>;
 	/** Expanded tool allowlist; undefined when the profile declares no tools. */
 	tools?: string[];
 	/** The raw tool references (globs included) for extension-side expansion
@@ -81,7 +81,7 @@ export interface ResolveInput {
 	profile: ResolvedProfile;
 	/** The full SkillRegistry result (not just selected skills). */
 	skills: SkillEntry[];
-	resources: ResourceRegistry;
+	extensions: DiscoveredExtensions;
 	/**
 	 * Validates a declared model (exists and is authenticated) against the
 	 * user's real model/auth state. Returns an error message or undefined.
@@ -152,7 +152,7 @@ export function defaultPlan(): ActivationPlan {
 }
 
 export async function resolveProfile(input: ResolveInput): Promise<ActivationPlan> {
-	const { profile, skills, resources, overlay } = input;
+	const { profile, skills, extensions, overlay } = input;
 	const definition: ProfileDefinition = profile.definition;
 	const unmatched: string[] = [];
 
@@ -172,28 +172,20 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 		onZeroMatch: (reference) => unmatched.push(`skill:${reference}`),
 	});
 
-	// Extension references resolve through the registry's merged view
-	// (explicit entries over implicit discovery, ADR-0006). Direct path
-	// references (origin "path") are ad-hoc: they bypass the dependency
-	// closure and join the plan afterwards, deduped by entry path.
-	const selection = await resources.select(definition.extensions ?? []);
+	// Extension references resolve directly against discovered extensions.
+	const selection = await extensions.select(definition.extensions ?? []);
 	for (const reference of selection.unmatched) unmatched.push(`extension:${reference}`);
-	const pathEntries = selection.entries.filter((entry) => entry.origin === "path");
-	const selectedIds = selection.entries
-		.filter((entry) => entry.origin !== "path")
-		.map((entry) => entry.id)
-		.concat(resources.alwaysOnIds());
-	const closure = await resources.closure(
-		[...new Set(selectedIds)],
-		selection.entries.filter((entry) => entry.origin !== "path"),
+	let planExtensions: Array<{ id: string; entry: string; origin?: "package" | "local" | "path" }> = selection.entries.map(
+		(entry) => ({
+			id: entry.id,
+			entry: entry.entry,
+			...(entry.origin ? { origin: entry.origin } : {}),
+		}),
 	);
-	const closurePaths = new Set(closure.map((entry) => entry.entry));
-	let planExtensions: ResourceEntry[] = closure.concat(pathEntries.filter((entry) => !closurePaths.has(entry.entry)));
 
 	// --- overlay narrowing (ticket 06) ---
 	// Overlay references must name resources the profile actually resolves
-	// (typos fail loudly), and alwaysOn extensions plus their dependency
-	// chains can never be disabled — safety gates survive experimentation.
+	// (typos fail loudly). Overlays can disable any resolved extension.
 	let toolReferences = definition.tools;
 	if (overlay !== undefined) {
 		if (overlay.disabledSkills !== undefined && overlay.disabledSkills.length > 0) {
@@ -207,15 +199,9 @@ export async function resolveProfile(input: ResolveInput): Promise<ActivationPla
 			selectedSkills = selectedSkills.filter((skill) => !disabled.has(skill.name));
 		}
 		if (overlay.disabledExtensions !== undefined && overlay.disabledExtensions.length > 0) {
-			const protectedIds = new Set(await resources.closure(resources.alwaysOnIds()).then((entries) => entries.map((entry) => entry.id)));
-			const closureIds = new Set(planExtensions.map((entry) => entry.id));
+			const activeIds = new Set(planExtensions.map((entry) => entry.id));
 			for (const id of overlay.disabledExtensions) {
-				if (protectedIds.has(id)) {
-					throw new ActivationError(
-						`profile "${profile.name}": overlay cannot disable "${id}" — it is alwaysOn or in an alwaysOn dependency chain`,
-					);
-				}
-				if (!closureIds.has(id)) {
+				if (!activeIds.has(id)) {
 					throw new ActivationError(`profile "${profile.name}": overlay disables unknown extension "${id}"`);
 				}
 			}

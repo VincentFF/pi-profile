@@ -34,19 +34,16 @@ The pi-profile-owned runtime directory holding a generated `settings.json` (the 
 Pi's native `ctx.reload()`: re-reads the settings file from disk, rebuilds resources, re-executes extensions, and preserves the session. The mechanism behind `/profile use`, `/profile reload`, overlay application, and rollback.
 
 **Resource**:
-Any capability a profile references: skill, extension, MCP server, or tool. Inside `resources.json` and `ResourceRegistry` specifically, an extension entry — either implicitly discovered (installed package entry, extensions-dir file) or an explicit override identified by a stable logical ID.
+Any capability a profile references: skill, extension, MCP server, or tool.
 
 **SkillRegistry**:
 The mapping from skill name to final `SKILL.md`, mirroring Pi's current full discovery result. Re-resolved on every start or reload.
 
-**ResourceRegistry**:
-The merged extension reference view (ADR-0006): implicit discovery (installed packages' `pi.extensions` entries, referenced by package name or source alias; loose files, referenced by filename stem) plus explicit `resources.json` overrides carrying `dependsOn` and `alwaysOn`. Explicit IDs win over same-ID implicit entries and may omit `entry` to inherit the discovered one. Project IDs override global ones. Registration is the override, never the prerequisite.
+**ExtensionDiscovery**:
+The discovery and selection view for extensions (ADR-0007): configured packages (`pi.extensions` entries, referenced by package name or source alias) and loose files in the standard extensions directories (`<agentDir>/extensions/*.{ts,js}` and trusted project `.pi/extensions/*.{ts,js}`), referenced by filename stem, glob, or absolute/home-relative path. Zero extra configuration files required; pure discover-and-filter.
 
 **McpServerRegistry**:
 The MCP server names and states discovered by `pi-mcp-adapter`. Owned by the adapter; pi-profile only references server names.
-
-**alwaysOn**:
-A resource flag marking an extension that loads in every profile (e.g. a security gate or audit extension) and cannot be disabled by an overlay.
 
 **pi-mcp-adapter**:
 The optional external Pi package that owns MCP server configuration, connections, and credentials. pi-profile integrates with it but never stores MCP connection details in profiles.

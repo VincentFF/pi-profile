@@ -29,13 +29,9 @@ async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
 }
 
 async function writeAdapterResources(): Promise<void> {
-	const entry = path.join(fixture.agentDir, "extensions", "pi-mcp-adapter", "index.ts");
+	const entry = path.join(fixture.agentDir, "extensions", "pi-mcp-adapter.ts");
 	await mkdir(path.dirname(entry), { recursive: true });
 	await writeFile(entry, "export default function () {}\n");
-	await writeFile(
-		path.join(fixture.agentDir, "resources.json"),
-		JSON.stringify({ schemaVersion: 1, resources: { "mcp-adapter": { kind: "extension", entry } } }),
-	);
 }
 
 describe("resolveInitialProfile", () => {
@@ -200,7 +196,7 @@ describe("resolveInitialProfile", () => {
 				path.join(fixture.agentDir, "mcp.json"),
 				JSON.stringify({ mcpServers: { github: {}, linear: {} } }),
 			);
-			await writeCatalog({ review: { extensions: ["mcp-adapter"], mcp: ["github"] } });
+			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcp: ["github"] } });
 
 			const { plan } = await resolveInitialProfile("review", context());
 
@@ -223,7 +219,7 @@ describe("resolveInitialProfile", () => {
 				path.join(fixture.agentDir, "mcp.json"),
 				JSON.stringify({ mcpServers: { github: {} } }),
 			);
-			await writeCatalog({ review: { extensions: ["mcp-adapter"], mcp: ["typo-server"] } });
+			await writeCatalog({ review: { extensions: ["pi-mcp-adapter"], mcp: ["typo-server"] } });
 
 			await expect(resolveInitialProfile("review", context())).rejects.toThrow(/unknown MCP server: "typo-server"/);
 		});

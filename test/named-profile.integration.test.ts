@@ -30,14 +30,10 @@ async function writeCatalog(profiles: Record<string, unknown>): Promise<void> {
 	await writeFile(path.join(fixture.agentDir, "profiles.json"), JSON.stringify({ schemaVersion: 1, profiles }));
 }
 
-async function writeResources(resources: Record<string, unknown>): Promise<void> {
-	await writeFile(path.join(fixture.agentDir, "resources.json"), JSON.stringify({ schemaVersion: 1, resources }));
-}
-
 /** An extension entry file that registers a same-named command and leaves a
  *  top-level side-effect marker if its code ever executes. */
 async function addExtensionEntry(name: string): Promise<string> {
-	const dir = path.join(fixture.root, "ext-entries");
+	const dir = path.join(fixture.agentDir, "extensions");
 	await mkdir(dir, { recursive: true });
 	const file = path.join(dir, `${name}.ts`);
 	await writeFile(
@@ -74,11 +70,7 @@ describe("launcher integration: named global profiles", () => {
 			const unselectedEntry = await addExtensionEntry("unselected-ext");
 			const unregisteredEntry = await addExtensionEntry("unregistered-ext");
 			await writeCatalog({
-				review: { skills: ["alpha-skill", "shared-skill"], extensions: ["review-guard"] },
-			});
-			await writeResources({
-				"review-guard": { kind: "extension", entry: selectedEntry },
-				"other-ext": { kind: "extension", entry: unselectedEntry },
+				review: { skills: ["alpha-skill", "shared-skill"], extensions: ["selected-ext"] },
 			});
 			void unregisteredEntry;
 
@@ -280,16 +272,10 @@ describe("launcher integration: named global profiles", () => {
 	);
 
 	it(
-		"fails activation before spawn on a dependency cycle in the registry",
+		"fails activation before spawn on an unknown extension reference",
 		{ timeout: 30_000 },
 		async () => {
-			const a = await addExtensionEntry("cycle-a");
-			const b = await addExtensionEntry("cycle-b");
-			await writeCatalog({ review: { extensions: ["a"] } });
-			await writeResources({
-				a: { kind: "extension", entry: a, dependsOn: ["b"] },
-				b: { kind: "extension", entry: b, dependsOn: ["a"] },
-			});
+			await writeCatalog({ review: { extensions: ["nonexistent-ext"] } });
 			const { execFile } = await import("node:child_process");
 
 			const failure = await new Promise<{ code: number; stderr: string }>((resolve) => {
@@ -299,7 +285,7 @@ describe("launcher integration: named global profiles", () => {
 			});
 
 			expect(failure.code).toBe(2);
-			expect(failure.stderr).toMatch(/cycle/i);
+			expect(failure.stderr).toContain('unknown extension: "nonexistent-ext"');
 		},
 	);
 
