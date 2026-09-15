@@ -46,6 +46,8 @@ Define profiles in `~/.pi-profile-switch/profiles.json` (global, fallback to `~/
 
 Profiles **reference** resources by name — they never copy them. Installed packages and files in standard locations are discovered automatically; no registration needed. Full schema with more examples: [`examples/profiles.json`](examples/profiles.json).
 
+On install, pi-profile seeds `~/.pi-profile-switch/profiles.json` with a starter **`ask`** profile — read-only Q&A and code exploration (`read`/`grep`/`find`/`ls`, no skills, extensions, or MCP). It assumes nothing about your setup; edit or delete it freely.
+
 ## Commands
 
 In the TUI, the `/profile` command family manages everything in-session:

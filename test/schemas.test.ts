@@ -31,6 +31,14 @@ describe("shipped JSON schemas", () => {
 		expect(ajv.validate(profiles, profilesExample), JSON.stringify(ajv.errors)).toBe(true);
 	});
 
+	it("profiles schema validates the shipped install-time default", async () => {
+		const profiles = await loadSchema("profiles.schema.json");
+		const defaultTemplate = JSON.parse(await readFile(path.resolve("defaults/profiles.json"), "utf8"));
+
+		const ajv = newAjv();
+		expect(ajv.validate(profiles, defaultTemplate), JSON.stringify(ajv.errors)).toBe(true);
+	});
+
 	it("the profiles schema rejects the built-in name, inheritance keys, and wrong types", async () => {
 		const validate = newAjv().compile(await loadSchema("profiles.schema.json"));
 
