@@ -27,7 +27,7 @@ pi-profile review
 pi-profile review -- --model openai/gpt-5.4
 ```
 
-Define profiles in `~/.pi/agent/profiles.json` (global) or `<project>/.pi/profiles.json` (project, trusted projects only):
+Define profiles in `~/.pi-profile-switch/profiles.json` (global, fallback to `~/.pi/agent/profiles.json` for migration; custom root via `PI_PROFILE_SWITCH_DIR`) or `<project>/.pi/profiles.json` (project, trusted projects only):
 
 ```json
 {

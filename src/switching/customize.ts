@@ -21,6 +21,7 @@
 import path from "node:path";
 
 import { RuntimeStateStore, type RuntimeOverlay, type RuntimeState } from "../runtime-state-store.ts";
+import { getGlobalStateDir } from "../workspace.ts";
 import { readLaunchPlanFile } from "./apply-plan.ts";
 import { SwitchError, switchProfile, type SwitchDeps, type SwitchResult } from "./switch-profile.ts";
 
@@ -32,7 +33,7 @@ async function currentStateTarget(
 	if (plan === undefined) {
 		throw new SwitchError("no active profile — nothing to customize");
 	}
-	const stateDir = plan.source === "project" ? path.join(deps.cwd, ".pi") : plan.agentDir;
+	const stateDir = plan.source === "project" ? path.join(deps.cwd, ".pi") : getGlobalStateDir(plan.agentDir);
 	if (stateDir === undefined) {
 		throw new SwitchError("the launch plan carries no real agent dir — cannot locate the state file");
 	}

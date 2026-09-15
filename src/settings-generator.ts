@@ -38,7 +38,7 @@
  */
 
 import { existsSync, realpathSync } from "node:fs";
-import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
+import { mkdir, mkdtemp, lstat, readdir, readFile, readlink, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
 
@@ -84,8 +84,15 @@ export interface GeneratedRuntime {
 	flags: string[];
 }
 
-/** Files managed by pi-profile-switch; excluded from auto-symlinking. */
-const EXCLUDED_SYMLINKS = ["settings.json", "mcp.json", "APPEND_SYSTEM.md", "pi-profile.json"] as const;
+/** Files managed explicitly by pi-profile in runtimeDir; excluded from auto-symlinking. */
+export const MANAGED_INSTANCE_FILES = new Set([
+	"settings.json",
+	"mcp.json",
+	"APPEND_SYSTEM.md",
+	"pi-profile.json",
+	"trust.json",
+	"pid",
+]);
 
 /** Resource dirs rooted at the real agent dir, re-included for the default
  *  profile because PI_CODING_AGENT_DIR moves the discovery root. */
@@ -438,6 +445,70 @@ export async function writeRuntimeFiles(
 	} else {
 		try { await rm(appendSystemPath); } catch {}
 	}
+
+	// Full-fidelity symlink mirroring and dangling link cleanup (Ticket 02).
+	await syncAgentSymlinks(options.agentDir, runtimeDir);
+}
+
+/**
+ * Full-fidelity symlink mirroring of the user's real agentDir into runtimeDir (Ticket 02).
+ * - Excludes profile-managed files.
+ * - Mirrors both file and directory symlinks.
+ * - Detects and cleans up dangling or obsolete symlinks in runtimeDir.
+ * - Avoids recreating identical existing symlinks to minimize startup I/O.
+ */
+export async function syncAgentSymlinks(agentDir: string, runtimeDir: string): Promise<void> {
+	if (!existsSync(agentDir)) return;
+	if (path.resolve(agentDir) === path.resolve(runtimeDir)) return;
+
+	// 1. Clean up dangling or obsolete symlinks in runtimeDir
+	try {
+		const runtimeEntries = await readdir(runtimeDir);
+		for (const name of runtimeEntries) {
+			if (MANAGED_INSTANCE_FILES.has(name)) continue;
+			const linkPath = path.join(runtimeDir, name);
+			const target = path.join(agentDir, name);
+			try {
+				const linkStat = await lstat(linkPath);
+				if (linkStat.isSymbolicLink()) {
+					if (!existsSync(target)) {
+						await rm(linkPath, { recursive: true, force: true });
+					}
+				}
+			} catch {
+				// Best-effort cleanup
+			}
+		}
+	} catch {}
+
+	// 2. Mirror files and directories from agentDir to runtimeDir
+	try {
+		const entries = await readdir(agentDir);
+		for (const name of entries) {
+			if (MANAGED_INSTANCE_FILES.has(name)) continue;
+
+			const target = path.join(agentDir, name);
+			const linkPath = path.join(runtimeDir, name);
+
+			try {
+				const linkStat = await lstat(linkPath).catch(() => null);
+				if (linkStat) {
+					if (linkStat.isSymbolicLink()) {
+						const currentTarget = await readlink(linkPath).catch(() => null);
+						if (currentTarget === target) {
+							continue;
+						}
+					}
+					await rm(linkPath, { recursive: true, force: true });
+				}
+
+				const info = await stat(target);
+				await symlink(target, linkPath, info.isDirectory() ? "dir" : "file");
+			} catch {
+				// Ignore broken source links or unreadable files
+			}
+		}
+	} catch {}
 }
 
 export async function generateRuntimeDir(
@@ -447,40 +518,8 @@ export async function generateRuntimeDir(
 	const { agentDir } = options;
 	const runtimeDir = path.join(getInstancesRootDir(), plan.profile, "agent");
 	await mkdir(runtimeDir, { recursive: true });
-	
 
 	await writeRuntimeFiles(runtimeDir, plan, options);
-
-	// Full-fidelity symlink mirroring (Ticket 02).
-	// Keep auth/model/adapter/sessions/extensions state in the real agent dir,
-	// so the spawned pi shares credentials, model catalogs, workflows, subagents,
-	// and MCP config with native pi.
-	try {
-		const entries = await readdir(agentDir);
-		for (const name of entries) {
-			if (EXCLUDED_SYMLINKS.includes(name as any)) continue;
-			// trust.json is handled by writeRuntimeFiles (default only).
-			if (name === "trust.json") continue;
-
-			const target = path.join(agentDir, name);
-			const linkPath = path.join(runtimeDir, name);
-			
-			// If link exists, it might be dangling or pointing to the wrong place, but mkdtemp ensures it's fresh.
-			// Wait, the instance directory is stable now! We need to rm it if it exists to refresh it, or skip if valid.
-			// The easiest is to try to rm the link/file first, then recreate.
-			try { await rm(linkPath, { recursive: true, force: true }); } catch {}
-			
-			// Create symlink
-			try {
-				const info = await stat(target);
-				await symlink(target, linkPath, info.isDirectory() ? "dir" : "file");
-			} catch (err) {
-				// Ignore broken source links or unreadable files
-			}
-		}
-	} catch (err) {
-		// Ignore if agentDir doesn't exist
-	}
 
 	const flags: string[] = [];
 

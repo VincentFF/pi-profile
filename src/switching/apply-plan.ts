@@ -38,6 +38,7 @@ import {
 	probeAdapterPresence,
 } from "../mcp-coordination.ts";
 import { RuntimeStateStore } from "../runtime-state-store.ts";
+import { getGlobalStateDir } from "../workspace.ts";
 import { expandToolReferences } from "./tool-references.ts";
 
 export interface LaunchPlanFile {
@@ -152,7 +153,7 @@ export async function applyLaunchPlan(input: {
 
 	// --- persistence + rollback anchor (post-reload only) ---
 	if (plan.persistSelection === true && input.reason === "reload" && plan.agentDir !== undefined) {
-		const stateDir = plan.source === "project" ? path.join(input.cwd, ".pi") : plan.agentDir;
+		const stateDir = plan.source === "project" ? path.join(input.cwd, ".pi") : getGlobalStateDir(plan.agentDir);
 		// Merge: the overlay belongs to customize/reset, not to this write.
 		// A switch (clearOverlay) explicitly drops it.
 		await new RuntimeStateStore(stateDir).update({

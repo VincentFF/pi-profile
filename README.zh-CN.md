@@ -27,7 +27,7 @@ pi-profile review
 pi-profile review -- --model openai/gpt-5.4
 ```
 
-在 `~/.pi/agent/profiles.json`（全局）或 `<项目>/.pi/profiles.json`（项目级，仅限已信任项目）中定义 profile：
+在 `~/.pi-profile-switch/profiles.json`（全局，支持 `PI_PROFILE_SWITCH_DIR` 环境变量自定义，向下兼容 `~/.pi/agent/profiles.json`）或 `<项目>/.pi/profiles.json`（项目级，仅限已信任项目）中定义 profile：
 
 ```json
 {

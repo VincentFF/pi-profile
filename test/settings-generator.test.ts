@@ -1,3 +1,4 @@
+import { existsSync } from "node:fs";
 import { mkdir, readFile, realpath, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { afterEach, beforeEach, describe, expect, it } from "vitest";
@@ -69,5 +70,19 @@ describe("generateRuntimeDir (default profile)", () => {
 	it("places the runtime dir under the instances root", async () => {
 		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
 		expect(result.runtimeDir.startsWith(path.join(fixture.profileSwitchDir, "instances", "default", "agent"))).toBe(true);
+	});
+
+	it("cleans up dangling symlinks in the runtime dir when targets are deleted", async () => {
+		const tempFile = path.join(fixture.agentDir, "temp-file.txt");
+		await writeFile(tempFile, "hello");
+
+		const result1 = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+		const linkedPath = path.join(result1.runtimeDir, "temp-file.txt");
+		expect(existsSync(linkedPath)).toBe(true);
+
+		// Delete source file and re-sync
+		await rm(tempFile);
+		await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+		expect(existsSync(linkedPath)).toBe(false);
 	});
 });

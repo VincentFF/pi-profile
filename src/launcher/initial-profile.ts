@@ -21,6 +21,7 @@ import { ActivationError, defaultPlan, resolveProfile, type ActivationPlan } fro
 import { resolveProjectTrust } from "../project-trust.ts";
 import { ResourceRegistry } from "../resource-registry.ts";
 import { RuntimeStateStore, type RuntimeOverlay } from "../runtime-state-store.ts";
+import { getGlobalStateDir } from "../workspace.ts";
 import { discoverLauncherResources, type LauncherDiscovery } from "./discovery.ts";
 import { checkDeclaredModel } from "./model-check.ts";
 
@@ -107,7 +108,7 @@ export async function resolveInitialProfile(
 		if (projectTrusted) {
 			selected = (await new RuntimeStateStore(path.join(context.cwd, ".pi")).read()).activeProfile;
 		}
-		selected ??= (await new RuntimeStateStore(context.agentDir).read()).activeProfile ?? "default";
+		selected ??= (await new RuntimeStateStore(getGlobalStateDir(context.agentDir)).read()).activeProfile ?? "default";
 	}
 
 	const profile = catalog.resolve(selected);

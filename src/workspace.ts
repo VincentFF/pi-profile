@@ -39,3 +39,19 @@ export function resolveGlobalProfilesPath(agentDir: string): string {
 export function getInstancesRootDir(): string {
 	return path.join(getProfileSwitchDir(), "instances");
 }
+
+export function getGlobalStateDir(agentDir?: string): string {
+	const preferred = getProfileSwitchDir();
+	const preferredState = path.join(preferred, "pi-profile-state.json");
+	if (existsSync(preferredState)) {
+		return preferred;
+	}
+	if (agentDir) {
+		const fallbackState = path.join(agentDir, "pi-profile-state.json");
+		if (existsSync(fallbackState)) {
+			return agentDir;
+		}
+	}
+	return agentDir ?? preferred;
+}
+

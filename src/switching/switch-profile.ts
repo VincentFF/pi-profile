@@ -34,6 +34,7 @@ import path from "node:path";
 
 import { resolveInitialProfile } from "../launcher/initial-profile.ts";
 import { RuntimeStateStore, type RuntimeOverlay } from "../runtime-state-store.ts";
+import { getGlobalStateDir } from "../workspace.ts";
 import { writeRuntimeFiles } from "../settings-generator.ts";
 import { readLaunchPlanFile } from "./apply-plan.ts";
 
@@ -130,7 +131,7 @@ export async function switchProfile(
 	if (overlay === undefined && options?.reloadCurrent === true && current.profile !== undefined) {
 		const currentPlan = await readLaunchPlanFile(deps.runtimeDir);
 		if (currentPlan?.agentDir !== undefined) {
-			const stateDir = currentPlan.source === "project" ? path.join(deps.cwd, ".pi") : currentPlan.agentDir;
+			const stateDir = currentPlan.source === "project" ? path.join(deps.cwd, ".pi") : getGlobalStateDir(currentPlan.agentDir);
 			overlay = (await new RuntimeStateStore(stateDir).read()).overlay ?? null;
 		}
 	}

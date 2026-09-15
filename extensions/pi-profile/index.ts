@@ -27,6 +27,7 @@ import { probeAdapterPresence } from "../../src/mcp-coordination.ts";
 import { setMcpServerEnabled } from "../../src/switching/mcp-toggle.ts";
 import { buildStatusReport, formatStatusMarkdown } from "../../src/switching/status.ts";
 import { switchProfile, type SwitchDeps } from "../../src/switching/switch-profile.ts";
+import { getGlobalStateDir } from "../../src/workspace.ts";
 
 /**
  * pi-profile extension entry.
@@ -63,6 +64,12 @@ import { switchProfile, type SwitchDeps } from "../../src/switching/switch-profi
  * exclusively through `session_start` — nothing stale survives.
  */
 
+function setProfileStatus(ui: unknown, profile: string | undefined): void {
+	if (profile && typeof (ui as { setStatus?: (k: string, v: string) => void })?.setStatus === "function") {
+		(ui as { setStatus: (k: string, v: string) => void }).setStatus("profile", `profile: ${profile}`);
+	}
+}
+
 export default function piProfileExtension(pi: ExtensionAPI): void {
 	const runtimeDir = process.env.PI_CODING_AGENT_DIR;
 	if (runtimeDir === undefined) return;
@@ -70,6 +77,8 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 	let pendingSummary: string | undefined;
 
 	pi.on("session_start", async (event, ctx) => {
+		const plan = await readLaunchPlanFile(runtimeDir);
+		setProfileStatus(ctx.ui, plan?.profile);
 		const result = await applyLaunchPlan({
 			runtimeDir,
 			cwd: ctx.cwd,
@@ -92,7 +101,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 		const plan = await readLaunchPlanFile(runtimeDir);
 		const instructions = plan?.instructions;
 		let systemPrompt = event.systemPrompt;
-		if (instructions !== undefined && instructions.length > 0) {
+		if (instructions !== undefined && instructions.length > 0 && !systemPrompt.includes(instructions)) {
 			systemPrompt = `${systemPrompt}\n\n${instructions}`;
 		}
 		if (pendingSummary !== undefined) {
@@ -181,12 +190,14 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				if (subcommand === "use") {
 					const result = await switchProfile(rest[0], deps, { clearOverlay: true });
 					for (const warning of result.warnings) notify(warning, "warning");
+					setProfileStatus(ctx.ui, result.profile);
 					notify(`profile active: ${result.profile}`, "info");
 					return;
 				}
 				if (subcommand === "reload") {
 					const result = await switchProfile(undefined, deps, { reloadCurrent: true });
 					for (const warning of result.warnings) notify(warning, "warning");
+					setProfileStatus(ctx.ui, result.profile);
 					notify(`profile reloaded: ${result.profile}`, "info");
 					return;
 				}
@@ -404,7 +415,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				}
 				if (subcommand === "status") {
 					const { projectTrusted } = await readTrustInputs({ agentDir: plan.agentDir, cwd: ctx.cwd });
-					const stateDir = plan.source === "project" ? path.join(ctx.cwd, ".pi") : plan.agentDir;
+					const stateDir = plan.source === "project" ? path.join(ctx.cwd, ".pi") : getGlobalStateDir(plan.agentDir);
 					const state = await new RuntimeStateStore(stateDir).read();
 					const report = buildStatusReport({
 						plan,
@@ -448,6 +459,7 @@ export default function piProfileExtension(pi: ExtensionAPI): void {
 				if (chosen === plan.profile) return;
 				const switched = await switchProfile(chosen, deps, { clearOverlay: true });
 				for (const warning of switched.warnings) notify(warning, "warning");
+				setProfileStatus(ctx.ui, switched.profile);
 			} catch (error) {
 				notify(error instanceof Error ? error.message : String(error), "error");
 			}
