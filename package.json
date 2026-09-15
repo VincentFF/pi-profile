@@ -1,12 +1,12 @@
 {
-  "name": "pi-profile",
+  "name": "pi-profile-switch",
   "version": "0.4.0",
   "description": "Named profiles for Pi: reference skills, extensions, MCP servers, and tools per workflow, switched without restarting.",
   "type": "module",
   "keywords": [
     "pi-package",
     "pi agent",
-    "pi-profile",
+    "pi-profile-switch",
     "profile",
     "pi"
   ],

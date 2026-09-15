@@ -1,14 +1,14 @@
-# pi-profile
+# pi-profile-switch
 
 This repo contains two things:
 
-1. **The pi-profile package** (the product): a Pi package that adds named profiles selecting skills, extensions, MCP servers, and tools for a Pi runtime, switchable without restarting Pi. Greenfield: the package source is not created yet; build it from the docs below.
+1. **The pi-profile-switch package** (the product): a Pi package that adds named profiles selecting skills, extensions, MCP servers, and tools for a Pi runtime, switchable without restarting Pi. Greenfield: the package source is not created yet; build it from the docs below.
 2. **The owner's vendored pi skills** in `.agents/skills/` (installed from `mattpocock/skills`, locked by `skills-lock.json`). Workflow tooling, not product code.
 
 ## Design principles
 
 1. **Pi compatibility first**: never change Pi's default behavior unless strictly necessary. Profiles ride Pi's native discovery, settings, and reload mechanisms; anything a profile does not explicitly control stays Pi-native, so Pi and other Pi packages keep working unchanged.
-2. **User experience first, minimal like Pi**: Pi is minimalist by design; pi-profile must match it. Minimize configuration surface and ceremony — prefer discovery over registration, defaults over required fields, and actionable errors over bare failures.
+2. **User experience first, minimal like Pi**: Pi is minimalist by design; pi-profile-switch must match it. Minimize configuration surface and ceremony — prefer discovery over registration, defaults over required fields, and actionable errors over bare failures.
 
 ## Product docs
 

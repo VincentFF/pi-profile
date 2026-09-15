@@ -1,4 +1,4 @@
-# pi-profile
+# pi-profile-switch
 
 [English](README.md) | [中文](README.zh-CN.md)
 
@@ -9,7 +9,7 @@
 ## 安装
 
 ```bash
-npm install -g pi-profile
+npm install -g pi-profile-switch
 ```
 
 依赖 [Pi](https://www.npmjs.com/package/@earendil-works/pi-coding-agent)（作为 peer dependency 自动安装）。
@@ -46,7 +46,7 @@ pi-profile review -- --model openai/gpt-5.4
 
 Profile 只**引用**资源，从不复制资源。已安装的包和标准目录下的文件会被自动发现，无需注册。完整示例见 [`examples/profiles.json`](examples/profiles.json)。
 
-安装时，pi-profile 会向 `~/.pi-profile-switch/profiles.json` 写入一个初始 **`ask`** profile——只读的问答与代码走读模式（仅 `read`/`grep`/`find`/`ls`，无 skill、extension 和 MCP）。它不假设你安装过任何插件，可随意修改或删除。
+安装时，pi-profile-switch 会向 `~/.pi-profile-switch/profiles.json` 写入一个初始 **`ask`** profile——只读的问答与代码走读模式（仅 `read`/`grep`/`find`/`ls`，无 skill、extension 和 MCP）。它不假设你安装过任何插件，可随意修改或删除。
 
 ## 命令
 
