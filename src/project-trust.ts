@@ -24,7 +24,7 @@
  * anyway (generated settings carry `defaultProjectTrust: "never"`).
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import path from "node:path";
 
 import { hasTrustRequiringProjectResources, ProjectTrustStore } from "@earendil-works/pi-coding-agent";
@@ -45,7 +45,27 @@ export function resolveProjectTrust(input: ProjectTrustInput): boolean {
 	if (!hasTrustRequiringProjectResources(input.cwd) && !hasPiProfileProjectFiles(input.cwd)) {
 		return true;
 	}
-	const stored = new ProjectTrustStore(input.agentDir).get(input.cwd);
+	let stored = new ProjectTrustStore(input.agentDir).get(input.cwd);
+	if (stored === null) {
+		// Defensive fallback for raw/symlinked entries in trust.json
+		// that ProjectTrustStore's canonicalizePath missed.
+		try {
+			const trustFile = path.join(input.agentDir, "trust.json");
+			if (existsSync(trustFile)) {
+				const content = JSON.parse(readFileSync(trustFile, "utf8"));
+				if (typeof content === "object" && content !== null) {
+					let curr: string | undefined = path.resolve(input.cwd);
+					while (curr && curr !== path.dirname(curr)) {
+						if (content[curr] === true || content[curr] === false) {
+							stored = content[curr];
+							break;
+						}
+						curr = path.dirname(curr);
+					}
+				}
+			}
+		} catch {}
+	}
 	if (stored !== null) {
 		return stored;
 	}

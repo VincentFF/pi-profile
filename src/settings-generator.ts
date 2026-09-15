@@ -37,7 +37,7 @@
  * User configuration files are never modified.
  */
 
-import { existsSync } from "node:fs";
+import { existsSync, realpathSync } from "node:fs";
 import { mkdir, mkdtemp, readdir, readFile, rm, stat, symlink, writeFile } from "node:fs/promises";
 import { homedir } from "node:os";
 import path from "node:path";
@@ -123,9 +123,21 @@ function deepMergeSettings(base: Record<string, unknown>, overrides: Record<stri
 	return result;
 }
 
+function tryRealpath(p: string): string {
+	try {
+		return realpathSync(p);
+	} catch {
+		return path.resolve(p);
+	}
+}
+
 function isUnderPath(target: string, root: string): boolean {
 	const relative = path.relative(root, target);
-	return relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative);
+	if (relative !== "" && !relative.startsWith("..") && !path.isAbsolute(relative)) {
+		return true;
+	}
+	const normRelative = path.relative(tryRealpath(root), tryRealpath(target));
+	return normRelative !== "" && !normRelative.startsWith("..") && !path.isAbsolute(normRelative);
 }
 
 /** The HOME-level ~/.agents/skills dir: always auto-discovered by Pi,
@@ -166,7 +178,7 @@ function buildSelectionSettings(
 		// If the skill is in the real agentDir, Pi will discover it via the symlink.
 		// We must exclude the symlink path so Pi actually excludes it.
 		if (isUnderPath(skill.filePath, agentDir)) {
-			const rel = path.relative(agentDir, skill.filePath);
+			const rel = path.relative(tryRealpath(agentDir), tryRealpath(skill.filePath));
 			skillEntries.push(`-${path.join(runtimeDir, rel)}`);
 		} else {
 			skillEntries.push(`-${skill.filePath}`);

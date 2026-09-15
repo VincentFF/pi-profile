@@ -144,7 +144,7 @@ describe("launcher integration: named global profiles", () => {
 			});
 			try {
 				expect(await first.skillCommandNames()).toEqual(["skill:research-web"]);
-			} catch(e) { console.error("STDERR:", rpc.stderr); throw e; } finally {
+			} catch(e) { console.error("STDERR:", first.stderr); throw e; } finally {
 				await first.close();
 			}
 
@@ -156,7 +156,7 @@ describe("launcher integration: named global profiles", () => {
 			});
 			try {
 				expect(await second.skillCommandNames()).toEqual(["skill:research-docs", "skill:research-web"]);
-			} catch(e) { console.error("STDERR:", rpc.stderr); throw e; } finally {
+			} catch(e) { console.error("STDERR:", second.stderr); throw e; } finally {
 				await second.close();
 			}
 		},

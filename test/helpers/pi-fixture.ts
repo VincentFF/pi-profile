@@ -1,4 +1,4 @@
-import { mkdtemp, mkdir, readdir, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, realpath, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 
@@ -20,7 +20,8 @@ export interface PiFixture {
 }
 
 export async function createPiFixture(): Promise<PiFixture> {
-	const root = await mkdtemp(path.join(tmpdir(), "pi-profile-"));
+	const rawRoot = await mkdtemp(path.join(tmpdir(), "pi-profile-"));
+	const root = await realpath(rawRoot);
 	const cwd = path.join(root, "project");
 	const agentDir = path.join(root, "agent");
 	const profileSwitchDir = path.join(root, ".pi-profile-switch");
