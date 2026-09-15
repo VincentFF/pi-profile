@@ -1,6 +1,8 @@
 # pi-profile 初始实现 spec
 
-Status: ready-for-agent
+Status: done
+
+历史说明：本 spec 的资源模型已被后续决策部分取代——宿主架构改为 ADR-0005（子进程 + 生成式 settings），extension 管理改为 ADR-0007（纯发现与过滤，无 resources.json），工作区与实例管理见 `docs/specs/profile-wrapper-refactor/`。保留为历史记录。
 
 ## Problem Statement
 
