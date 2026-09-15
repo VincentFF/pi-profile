@@ -6,7 +6,7 @@ ADR-0001 concluded that Pi has no pre-start resource-filter seam, because the pu
 
 - Settings arrays (`skills`, `extensions`, `prompts`, `themes`) apply `!glob` exclusions and `-path` force-exclusions to auto-discovered resources (`~/.agents/skills` verified), and additive absolute paths re-include selected entries.
 - Project-scope resources ignore global settings patterns, but `defaultProjectTrust: "never"` suppresses all project auto-discovery, after which additive absolute paths restore exactly the selected entries.
-- `PI_CODING_AGENT_DIR` points Pi at a pi-profile-owned settings directory; `PI_CODING_AGENT_SESSION_DIR` keeps session storage in the real location. User configuration files are never modified.
+- `PI_CODING_AGENT_DIR` points Pi at a pi-profile-owned settings directory; symlinking sessions into the runtime directory keeps session storage in the real location with native directory structure. User configuration files are never modified.
 - `ctx.reload()` re-reads the settings file from disk and rebuilds the runtime while preserving the session (sessionId, session file, and message history verified unchanged).
 
 Decision: `pi-profile` spawns the real `pi` binary as a subprocess with the user's arguments passed through verbatim, a generated per-launch agent directory — a `settings.json` encoding the profile's resource selection plus symlinks to the user's real `trust.json`, `auth.json`, `models.json`, `models-store.json`, and `npm/` — and generated flags for tools and model. The pi-profile extension inside Pi orchestrates in-session profile switches by regenerating the settings file and calling `ctx.reload()`.

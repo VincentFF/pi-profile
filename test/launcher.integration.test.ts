@@ -69,6 +69,13 @@ describe("launcher integration: real pi subprocess, default profile", () => {
 				const relative = path.relative(fixture.agentDir, file);
 				expect(relative.startsWith(path.join("pi-profile", "runtime")) || relative.startsWith("sessions")).toBe(true);
 			}
+			// If session files were created, verify they are placed inside project subdirectories,
+			// never directly under sessions/
+			const sessionFiles = await listFiles(path.join(fixture.agentDir, "sessions"));
+			for (const file of sessionFiles) {
+				const rel = path.relative(path.join(fixture.agentDir, "sessions"), file);
+				expect(rel.includes(path.sep)).toBe(true);
+			}
 			// Launcher selection is transient: no runtime state file anywhere.
 			const files = await listFiles(fixture.root);
 			expect(files.filter((file) => file.endsWith("pi-profile-state.json"))).toEqual([]);

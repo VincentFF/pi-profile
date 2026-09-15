@@ -37,9 +37,12 @@ export function buildPiArgs(options: SpawnPiOptions): string[] {
 }
 
 export async function spawnPi(options: SpawnPiOptions): Promise<number> {
+	const env = { ...process.env, ...options.generated.env };
+	delete env.PI_CODING_AGENT_SESSION_DIR;
+
 	const child = spawn("pi", buildPiArgs(options), {
 		stdio: "inherit",
-		env: { ...process.env, ...options.generated.env },
+		env,
 	});
 
 	// Liveness token for the next launch's startup sweep (runtime-cleanup.ts).

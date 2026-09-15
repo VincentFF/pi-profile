@@ -117,7 +117,7 @@ profile 只管理四类资源（skills、extensions、MCP servers、tools）；�
 - 运行目录位于专用工作区（`~/.pi-profile-switch/instances/<profile-name>/agent`，可通过 `PI_PROFILE_SWITCH_DIR` 自定义），避免污染 `~/.pi`。启动时通过全保真动态符号链接镜像 `~/.pi/agent` 下的所有非受管资源（目录与文件），并自动探测清理断链；`settings.json`、`mcp.json`、`APPEND_SYSTEM.md` 由 profile 独立受管生成。
 - 生成 `settings.json`：用户全局 settings 内容 + 过滤模型的数组改写（见上表）；非 `default` profile 追加 `defaultProjectTrust: "never"`；已信任项目的 `.pi/settings.json` 内容按 Pi 的合并规则（项目覆盖全局、嵌套按键合并）合并进来，以保持非受管行为原生。
 - symlinks：`auth.json`、`models.json`、`models-store.json`、`mcp.json`、`npm/`、`git/`、`bin/` 指向真实 agentDir 的对应项（git/bin 分别是包安装根与 Pi 托管二进制，避免在运行目录里重复安装；`mcp.json` 是 pi-mcp-adapter 的全局配置，其路径派生自 `PI_CODING_AGENT_DIR`，pi-profile 只链接从不改写）。`trust.json` 只在 `default` profile 下链接：Pi 侧已存储的 trust 决定优先于生成 settings 的 `defaultProjectTrust: "never"`，若链接会使命名 profile 的项目自动发现复活——launcher 自读真实 trust.json，是项目资源的唯一信任守门人。
-- 环境变量：`PI_CODING_AGENT_DIR=<运行目录>`、`PI_CODING_AGENT_SESSION_DIR=<真实 sessions 目录>`。
+- 环境变量：`PI_CODING_AGENT_DIR=<运行目录>`（sessions 目录软链接回真实 agentDir，保留 Pi 原生分目录结构）。
 - 生成 flags：`--tools <选中清单>`（非 `default` 且声明 tools 时）、`--model <provider/id[:thinking]>`（声明 model 时）。
 - 已知限制：`pi install` / `pi config` 在会话内写生成的 settings，退出后丢失（持久改动走 `/profile edit` 或原生 `pi`）。
 

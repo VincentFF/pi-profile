@@ -461,6 +461,9 @@ export async function syncAgentSymlinks(agentDir: string, runtimeDir: string): P
 	if (!existsSync(agentDir)) return;
 	if (path.resolve(agentDir) === path.resolve(runtimeDir)) return;
 
+	// Ensure the real sessions directory exists so it is always mirrored
+	await mkdir(path.join(agentDir, "sessions"), { recursive: true });
+
 	// 1. Clean up dangling or obsolete symlinks in runtimeDir
 	try {
 		const runtimeEntries = await readdir(runtimeDir);
@@ -527,7 +530,6 @@ export async function generateRuntimeDir(
 		runtimeDir,
 		env: {
 			PI_CODING_AGENT_DIR: runtimeDir,
-			PI_CODING_AGENT_SESSION_DIR: path.join(agentDir, "sessions"),
 		},
 		flags,
 	};

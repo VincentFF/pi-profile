@@ -56,10 +56,22 @@ describe("generateRuntimeDir (default profile)", () => {
 		}
 	});
 
-	it("points PI_CODING_AGENT_DIR at the runtime dir and sessions at the real dir", async () => {
+	it("points PI_CODING_AGENT_DIR at the runtime dir and symlinks sessions without overriding session dir", async () => {
 		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
 		expect(result.env.PI_CODING_AGENT_DIR).toBe(result.runtimeDir);
-		expect(result.env.PI_CODING_AGENT_SESSION_DIR).toBe(path.join(fixture.agentDir, "sessions"));
+		expect(result.env.PI_CODING_AGENT_SESSION_DIR).toBeUndefined();
+		expect(await realpath(path.join(result.runtimeDir, "sessions"))).toBe(
+			await realpath(path.join(fixture.agentDir, "sessions")),
+		);
+	});
+
+	it("ensures agentDir/sessions exists and is symlinked even if not initially present", async () => {
+		expect(existsSync(path.join(fixture.agentDir, "sessions"))).toBe(false);
+		const result = await generateRuntimeDir(defaultPlan(), { agentDir: fixture.agentDir });
+		expect(existsSync(path.join(fixture.agentDir, "sessions"))).toBe(true);
+		expect(await realpath(path.join(result.runtimeDir, "sessions"))).toBe(
+			await realpath(path.join(fixture.agentDir, "sessions")),
+		);
 	});
 
 	it("generates no filtering flags for the default profile", async () => {

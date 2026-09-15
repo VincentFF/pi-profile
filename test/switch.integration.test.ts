@@ -74,6 +74,9 @@ describe("launcher integration: in-session switching", () => {
 				const after = await getState(rpc);
 				expect(after.sessionId).toBe(before.sessionId);
 				expect(after.sessionFile).toBe(before.sessionFile);
+				// Session is stored in the project's native encoded subdirectory, not flat under sessions
+				expect(before.sessionFile).toBeDefined();
+				expect(path.basename(path.dirname(before.sessionFile!))).toMatch(/^--.+--$/);
 				expect(after.messageCount).toBe(before.messageCount);
 				expect((await skillCommands(rpc)).map((command) => command.name)).toEqual(["skill:beta-skill"]);
 
