@@ -1,6 +1,6 @@
 {
   "name": "pi-profile",
-  "version": "0.1.0",
+  "version": "0.4.0",
   "description": "Named profiles for Pi: reference skills, extensions, MCP servers, and tools per workflow, switched without restarting.",
   "type": "module",
   "keywords": [
