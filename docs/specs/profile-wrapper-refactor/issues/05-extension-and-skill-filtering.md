@@ -8,7 +8,7 @@ Resource filtering in the generated `settings.json` so that each profile loads o
 
 **Blocked by:** 04: Per-profile generation of model, tools, MCP servers, and instructions
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Generates `packages` settings that filter or disable extensions not in the profile's allowed extension list.
 - [ ] Filters local `extensions` paths in `settings.json`.

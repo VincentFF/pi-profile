@@ -5,7 +5,7 @@ Unified session management that connects each profile instance directly to nativ
 
 **Blocked by:** 02: Full-fidelity symlink mirroring of `~/.pi/agent`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Instance `agent/sessions` is explicitly symlinked to `~/.pi/agent/sessions`.
 - [ ] Environment variable `PI_CODING_AGENT_SESSION_DIR` is set to the canonical path of `~/.pi/agent/sessions`.

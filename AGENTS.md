@@ -1,9 +1,6 @@
 # pi-profile-switch
 
-This repo contains two things:
-
-1. **The pi-profile-switch package** (the product): a Pi package that adds named profiles selecting skills, extensions, MCP servers, and tools for a Pi runtime, switchable without restarting Pi. Greenfield: the package source is not created yet; build it from the docs below.
-2. **The owner's vendored pi skills** in `.agents/skills/` (installed from `mattpocock/skills`, locked by `skills-lock.json`). Workflow tooling, not product code.
+This repo contains **the pi-profile-switch package**: a Pi package that adds named profiles selecting skills, extensions, MCP servers, and tools for a Pi runtime, switchable without restarting Pi.
 
 ## Design principles
 
