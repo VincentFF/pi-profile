@@ -1,7 +1,7 @@
 {
   "$schema": "https://json-schema.org/draft/2020-12/schema",
   "title": "pi-profile-switch profile catalog",
-  "description": "Named profile definitions (global ~/.pi/agent/profiles.json or project .pi/profiles.json). Definitions are complete and self-contained: there is no inheritance field, and resource references are names/globs, never copies. The built-in \"default\" profile must not be defined here.",
+  "description": "Named profile definitions (global ~/.pi-profile-switch/profiles.json, legacy fallback ~/.pi/agent/profiles.json; or project .pi/profiles.json). Definitions are complete and self-contained: there is no inheritance field, and resource references are names/globs, never copies. The built-in \"default\" profile must not be defined here.",
   "type": "object",
   "required": [
     "schemaVersion",

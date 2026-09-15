@@ -9,7 +9,7 @@ Commands available inside the active Pi session:
 
 **Blocked by:** 06: Thin wrapper CLI launcher and process forwarding
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] `/profile use <name>` validates that `<name>` exists in global or project catalogs.
 - [ ] Rewrites the instance configuration files to match the new profile and invokes `ctx.reload()`.

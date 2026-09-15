@@ -1,5 +1,9 @@
 # Specification: Thin Wrapper Architecture & Profile Instance Isolation Refactor
 
+Status: done
+
+Implementation notes (later commits): `PI_CODING_AGENT_SESSION_DIR` was removed — session continuity is achieved purely via the `sessions` symlink (f3ddb20). The workspace catalog/state gained legacy fallbacks under `~/.pi/agent` (see `src/workspace.ts`).
+
 ## Problem Statement
 
 Users of `pi` require different working environments for distinct tasks (e.g., coding, reviewing, researching, minimal/offline work). Each task demands a tailored set of extensions, skills, tools, MCP servers, system instructions, and default models.

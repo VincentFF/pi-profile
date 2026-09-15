@@ -205,16 +205,24 @@ pi-profile/
 ├── package.json
 ├── README.md
 ├── bin/
-│   └── pi-profile.ts             # 位置参数解析、profile 解析、spawn
+│   ├── pi-profile.ts             # 开发态入口：位置参数解析、profile 解析、spawn
+│   ├── pi-profile.js             # 发布态入口：jiti 包装器，加载共享 TS 图
+│   └── postinstall.js            # 安装时用 starter ask profile 播种全局 catalog
 ├── extensions/
 │   └── pi-profile/
 │       └── index.ts              # /profile 命令族、TUI、instructions、MCP 协调
 ├── src/
+│   ├── workspace.ts              # ~/.pi-profile-switch 工作区路径与 legacy fallback
+│   ├── json-file.ts              # 文件型 store 的共享 JSON 读取
 │   ├── launcher/
 │   │   ├── args.ts               # 位置参数 + 透传段解析（含 --approve 拦截）
+│   │   ├── initial-profile.ts    # 初始 profile 解析
+│   │   ├── discovery.ts          # launcher 侧只读发现（skills、包根），供 resolver
+│   │   ├── model-check.ts        # spawn 前校验 profile 声明的模型
 │   │   ├── spawn.ts              # 子进程 spawn、pid 活性文件、信号与退出码转发
 │   │   └── runtime-cleanup.ts    # 启动时按 pid 活性清扫陈旧 runtime 目录
 │   ├── profile-catalog.ts
+│   ├── project-trust.ts          # launcher 镜像 Pi trust 判定（项目资源唯一守门人）
 │   ├── extension-discovery.ts    # 只读扩展发现与 select()
 │   ├── skill-registry.ts         # 只读 SDK discovery
 │   ├── profile-resolver.ts
@@ -223,26 +231,20 @@ pi-profile/
 │   ├── profile-catalog-store.ts  # profiles.json 写入侧（自包含定义，无继承）
 │   ├── mcp-config.ts             # adapter pi-native 配置的 server 名只读发现
 │   ├── mcp-coordination.ts       # pi.events 协调契约（allowlist 频道 + 探测）
-│   ├── switching/                # 会话内切换 / overlay / 可观测面
-│   │   ├── switch-profile.ts     # 切换编排（快照→重写→reload→回滚）
-│   │   ├── apply-plan.ts         # session_start 应用（tools/model/mcp/状态/摘要）
-│   │   ├── customize.ts          # runtime overlay customize/reset
-│   │   ├── list-profiles.ts      # /profile list（信任门控的 catalog 列表）
-│   │   ├── status.ts             # /profile status 报告（plan + overlay + MCP 三态 + 冲突）
-│   │   ├── profile-crud.ts       # /profile create|edit|delete|duplicate（active 删除需替换）
-│   │   ├── profile-wizard.ts     # profile create/edit/duplicate 向导
-│   │   └── mcp-toggle.ts         # /mcp enable|disable（编辑 owning catalog 的 mcp 数组 + reload）
-│   └── tui/
-│       ├── profile-selector.ts
-│       └── profile-editor.ts
+│   └── switching/                # 会话内切换 / overlay / 可观测面
+│       ├── switch-profile.ts     # 切换编排（快照→重写→reload→回滚）
+│       ├── apply-plan.ts         # session_start 应用（tools/model/mcp/状态/摘要）
+│       ├── customize.ts          # runtime overlay customize/reset
+│       ├── list-profiles.ts      # /profile list（信任门控的 catalog 列表）
+│       ├── status.ts             # /profile status 报告（plan + overlay + MCP 三态 + 冲突）
+│       ├── profile-crud.ts       # /profile create|edit|delete|duplicate（active 删除需替换）
+│       ├── profile-wizard.ts     # profile create/edit/duplicate 向导
+│       ├── mcp-toggle.ts         # /mcp enable|disable（编辑 owning catalog 的 mcp 数组 + reload）
+│       └── tool-references.ts    # tool 引用对 Pi 活动注册表的展开
 ├── schemas/
 │   └── profiles.schema.json
-├── test/
-│   ├── helpers/pi-fixture.ts     # fixture 布局约定（ticket 01 建立）
-│   ├── profile-resolver.test.ts
-│   ├── settings-generator.test.ts
-│   ├── skill-registry.test.ts
-│   └── launcher.integration.test.ts  # 真实 pi 子进程 + RPC 内省
+├── test/                         # Vitest：*.test.ts 单元 + *.integration.test.ts 真实子进程
+│   └── helpers/                  # fixture 布局约定（ticket 01 建立）
 └── examples/
     └── profiles.json
 ```

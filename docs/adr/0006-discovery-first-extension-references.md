@@ -1,5 +1,7 @@
 # Discovery-first extension references; resources.json as override-only
 
+**Superseded by [ADR-0007](0007-discovery-only-extension-filtering.md)** (`resources.json` and the ResourceRegistry were retired entirely). Kept for history.
+
 Profiles reference extensions by logical ID registered in `resources.json` — that was the model inherited from the initial design, on the premise that "Pi extensions have no uniform global name field". In practice this forced users to hand-write an absolute entry path into a second file before referencing any extension, including npm packages Pi itself had already installed and enumerated. The failure modes were poor: literal ID misses failed with unactionable errors, and zero-match globs failed silently.
 
 The premise is only half true. Extension *entries* have no name field, but installed *packages* do: `pi packages` lists them by unique source string (`npm:pi-mcp-adapter`), and each package declares its extension entries in `package.json#pi.extensions`. Loose files in the standard extensions dirs (`<agentDir>/extensions`, trusted `.pi/extensions`) are equally discoverable. Skills already worked this way (SkillRegistry consumes Pi discovery read-only); extensions were asymmetric for no good reason.

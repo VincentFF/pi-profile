@@ -12,7 +12,7 @@ _Avoid_: preset, config
 The built-in, undeletable profile that loads Pi's full set of discoverable resources. Treated as global-sourced for state writes.
 
 **Catalog**:
-A `profiles.json` file holding profile definitions: `~/.pi/agent/profiles.json` (global) or `.pi/profiles.json` (project). A project profile with the same name fully replaces the global one; there is no inheritance.
+A `profiles.json` file holding profile definitions: `~/.pi-profile-switch/profiles.json` (global; legacy fallback reads `~/.pi/agent/profiles.json`) or `.pi/profiles.json` (project). A project profile with the same name fully replaces the global one; there is no inheritance.
 
 **Source scope**:
 Whether a profile came from the global or project catalog. Determines where runtime state and CRUD edits are written.
@@ -28,7 +28,7 @@ The persisted active profile selection and overlay, written to the state file of
 The immutable, fully resolved set of skills, extensions, MCP servers, tools, and instructions produced from one profile plus one overlay. It is materialized as generated settings plus spawn flags (launch) or a settings rewrite plus native reload (in-session switch).
 
 **Generated settings**:
-The pi-profile-switch-owned runtime directory holding a generated `settings.json` (the profile's resource selection encoded for Pi's native settings mechanism), symlinks to the user's real `trust.json`/`auth.json`/`models.json`/`models-store.json`/`npm/`, pointed at via `PI_CODING_AGENT_DIR`. Never a user configuration file; regenerated on every launch, switch, or reload.
+The pi-profile-switch-owned runtime directory under `~/.pi-profile-switch/instances/<profile>/agent`, holding a generated `settings.json` (the profile's resource selection encoded for Pi's native settings mechanism) and full-fidelity symlinks into the user's real `~/.pi/agent` (`auth.json`, `models.json`, `npm/`, sessions, etc.), pointed at via `PI_CODING_AGENT_DIR`. `trust.json` is linked only for the `default` profile — for named profiles the launcher is the sole project-trust gatekeeper. Never a user configuration file; regenerated on every launch, switch, or reload.
 
 **Runtime reload**:
 Pi's native `ctx.reload()`: re-reads the settings file from disk, rebuilds resources, re-executes extensions, and preserves the session. The mechanism behind `/profile use`, `/profile reload`, overlay application, and rollback.

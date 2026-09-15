@@ -17,7 +17,7 @@ Commit helper body v1.
 EOF
 
 # 2. 两个 profile 都引用 git-commit（global catalog）
-cat > ~/.pi/agent/profiles.json <<'EOF'
+cat > ~/.pi-profile-switch/profiles.json <<'EOF'
 {
   "schemaVersion": 1,
   "profiles": {
@@ -35,8 +35,8 @@ EOF
 | 3 | `pi-profile review` 启动，问模型 `/profile status` 或直接观察 | 只有 `review` 声明的 skills 可见（`/profile list` 中 `review ← active`）；模型第一个 turn 起只暴露 `git-commit` |
 | 4 | 编辑 `~/.pi/agent/skills/git-commit/SKILL.md`（改 body 为 v2），执行 `/profile reload` | reload 后新内容生效；`/profile use implement` 后同样读到 v2（引用同一文件，非复制） |
 | 5 | `/profile customize disable skill git-commit`，再 `/profile status`，然后 `/profile reset` | disable 后 skill 消失（overlay 出现在 status）；reset 后恢复定义（overlay 消失），catalog 文件从未被修改 |
-| 6 | 在 `review` 中 `/mcp disable atlassian` | `~/.pi/agent/profiles.json` 的 `review.mcp` 数组移除该名；reload 后该 server 的 tools 不在活动集 |
+| 6 | 在 `review` 中 `/mcp disable atlassian` | `~/.pi-profile-switch/profiles.json` 的 `review.mcp` 数组移除该名；reload 后该 server 的 tools 不在活动集 |
 | 7 | `/profile use implement` | `implement` 的 `mcp` 数组不受步骤 6 影响；其声明的 servers 正常 |
 | 8 | 退出后直接运行 `pi` | adapter 的 `.pi/mcp.json` 原有启用状态未被任何切换修改 |
 
-全部通过即验收完成。任一步失败：收集 `~/.pi/agent/pi-profile/runtime/launch-*/` 下的 `settings.json` 与 `pi-profile.json`、会话 stderr，对照 `docs/architecture/overview.md` 的失败语义排查（所有解析/注册表错误都应响亮失败并指明文件）。
+全部通过即验收完成。任一步失败：收集 `~/.pi-profile-switch/instances/<profile>/agent/` 下的 `settings.json` 与 `pi-profile.json`、会话 stderr，对照 `docs/architecture/overview.md` 的失败语义排查（所有解析/发现错误都应响亮失败并指明文件）。

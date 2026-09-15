@@ -1,7 +1,7 @@
 /**
  * ProfileCatalog: reads profile definitions from the global catalog
- * (`<agentDir>/profiles.json`) and, for trusted projects, the project
- * catalog (`<projectDir>/.pi/profiles.json`).
+ * (`~/.pi-profile-switch/profiles.json`, legacy fallback `<agentDir>/profiles.json`)
+ * and, for trusted projects, the project catalog (`<projectDir>/.pi/profiles.json`).
  *
  * Invariants:
  * - The built-in `default` profile never exists in either file and cannot be

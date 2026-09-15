@@ -5,7 +5,7 @@ An instance materializer that creates a complete symbolic mirror of the user's r
 
 **Blocked by:** 01: Relocate workspace and instance management to `~/.pi-profile-switch`
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Inspects `~/.pi/agent` dynamically via directory scan instead of relying on a hardcoded file list.
 - [ ] Creates symlinks for all files and directories in `~/.pi/agent`, correctly handling both file symlinks and directory symlinks.

@@ -11,7 +11,7 @@ The primary command-line entrypoint `pi-profile` that acts as the thin wrapper s
 
 **Blocked by:** 03: Native session continuity and session directory linking, 05: Per-profile extension and skill filtering in generated settings
 
-**Status:** ready-for-agent
+**Status:** resolved
 
 - [ ] Command `pi-profile [profile-name] [pi-args...]` correctly isolates the profile name and forwards remaining arguments.
 - [ ] Running `pi-profile` without arguments resolves and launches the `default` profile.
